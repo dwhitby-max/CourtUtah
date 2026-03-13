@@ -13,6 +13,8 @@ import CalendarSettingsPage from "@/pages/CalendarSettingsPage";
 import NotificationsPage from "@/pages/NotificationsPage";
 import ProfilePage from "@/pages/ProfilePage";
 import AdminPage from "@/pages/AdminPage";
+import SearchResultsPage from "@/pages/SearchResultsPage";
+import NotificationSettingsPage from "@/pages/NotificationSettingsPage";
 
 export default function App() {
   return (
@@ -35,9 +37,11 @@ export default function App() {
           >
             <Route path="/" element={<DashboardPage />} />
             <Route path="/search" element={<SearchPage />} />
+            <Route path="/search-results" element={<SearchResultsPage />} />
             <Route path="/watched-cases" element={<WatchedCasesPage />} />
             <Route path="/calendar-settings" element={<CalendarSettingsPage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
+            <Route path="/notification-settings" element={<NotificationSettingsPage />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/admin" element={<AdminPage />} />
           </Route>
