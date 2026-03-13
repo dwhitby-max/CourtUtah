@@ -1,0 +1,93 @@
+import { useState } from "react";
+import { Link, Outlet, useLocation } from "react-router-dom";
+import { useAuth } from "@/store/authStore";
+import NotificationBell from "./NotificationBell";
+
+export default function Layout() {
+  const { user, logout } = useAuth();
+  const location = useLocation();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  function navClass(path: string): string {
+    const base = "px-3 py-2 rounded-md text-sm font-medium";
+    return location.pathname === path
+      ? `${base} bg-indigo-700 text-white`
+      : `${base} text-indigo-200 hover:bg-indigo-600 hover:text-white`;
+  }
+
+  function mobileNavClass(path: string): string {
+    const base = "block px-3 py-2 rounded-md text-base font-medium";
+    return location.pathname === path
+      ? `${base} bg-indigo-700 text-white`
+      : `${base} text-indigo-200 hover:bg-indigo-600 hover:text-white`;
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <nav className="bg-indigo-800">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center">
+              <Link to="/" className="text-white font-bold text-lg shrink-0">
+                Court Calendar Tracker
+              </Link>
+              {/* Desktop nav */}
+              <div className="hidden md:flex ml-10 items-baseline space-x-2">
+                <Link to="/" className={navClass("/")}>Dashboard</Link>
+                <Link to="/search" className={navClass("/search")}>Search</Link>
+                <Link to="/watched-cases" className={navClass("/watched-cases")}>Watched</Link>
+                <Link to="/calendar-settings" className={navClass("/calendar-settings")}>Calendar</Link>
+                <Link to="/admin" className={navClass("/admin")}>Admin</Link>
+              </div>
+            </div>
+            <div className="flex items-center space-x-4">
+              <NotificationBell />
+              <Link to="/profile" className="hidden sm:inline text-indigo-200 hover:text-white text-sm truncate max-w-32">
+                {user?.email}
+              </Link>
+              <button onClick={logout} className="hidden sm:inline text-indigo-200 hover:text-white text-sm">
+                Logout
+              </button>
+              {/* Mobile hamburger */}
+              <button
+                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                className="md:hidden text-indigo-200 hover:text-white"
+                aria-label="Toggle menu"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  {mobileMenuOpen ? (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  ) : (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                  )}
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+        {/* Mobile menu */}
+        {mobileMenuOpen && (
+          <div className="md:hidden px-2 pt-2 pb-3 space-y-1">
+            <Link to="/" className={mobileNavClass("/")} onClick={() => setMobileMenuOpen(false)}>Dashboard</Link>
+            <Link to="/search" className={mobileNavClass("/search")} onClick={() => setMobileMenuOpen(false)}>Search</Link>
+            <Link to="/watched-cases" className={mobileNavClass("/watched-cases")} onClick={() => setMobileMenuOpen(false)}>Watched Cases</Link>
+            <Link to="/calendar-settings" className={mobileNavClass("/calendar-settings")} onClick={() => setMobileMenuOpen(false)}>Calendar</Link>
+            <Link to="/admin" className={mobileNavClass("/admin")} onClick={() => setMobileMenuOpen(false)}>Admin</Link>
+            <div className="border-t border-indigo-700 pt-2 mt-2">
+              <Link to="/profile" className="block px-3 py-2 text-indigo-200 hover:text-white text-sm" onClick={() => setMobileMenuOpen(false)}>
+                {user?.email}
+              </Link>
+              <button onClick={() => { logout(); setMobileMenuOpen(false); }} className="block w-full text-left px-3 py-2 text-indigo-200 hover:text-white text-sm">
+                Logout
+              </button>
+            </div>
+          </div>
+        )}
+      </nav>
+
+      <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+        <Outlet />
+      </main>
+    </div>
+  );
+}
