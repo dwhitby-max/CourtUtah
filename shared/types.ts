@@ -5,36 +5,12 @@
 
 // --- Auth ---
 
-export interface RegisterRequest {
-  email: string;
-  password: string;
-  phone?: string;
-}
-
-export interface LoginRequest {
-  email: string;
-  password: string;
-}
-
-export interface LoginResponse {
-  token: string;
-  user: UserPublic;
-}
-
-export interface ForgotPasswordRequest {
-  email: string;
-}
-
-export interface ResetPasswordRequest {
-  token: string;
-  password: string;
-}
-
 export interface UserPublic {
   id: number;
   email: string;
   phone: string | null;
   emailVerified: boolean;
+  googleConnected: boolean;
   notificationPreferences: NotificationPreferences;
   createdAt: string;
 }

@@ -7,13 +7,6 @@ export async function getCalendarConnections(): Promise<{ connections: unknown[]
   return data;
 }
 
-export async function startGoogleAuth(): Promise<{ authUrl: string }> {
-  const res = await apiFetch("/calendar/google/auth");
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "Failed to start Google auth");
-  return data;
-}
-
 export async function startMicrosoftAuth(): Promise<{ authUrl: string }> {
   const res = await apiFetch("/calendar/microsoft/auth");
   const data = await res.json();

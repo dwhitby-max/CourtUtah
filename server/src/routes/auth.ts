@@ -1,85 +1,225 @@
 import { Router, Request, Response } from "express";
-import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { getPool } from "../db/pool";
-import { generateToken } from "../middleware/auth";
-import { authLimiter } from "../middleware/rateLimiter";
-import { sendPasswordResetEmail, sendVerificationEmail } from "../services/emailService";
+import { generateToken, authenticateToken } from "../middleware/auth";
+import { heavyLimiter } from "../middleware/rateLimiter";
+import { config } from "../config/env";
+import { encrypt } from "../services/encryptionService";
 
 const router = Router();
 
-router.use(authLimiter);
+// In-memory state store for CSRF protection on OAuth flow
+const oauthStates = new Map<string, { createdAt: number }>();
+const STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-// POST /api/auth/register
-router.post("/register", async (req: Request, res: Response) => {
-  const pool = getPool();
-  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
+// Periodic cleanup of expired states
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of oauthStates) {
+    if (now - val.createdAt > STATE_TTL_MS) oauthStates.delete(key);
+  }
+}, 60 * 1000).unref();
 
-  const { email, password, phone } = req.body;
-
-  if (!email || !password) {
-    res.status(400).json({ error: "Email and password are required" });
+// GET /api/auth/google — Initiate Google OAuth (public, no JWT required)
+router.get("/google", heavyLimiter, (_req: Request, res: Response) => {
+  if (!config.google.clientId || !config.google.clientSecret) {
+    res.status(503).json({ error: "Google OAuth not configured — add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET" });
     return;
   }
 
-  if (password.length < 8) {
-    res.status(400).json({ error: "Password must be at least 8 characters" });
+  const state = crypto.randomBytes(32).toString("hex");
+  oauthStates.set(state, { createdAt: Date.now() });
+
+  const scopes = [
+    "openid",
+    "email",
+    "profile",
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.readonly",
+  ];
+
+  const params = new URLSearchParams({
+    client_id: config.google.clientId,
+    redirect_uri: config.google.redirectUri,
+    response_type: "code",
+    scope: scopes.join(" "),
+    access_type: "offline",
+    prompt: "consent",
+    state,
+  });
+
+  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+});
+
+// GET /api/auth/google/callback — Handle Google OAuth callback (public)
+router.get("/google/callback", async (req: Request, res: Response) => {
+  const { code, state, error: oauthError } = req.query;
+
+  if (oauthError) {
+    console.error("❌ Google OAuth error:", oauthError);
+    res.redirect("/login?error=google_denied");
     return;
   }
 
-  const client = await pool.connect();
+  if (!code || !state || typeof state !== "string") {
+    res.redirect("/login?error=missing_params");
+    return;
+  }
+
+  // Validate state token (CSRF protection)
+  const stateEntry = oauthStates.get(state);
+  if (!stateEntry || Date.now() - stateEntry.createdAt > STATE_TTL_MS) {
+    oauthStates.delete(state);
+    res.redirect("/login?error=invalid_state");
+    return;
+  }
+  oauthStates.delete(state); // One-time use
+
   try {
-    const existing = await client.query("SELECT id FROM users WHERE email = $1", [email.toLowerCase()]);
-    if (existing.rows.length > 0) {
-      res.status(409).json({ error: "Email already registered" });
-      return;
-    }
-
-    const passwordHash = await bcrypt.hash(password, 12);
-    const verificationToken = crypto.randomBytes(32).toString("hex");
-
-    const result = await client.query(
-      `INSERT INTO users (email, password_hash, phone, email_verification_token)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, email, phone, email_verified, notification_preferences, created_at`,
-      [email.toLowerCase(), passwordHash, phone || null, verificationToken]
-    );
-
-    const user = result.rows[0];
-    const token = generateToken({ userId: user.id, email: user.email });
-
-    const baseUrl = `${req.protocol}://${req.get("host")}`;
-    sendVerificationEmail(user.email, verificationToken, baseUrl).catch((err) => {
-      console.error("⚠️  Verification email send failed:", err);
+    // Exchange authorization code for tokens
+    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code: String(code),
+        client_id: config.google.clientId,
+        client_secret: config.google.clientSecret,
+        redirect_uri: config.google.redirectUri,
+        grant_type: "authorization_code",
+      }),
     });
 
-    res.status(201).json({
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        phone: user.phone,
-        emailVerified: user.email_verified,
-        notificationPreferences: user.notification_preferences,
-        createdAt: user.created_at,
-      },
+    const tokens = await tokenResponse.json();
+
+    if (tokens.error) {
+      console.error("❌ Google token exchange failed:", tokens.error_description || tokens.error);
+      res.redirect("/login?error=google_failed");
+      return;
+    }
+
+    // Fetch user info from Google
+    const userinfoResponse = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
     });
+
+    const userinfo = await userinfoResponse.json();
+
+    if (!userinfo.id || !userinfo.email) {
+      console.error("❌ Google userinfo missing id or email");
+      res.redirect("/login?error=google_failed");
+      return;
+    }
+
+    const pool = getPool();
+    if (!pool) {
+      res.redirect("/login?error=db_unavailable");
+      return;
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Find user by google_id, or by email, or create new
+      let userId: number;
+
+      const byGoogleId = await client.query(
+        "SELECT id, email FROM users WHERE google_id = $1",
+        [userinfo.id]
+      );
+
+      if (byGoogleId.rows.length > 0) {
+        // Existing Google user — update email if changed
+        userId = byGoogleId.rows[0].id;
+        await client.query(
+          `UPDATE users SET email = $1, email_verified = true, updated_at = NOW() WHERE id = $2`,
+          [userinfo.email.toLowerCase(), userId]
+        );
+      } else {
+        // Check if email already exists (link accounts)
+        const byEmail = await client.query(
+          "SELECT id FROM users WHERE email = $1",
+          [userinfo.email.toLowerCase()]
+        );
+
+        if (byEmail.rows.length > 0) {
+          userId = byEmail.rows[0].id;
+          await client.query(
+            `UPDATE users SET google_id = $1, email_verified = true, updated_at = NOW() WHERE id = $2`,
+            [userinfo.id, userId]
+          );
+        } else {
+          // Create new user
+          const newUser = await client.query(
+            `INSERT INTO users (email, google_id, email_verified, notification_preferences)
+             VALUES ($1, $2, true, '{"emailEnabled": true, "smsEnabled": false, "inAppEnabled": true, "frequency": "immediate"}')
+             RETURNING id`,
+            [userinfo.email.toLowerCase(), userinfo.id]
+          );
+          userId = newUser.rows[0].id;
+        }
+      }
+
+      // Upsert calendar connection
+      const expiresAt = tokens.expires_in
+        ? new Date(Date.now() + tokens.expires_in * 1000)
+        : null;
+
+      const existingConn = await client.query(
+        "SELECT id FROM calendar_connections WHERE user_id = $1 AND provider = 'google'",
+        [userId]
+      );
+
+      if (existingConn.rows.length > 0) {
+        await client.query(
+          `UPDATE calendar_connections
+           SET access_token_encrypted = $1,
+               refresh_token_encrypted = COALESCE($2, refresh_token_encrypted),
+               token_expires_at = $3,
+               is_active = true,
+               updated_at = NOW()
+           WHERE user_id = $4 AND provider = 'google'`,
+          [
+            encrypt(tokens.access_token),
+            tokens.refresh_token ? encrypt(tokens.refresh_token) : null,
+            expiresAt,
+            userId,
+          ]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO calendar_connections
+           (user_id, provider, access_token_encrypted, refresh_token_encrypted, token_expires_at, calendar_id)
+           VALUES ($1, 'google', $2, $3, $4, 'primary')`,
+          [
+            userId,
+            encrypt(tokens.access_token),
+            tokens.refresh_token ? encrypt(tokens.refresh_token) : null,
+            expiresAt,
+          ]
+        );
+      }
+
+      await client.query("COMMIT");
+
+      // Generate JWT and redirect to client callback
+      const jwt = generateToken({ userId, email: userinfo.email.toLowerCase() });
+      res.redirect(`/login/callback?token=${encodeURIComponent(jwt)}`);
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
   } catch (err) {
-    console.error("❌ POST /api/auth/register failed:", err);
-    res.status(500).json({ error: "Registration failed" });
-  } finally {
-    client.release();
+    console.error("❌ Google OAuth callback failed:", err);
+    res.redirect("/login?error=google_failed");
   }
 });
 
-// GET /api/auth/verify-email
-router.get("/verify-email", async (req: Request, res: Response) => {
-  const { token } = req.query;
-
-  if (!token || typeof token !== "string") {
-    res.status(400).json({ error: "Missing or invalid verification token" });
-    return;
-  }
+// GET /api/auth/me — Get current user profile (requires JWT)
+router.get("/me", authenticateToken, async (req: Request, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
 
   const pool = getPool();
   if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
@@ -87,231 +227,9 @@ router.get("/verify-email", async (req: Request, res: Response) => {
   const client = await pool.connect();
   try {
     const result = await client.query(
-      `UPDATE users
-       SET email_verified = true, email_verification_token = NULL, updated_at = NOW()
-       WHERE email_verification_token = $1 AND email_verified = false
-       RETURNING id, email`,
-      [token]
-    );
-
-    if (result.rows.length === 0) {
-      res.redirect("/login?verified=invalid");
-      return;
-    }
-
-    console.log(`✅ Email verified for user ${result.rows[0].email}`);
-    res.redirect("/login?verified=success");
-  } catch (err) {
-    console.error("❌ GET /api/auth/verify-email failed:", err);
-    res.redirect("/login?verified=expired");
-  } finally {
-    client.release();
-  }
-});
-
-// POST /api/auth/resend-verification
-router.post("/resend-verification", async (req: Request, res: Response) => {
-  const { email } = req.body;
-  if (!email) { res.status(400).json({ error: "Email is required" }); return; }
-
-  const pool = getPool();
-  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
-
-  const client = await pool.connect();
-  try {
-    const newToken = crypto.randomBytes(32).toString("hex");
-    const result = await client.query(
-      `UPDATE users
-       SET email_verification_token = $1, updated_at = NOW()
-       WHERE email = $2 AND email_verified = false
-       RETURNING id`,
-      [newToken, email.toLowerCase()]
-    );
-
-    if (result.rows.length > 0) {
-      const baseUrl = `${req.protocol}://${req.get("host")}`;
-      sendVerificationEmail(email.toLowerCase(), newToken, baseUrl).catch((err) => {
-        console.error("⚠️  Resend verification email failed:", err);
-      });
-    }
-
-    res.json({ message: "If the email exists and is unverified, a verification link has been sent." });
-  } catch (err) {
-    console.error("❌ POST /api/auth/resend-verification failed:", err);
-    res.status(500).json({ error: "Failed to resend verification" });
-  } finally {
-    client.release();
-  }
-});
-
-// POST /api/auth/login
-router.post("/login", async (req: Request, res: Response) => {
-  const pool = getPool();
-  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
-
-  const { email, password } = req.body;
-
-  if (!email || !password) {
-    res.status(400).json({ error: "Email and password are required" });
-    return;
-  }
-
-  const client = await pool.connect();
-  try {
-    const result = await client.query(
-      `SELECT id, email, phone, password_hash, email_verified, notification_preferences, created_at
-       FROM users WHERE email = $1`,
-      [email.toLowerCase()]
-    );
-
-    if (result.rows.length === 0) {
-      res.status(401).json({ error: "Invalid email or password" });
-      return;
-    }
-
-    const user = result.rows[0];
-    const valid = await bcrypt.compare(password, user.password_hash);
-
-    if (!valid) {
-      res.status(401).json({ error: "Invalid email or password" });
-      return;
-    }
-
-    const token = generateToken({ userId: user.id, email: user.email });
-
-    res.json({
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        phone: user.phone,
-        emailVerified: user.email_verified,
-        notificationPreferences: user.notification_preferences,
-        createdAt: user.created_at,
-      },
-    });
-  } catch (err) {
-    console.error("❌ POST /api/auth/login failed:", err);
-    res.status(500).json({ error: "Login failed" });
-  } finally {
-    client.release();
-  }
-});
-
-// POST /api/auth/forgot-password
-router.post("/forgot-password", async (req: Request, res: Response) => {
-  const pool = getPool();
-  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
-
-  const { email } = req.body;
-  if (!email) { res.status(400).json({ error: "Email is required" }); return; }
-
-  const client = await pool.connect();
-  try {
-    const result = await client.query("SELECT id FROM users WHERE email = $1", [email.toLowerCase()]);
-
-    if (result.rows.length === 0) {
-      res.json({ message: "If an account exists with that email, a reset link has been sent" });
-      return;
-    }
-
-    const resetToken = crypto.randomBytes(32).toString("hex");
-    const resetExpires = new Date(Date.now() + 3600000);
-
-    await client.query(
-      `UPDATE users SET reset_password_token = $1, reset_password_expires = $2 WHERE email = $3`,
-      [resetToken, resetExpires, email.toLowerCase()]
-    );
-
-    const baseUrl = `${req.protocol}://${req.get("host")}`;
-    await sendPasswordResetEmail(email.toLowerCase(), resetToken, baseUrl);
-
-    res.json({ message: "If an account exists with that email, a reset link has been sent" });
-  } catch (err) {
-    console.error("❌ POST /api/auth/forgot-password failed:", err);
-    res.status(500).json({ error: "Failed to process password reset" });
-  } finally {
-    client.release();
-  }
-});
-
-// POST /api/auth/reset-password
-router.post("/reset-password", async (req: Request, res: Response) => {
-  const pool = getPool();
-  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
-
-  const { token, password } = req.body;
-
-  if (!token || !password) {
-    res.status(400).json({ error: "Token and new password are required" });
-    return;
-  }
-
-  if (password.length < 8) {
-    res.status(400).json({ error: "Password must be at least 8 characters" });
-    return;
-  }
-
-  const client = await pool.connect();
-  try {
-    const result = await client.query(
-      `SELECT id FROM users WHERE reset_password_token = $1 AND reset_password_expires > NOW()`,
-      [token]
-    );
-
-    if (result.rows.length === 0) {
-      res.status(400).json({ error: "Invalid or expired reset token" });
-      return;
-    }
-
-    const passwordHash = await bcrypt.hash(password, 12);
-    await client.query(
-      `UPDATE users SET password_hash = $1, reset_password_token = NULL, reset_password_expires = NULL, updated_at = NOW()
-       WHERE id = $2`,
-      [passwordHash, result.rows[0].id]
-    );
-
-    res.json({ message: "Password has been reset successfully" });
-  } catch (err) {
-    console.error("❌ POST /api/auth/reset-password failed:", err);
-    res.status(500).json({ error: "Failed to reset password" });
-  } finally {
-    client.release();
-  }
-});
-
-// PATCH /api/auth/profile
-router.patch("/profile", async (req: Request, res: Response) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-
-  if (!token) { res.status(401).json({ error: "Authentication required" }); return; }
-
-  let userId: number;
-  try {
-    const jwt = require("jsonwebtoken");
-    const { config } = require("../config/env");
-    const payload = jwt.verify(token, config.jwtSecret) as { userId: number };
-    userId = payload.userId;
-  } catch {
-    res.status(401).json({ error: "Invalid token" }); return;
-  }
-
-  const pool = getPool();
-  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
-
-  const { phone, notificationPreferences } = req.body;
-
-  const client = await pool.connect();
-  try {
-    await client.query(
-      `UPDATE users SET phone = $1, notification_preferences = $2, updated_at = NOW() WHERE id = $3`,
-      [phone || null, JSON.stringify(notificationPreferences || {}), userId]
-    );
-
-    const result = await client.query(
-      `SELECT id, email, phone, email_verified, notification_preferences, created_at FROM users WHERE id = $1`,
-      [userId]
+      `SELECT id, email, phone, email_verified, google_id, notification_preferences, created_at
+       FROM users WHERE id = $1`,
+      [req.user.userId]
     );
 
     if (result.rows.length === 0) {
@@ -326,6 +244,53 @@ router.patch("/profile", async (req: Request, res: Response) => {
         email: user.email,
         phone: user.phone,
         emailVerified: user.email_verified,
+        googleConnected: !!user.google_id,
+        notificationPreferences: user.notification_preferences,
+        createdAt: user.created_at,
+      },
+    });
+  } catch (err) {
+    console.error("❌ GET /api/auth/me failed:", err);
+    res.status(500).json({ error: "Failed to fetch profile" });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/auth/profile — Update profile (requires JWT)
+router.patch("/profile", authenticateToken, async (req: Request, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
+
+  const pool = getPool();
+  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
+
+  const { phone, notificationPreferences } = req.body;
+
+  const client = await pool.connect();
+  try {
+    await client.query(
+      `UPDATE users SET phone = $1, notification_preferences = $2, updated_at = NOW() WHERE id = $3`,
+      [phone || null, JSON.stringify(notificationPreferences || {}), req.user.userId]
+    );
+
+    const result = await client.query(
+      `SELECT id, email, phone, email_verified, google_id, notification_preferences, created_at FROM users WHERE id = $1`,
+      [req.user.userId]
+    );
+
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+
+    const user = result.rows[0];
+    res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        phone: user.phone,
+        emailVerified: user.email_verified,
+        googleConnected: !!user.google_id,
         notificationPreferences: user.notification_preferences,
         createdAt: user.created_at,
       },

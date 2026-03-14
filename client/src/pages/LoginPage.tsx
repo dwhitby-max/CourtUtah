@@ -1,109 +1,23 @@
-import { useState, useEffect } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { login } from "@/api/auth";
-import { useAuth } from "@/store/authStore";
-import { apiFetch } from "@/api/client";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+
+const errorMessages: Record<string, string> = {
+  google_denied: "Google sign-in was cancelled.",
+  google_failed: "Google sign-in failed. Please try again.",
+  missing_params: "Sign-in failed — missing parameters.",
+  invalid_state: "Sign-in session expired. Please try again.",
+  db_unavailable: "Service temporarily unavailable. Please try again later.",
+  callback_failed: "Failed to complete sign-in. Please try again.",
+};
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [verificationBanner, setVerificationBanner] = useState<{
-    type: "success" | "error" | "info";
-    message: string;
-  } | null>(null);
-  const [resendLoading, setResendLoading] = useState(false);
-  const { setUser } = useAuth();
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    const verified = searchParams.get("verified");
-    if (verified === "success") {
-      setVerificationBanner({
-        type: "success",
-        message: "Email verified successfully! You can now sign in.",
-      });
-    } else if (verified === "invalid") {
-      setVerificationBanner({
-        type: "error",
-        message: "Invalid or expired verification link. Please request a new one.",
-      });
-    } else if (verified === "expired") {
-      setVerificationBanner({
-        type: "error",
-        message: "Verification link has expired. Please request a new one below.",
-      });
-    }
-
-    const registered = searchParams.get("registered");
-    if (registered === "true") {
-      setVerificationBanner({
-        type: "info",
-        message: "Account created! Check your email for a verification link.",
-      });
-    }
+    const err = searchParams.get("error");
+    if (err) setError(errorMessages[err] || "Sign-in failed. Please try again.");
   }, [searchParams]);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
-
-    try {
-      const data = await login(email, password);
-      setUser(data.user);
-      navigate("/");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Login failed";
-      setError(msg);
-      // If login fails because email not verified, show resend option
-      if (msg.toLowerCase().includes("verify") || msg.toLowerCase().includes("verification")) {
-        setVerificationBanner({
-          type: "info",
-          message: "Please verify your email before signing in.",
-        });
-      }
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleResendVerification() {
-    if (!email) {
-      setError("Enter your email address first, then click resend.");
-      return;
-    }
-    setResendLoading(true);
-    try {
-      const res = await apiFetch("/auth/resend-verification", {
-        method: "POST",
-        body: JSON.stringify({ email }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to resend");
-      }
-      setVerificationBanner({
-        type: "success",
-        message: "Verification email sent! Check your inbox.",
-      });
-    } catch (err) {
-      setVerificationBanner({
-        type: "error",
-        message: err instanceof Error ? err.message : "Failed to resend verification email.",
-      });
-    } finally {
-      setResendLoading(false);
-    }
-  }
-
-  const bannerColors = {
-    success: "bg-green-50 text-green-800 border-green-200",
-    error: "bg-red-50 text-red-800 border-red-200",
-    info: "bg-blue-50 text-blue-800 border-blue-200",
-  };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
@@ -111,69 +25,31 @@ export default function LoginPage() {
         <div className="text-center">
           <img src="/logo.svg" alt="Court Calendar Tracker" className="h-16 w-16 mx-auto mb-3" />
           <h1 className="text-3xl font-bold text-slate-800">Court Calendar Tracker</h1>
-          <h2 className="mt-2 text-xl text-gray-600">Sign in to your account</h2>
+          <p className="mt-2 text-gray-600">Track Utah court schedules and sync to your calendar</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="bg-white shadow rounded-lg p-8 space-y-6">
-          {verificationBanner && (
-            <div className={`p-3 rounded-md border text-sm ${bannerColors[verificationBanner.type]}`}>
-              <p>{verificationBanner.message}</p>
-              {(verificationBanner.type === "error" || verificationBanner.type === "info") && (
-                <button
-                  type="button"
-                  onClick={handleResendVerification}
-                  disabled={resendLoading}
-                  className="mt-2 underline font-medium hover:opacity-80 disabled:opacity-50"
-                >
-                  {resendLoading ? "Sending..." : "Resend verification email"}
-                </button>
-              )}
-            </div>
-          )}
-
+        <div className="bg-white shadow rounded-lg p-8 space-y-6">
           {error && (
             <div className="bg-red-50 text-red-700 p-3 rounded-md text-sm">{error}</div>
           )}
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-amber-500 focus:border-amber-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-            <input
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-amber-500 focus:border-amber-500"
-            />
-          </div>
-
           <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-amber-700 text-white py-2 rounded-md font-medium hover:bg-slate-700 disabled:opacity-50"
+            onClick={() => { window.location.href = "/api/auth/google"; }}
+            className="w-full flex items-center justify-center gap-3 bg-white border-2 border-gray-300 rounded-md px-4 py-3 font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors"
           >
-            {loading ? "Signing in..." : "Sign In"}
+            <svg className="w-5 h-5" viewBox="0 0 24 24">
+              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
+              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+            </svg>
+            Sign in with Google
           </button>
 
-          <div className="flex justify-between text-sm">
-            <Link to="/forgot-password" className="text-amber-700 hover:text-amber-600">
-              Forgot password?
-            </Link>
-            <Link to="/register" className="text-amber-700 hover:text-amber-600">
-              Create account
-            </Link>
-          </div>
-        </form>
+          <p className="text-xs text-center text-gray-500">
+            Signing in connects your Google Calendar automatically.
+          </p>
+        </div>
       </div>
     </div>
   );
