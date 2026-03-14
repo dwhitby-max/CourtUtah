@@ -126,11 +126,31 @@ export async function runScrapeJob(): Promise<{
 
     console.log("🔄 Starting court calendar scrape (HTML format)...");
 
-    const courts = await fetchCourtList();
+    const allCourts = await fetchCourtList();
     const dates = buildDateList(SCRAPE_DAYS_AHEAD);
     let totalEvents = 0;
     let totalChanged = 0;
     let courtsProcessed = 0;
+
+    // Apply court whitelist filter if configured
+    let courts = allCourts;
+    if (pool) {
+      const client = await pool.connect();
+      try {
+        const wlResult = await client.query(
+          "SELECT value FROM app_settings WHERE key = 'court_whitelist'"
+        );
+        if (wlResult.rows.length > 0) {
+          const whitelist = wlResult.rows[0].value as string[];
+          if (Array.isArray(whitelist) && whitelist.length > 0) {
+            courts = allCourts.filter((c) => whitelist.includes(c.locationCode));
+            console.log(`🔍 Court whitelist active: ${courts.length} of ${allCourts.length} courts selected`);
+          }
+        }
+      } finally {
+        client.release();
+      }
+    }
 
     console.log(`📅 Scraping ${courts.length} courts × ${dates.length} dates (today + ${SCRAPE_DAYS_AHEAD} weekdays)`);
 

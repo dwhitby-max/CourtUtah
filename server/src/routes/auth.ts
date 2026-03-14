@@ -227,7 +227,7 @@ router.get("/me", authenticateToken, async (req: Request, res: Response) => {
   const client = await pool.connect();
   try {
     const result = await client.query(
-      `SELECT id, email, phone, email_verified, google_id, notification_preferences, calendar_preferences, created_at
+      `SELECT id, email, phone, email_verified, google_id, is_admin, notification_preferences, calendar_preferences, created_at
        FROM users WHERE id = $1`,
       [req.user.userId]
     );
@@ -245,6 +245,7 @@ router.get("/me", authenticateToken, async (req: Request, res: Response) => {
         phone: user.phone,
         emailVerified: user.email_verified,
         googleConnected: !!user.google_id,
+        isAdmin: user.is_admin || false,
         notificationPreferences: user.notification_preferences,
         calendarPreferences: user.calendar_preferences || {},
         createdAt: user.created_at,
@@ -294,7 +295,7 @@ router.patch("/profile", authenticateToken, async (req: Request, res: Response) 
     );
 
     const result = await client.query(
-      `SELECT id, email, phone, email_verified, google_id, notification_preferences, calendar_preferences, created_at FROM users WHERE id = $1`,
+      `SELECT id, email, phone, email_verified, google_id, is_admin, notification_preferences, calendar_preferences, created_at FROM users WHERE id = $1`,
       [req.user.userId]
     );
 
@@ -311,6 +312,7 @@ router.patch("/profile", authenticateToken, async (req: Request, res: Response) 
         phone: user.phone,
         emailVerified: user.email_verified,
         googleConnected: !!user.google_id,
+        isAdmin: user.is_admin || false,
         notificationPreferences: user.notification_preferences,
         calendarPreferences: user.calendar_preferences || {},
         createdAt: user.created_at,

@@ -38,7 +38,7 @@ export default function Layout() {
                 <Link to="/search" className={navClass("/search")}>Search</Link>
                 <Link to="/watched-cases" className={navClass("/watched-cases")}>Watched</Link>
                 <Link to="/calendar-settings" className={navClass("/calendar-settings")}>Calendar</Link>
-                <Link to="/admin" className={navClass("/admin")}>Admin</Link>
+                {user?.isAdmin && <Link to="/admin" className={navClass("/admin")}>Admin</Link>}
               </div>
             </div>
             <div className="flex items-center space-x-4">
@@ -73,7 +73,7 @@ export default function Layout() {
             <Link to="/search" className={mobileNavClass("/search")} onClick={() => setMobileMenuOpen(false)}>Search</Link>
             <Link to="/watched-cases" className={mobileNavClass("/watched-cases")} onClick={() => setMobileMenuOpen(false)}>Watched Cases</Link>
             <Link to="/calendar-settings" className={mobileNavClass("/calendar-settings")} onClick={() => setMobileMenuOpen(false)}>Calendar</Link>
-            <Link to="/admin" className={mobileNavClass("/admin")} onClick={() => setMobileMenuOpen(false)}>Admin</Link>
+            {user?.isAdmin && <Link to="/admin" className={mobileNavClass("/admin")} onClick={() => setMobileMenuOpen(false)}>Admin</Link>}
             <div className="border-t border-slate-600 pt-2 mt-2">
               <Link to="/profile" className="block px-3 py-2 text-slate-200 hover:text-white text-sm" onClick={() => setMobileMenuOpen(false)}>
                 {user?.email}

@@ -11,6 +11,7 @@ export interface UserPublic {
   phone: string | null;
   emailVerified: boolean;
   googleConnected: boolean;
+  isAdmin: boolean;
   notificationPreferences: NotificationPreferences;
   calendarPreferences: CalendarPreferences;
   createdAt: string;
