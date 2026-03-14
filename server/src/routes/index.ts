@@ -5,9 +5,11 @@ import calendarRouter from "./calendar";
 import notificationsRouter from "./notifications";
 import watchedCasesRouter from "./watchedCases";
 import adminRouter from "./admin";
+import healthRouter from "./health";
 
 const router = Router();
 
+router.use("/health", healthRouter);
 router.use("/auth", authRouter);
 router.use("/search", searchRouter);
 router.use("/calendar", calendarRouter);

@@ -12,8 +12,8 @@ NODE_ENV = "development"
 
 [deployment]
 deploymentTarget = "vm"
-build = ["bash", "-c", "npm run build && npm run migrate"]
-run = ["node", "server/dist/server/src/index.js"]
+build = ["bash", "-c", "npm run build"]
+run = ["bash", "-c", "NODE_ENV=production npm run migrate && NODE_ENV=production node server/dist/server/src/index.js"]
 
 [[ports]]
 localPort = 5000
