@@ -2,10 +2,10 @@
   "name": "utah-court-calendar-tracker",
   "private": true,
   "scripts": {
-    "install:all": "npm --prefix client install && npm --prefix server install",
+    "install:all": "npm --prefix client install --include=dev && npm --prefix server install --include=dev",
     "build:client": "npm --prefix client run build",
     "build:server": "npm --prefix server run build",
-    "build": "npm run install:all && npm run build:client && npm run build:server",
+    "build": "npm install --include=dev && npm run install:all && npm run build:client && npm run build:server",
     "start": "node server/dist/server/src/index.js",
     "dev:client": "npm --prefix client run dev",
     "dev:server": "npm --prefix server run dev",
