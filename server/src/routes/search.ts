@@ -8,8 +8,10 @@ const router = Router();
 router.use(authenticateToken);
 router.use(heavyLimiter);
 
-// GET /api/search
+// GET /api/search — supports: defendant_name, case_number, court_name, court_date,
+// date_from, date_to, defendant_otn, citation_number, charges, judge_name, attorney
 router.get("/", async (req: Request, res: Response) => {
+  console.log("🔍 Search params:", req.query);
   const searchParams = {
     defendantName: req.query.defendant_name as string | undefined,
     caseNumber: req.query.case_number as string | undefined,

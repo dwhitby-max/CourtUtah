@@ -13,7 +13,8 @@ cd server && npm install --include=dev && cd ..
 echo "=== Building client ==="
 cd client && npm run build && cd ..
 
-echo "=== Building server ==="
+echo "=== Building server (clean) ==="
+rm -rf server/dist
 cd server && npm run build && cd ..
 
 echo "=== Build complete ==="
