@@ -24,7 +24,7 @@ export async function fetchUrl(
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     if (attempt > 0) {
-      const delay = Math.min(1000 * Math.pow(2, attempt - 1), 8000);
+      const delay = Math.min(2000 * Math.pow(2, attempt - 1), 10000);
       await new Promise((r) => setTimeout(r, delay));
       console.log(`🔁 Retry ${attempt}/${maxRetries - 1} for ${url}`);
     }

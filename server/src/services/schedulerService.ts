@@ -134,8 +134,8 @@ export async function runScrapeJob(): Promise<{
             const parsedEvents = await scrapeCourtEventsForDate(court, date);
             allCourtEvents.push(...parsedEvents);
 
-            // Rate limit: 150ms between requests to be respectful
-            await new Promise((r) => setTimeout(r, 150));
+            // Rate limit: 1s between requests to be respectful of utcourts.gov
+            await new Promise((r) => setTimeout(r, 1000));
           } catch (err) {
             // Log per-date failures but continue with other dates
             console.warn(`  ⚠️  Failed ${court.name} on ${date}: ${err instanceof Error ? err.message : err}`);
@@ -161,7 +161,7 @@ export async function runScrapeJob(): Promise<{
             }
           }
           // Rate limit after report fetch
-          await new Promise((r) => setTimeout(r, 150));
+          await new Promise((r) => setTimeout(r, 1000));
         } catch {
           // reports.php enrichment is best-effort — don't fail the court
         }
