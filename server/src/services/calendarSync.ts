@@ -74,7 +74,7 @@ export async function syncCalendarEntry(
       return true;
     }
 
-    const calPrefs = (entry as Record<string, unknown>).calendar_preferences as { eventTag?: string; eventColorId?: string } | null;
+    const calPrefs = (entry as unknown as Record<string, unknown>).calendar_preferences as { eventTag?: string; eventColorId?: string } | null;
     const tag = calPrefs?.eventTag || "";
     const titlePrefix = tag ? `${tag} ` : "";
 
