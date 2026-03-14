@@ -12,6 +12,7 @@ export interface UserPublic {
   emailVerified: boolean;
   googleConnected: boolean;
   notificationPreferences: NotificationPreferences;
+  calendarPreferences: CalendarPreferences;
   createdAt: string;
 }
 
@@ -22,6 +23,11 @@ export interface NotificationPreferences {
   smsEnabled: boolean;
   inAppEnabled: boolean;
   frequency: NotificationFrequency;
+}
+
+export interface CalendarPreferences {
+  eventTag: string;
+  eventColorId: string;
 }
 
 // --- Calendar Connections ---

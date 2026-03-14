@@ -227,7 +227,7 @@ router.get("/me", authenticateToken, async (req: Request, res: Response) => {
   const client = await pool.connect();
   try {
     const result = await client.query(
-      `SELECT id, email, phone, email_verified, google_id, notification_preferences, created_at
+      `SELECT id, email, phone, email_verified, google_id, notification_preferences, calendar_preferences, created_at
        FROM users WHERE id = $1`,
       [req.user.userId]
     );
@@ -246,6 +246,7 @@ router.get("/me", authenticateToken, async (req: Request, res: Response) => {
         emailVerified: user.email_verified,
         googleConnected: !!user.google_id,
         notificationPreferences: user.notification_preferences,
+        calendarPreferences: user.calendar_preferences || {},
         createdAt: user.created_at,
       },
     });
@@ -264,17 +265,36 @@ router.patch("/profile", authenticateToken, async (req: Request, res: Response) 
   const pool = getPool();
   if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
 
-  const { phone, notificationPreferences } = req.body;
+  const { phone, notificationPreferences, calendarPreferences } = req.body;
 
   const client = await pool.connect();
   try {
+    // Only update fields that are present in the request
+    const setClauses: string[] = ["updated_at = NOW()"];
+    const values: unknown[] = [];
+    let paramIdx = 1;
+
+    if (phone !== undefined) {
+      setClauses.push(`phone = $${paramIdx++}`);
+      values.push(phone || null);
+    }
+    if (notificationPreferences !== undefined) {
+      setClauses.push(`notification_preferences = $${paramIdx++}`);
+      values.push(JSON.stringify(notificationPreferences));
+    }
+    if (calendarPreferences !== undefined) {
+      setClauses.push(`calendar_preferences = $${paramIdx++}`);
+      values.push(JSON.stringify(calendarPreferences));
+    }
+
+    values.push(req.user.userId);
     await client.query(
-      `UPDATE users SET phone = $1, notification_preferences = $2, updated_at = NOW() WHERE id = $3`,
-      [phone || null, JSON.stringify(notificationPreferences || {}), req.user.userId]
+      `UPDATE users SET ${setClauses.join(", ")} WHERE id = $${paramIdx}`,
+      values
     );
 
     const result = await client.query(
-      `SELECT id, email, phone, email_verified, google_id, notification_preferences, created_at FROM users WHERE id = $1`,
+      `SELECT id, email, phone, email_verified, google_id, notification_preferences, calendar_preferences, created_at FROM users WHERE id = $1`,
       [req.user.userId]
     );
 
@@ -292,6 +312,7 @@ router.patch("/profile", authenticateToken, async (req: Request, res: Response) 
         emailVerified: user.email_verified,
         googleConnected: !!user.google_id,
         notificationPreferences: user.notification_preferences,
+        calendarPreferences: user.calendar_preferences || {},
         createdAt: user.created_at,
       },
     });

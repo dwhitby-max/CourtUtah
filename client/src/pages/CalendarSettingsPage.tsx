@@ -7,6 +7,7 @@ import {
   connectCaldav,
   removeConnection,
 } from "@/api/calendar";
+import { apiFetch } from "@/api/client";
 
 interface Connection {
   id: number;
@@ -56,7 +57,25 @@ export default function CalendarSettingsPage() {
   const [caldavUrl, setCaldavUrl] = useState("");
   const [caldavUser, setCaldavUser] = useState("");
   const [caldavPass, setCaldavPass] = useState("");
+  const [eventTag, setEventTag] = useState("");
+  const [eventColorId, setEventColorId] = useState("");
+  const [savedPrefs, setSavedPrefs] = useState(false);
   const [searchParams] = useSearchParams();
+
+  const googleColors: { id: string; name: string; hex: string }[] = [
+    { id: "", name: "Default", hex: "#4285f4" },
+    { id: "1", name: "Lavender", hex: "#7986cb" },
+    { id: "2", name: "Sage", hex: "#33b679" },
+    { id: "3", name: "Grape", hex: "#8e24aa" },
+    { id: "4", name: "Flamingo", hex: "#e67c73" },
+    { id: "5", name: "Banana", hex: "#f6bf26" },
+    { id: "6", name: "Tangerine", hex: "#f4511e" },
+    { id: "7", name: "Peacock", hex: "#039be5" },
+    { id: "8", name: "Graphite", hex: "#616161" },
+    { id: "9", name: "Blueberry", hex: "#3f51b5" },
+    { id: "10", name: "Basil", hex: "#0b8043" },
+    { id: "11", name: "Tomato", hex: "#d50000" },
+  ];
 
   useEffect(() => {
     const connected = searchParams.get("connected");
@@ -64,7 +83,36 @@ export default function CalendarSettingsPage() {
     const err = searchParams.get("error");
     if (err) setError(`Failed to connect calendar: ${err}`);
     fetchConnections();
+    fetchCalendarPreferences();
   }, []);
+
+  async function fetchCalendarPreferences() {
+    try {
+      const res = await apiFetch("/auth/me");
+      if (res.ok) {
+        const data = await res.json();
+        const prefs = data.user?.calendarPreferences || {};
+        setEventTag(prefs.eventTag || "");
+        setEventColorId(prefs.eventColorId || "");
+      }
+    } catch {}
+  }
+
+  async function saveCalendarPreferences() {
+    try {
+      const res = await apiFetch("/auth/profile", {
+        method: "PATCH",
+        body: JSON.stringify({
+          calendarPreferences: { eventTag, eventColorId },
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      setSavedPrefs(true);
+      setTimeout(() => setSavedPrefs(false), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save preferences");
+    }
+  }
 
   async function fetchConnections() {
     try {
@@ -242,6 +290,67 @@ export default function CalendarSettingsPage() {
             <button type="submit" className="bg-amber-700 text-white px-4 py-2 rounded-md text-sm hover:bg-slate-700">Connect</button>
           </form>
         )}
+      </div>
+
+      <div className="bg-white shadow rounded-lg p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-2">Event Appearance</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          Customize how court hearings appear on your calendar so they stand out from other events.
+        </p>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Event Tag (prefix)</label>
+            <input
+              type="text"
+              value={eventTag}
+              onChange={(e) => setEventTag(e.target.value)}
+              placeholder="e.g. [Hearing], Court, UT Court"
+              className="w-full max-w-xs border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-amber-500 focus:border-amber-500"
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              Added before the event title, e.g. "{eventTag || "[Hearing]"} Court: SLC 123456 - Arraignment"
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Event Color (Google Calendar)</label>
+            <div className="flex flex-wrap gap-2 mt-1">
+              {googleColors.map((color) => (
+                <button
+                  key={color.id}
+                  type="button"
+                  onClick={() => setEventColorId(color.id)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-colors ${
+                    eventColorId === color.id
+                      ? "border-gray-900 ring-2 ring-offset-1 ring-gray-400"
+                      : "border-transparent hover:border-gray-300"
+                  }`}
+                  title={color.name}
+                >
+                  <span
+                    className="w-3 h-3 rounded-full inline-block flex-shrink-0"
+                    style={{ backgroundColor: color.hex }}
+                  />
+                  {color.name}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400 mt-1">
+              Only applies to Google Calendar events. Other providers use their default color.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={saveCalendarPreferences}
+              className="bg-amber-700 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-slate-700"
+            >
+              Save Appearance
+            </button>
+            {savedPrefs && <span className="text-sm text-green-600">Saved!</span>}
+          </div>
+        </div>
       </div>
     </div>
   );

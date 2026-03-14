@@ -46,7 +46,7 @@ export async function syncCalendarEntry(
 
   const client = await pool.connect();
   try {
-    // Get calendar entry with related data
+    // Get calendar entry with related data + user calendar preferences
     const entryResult = await client.query(
       `SELECT
         ce.id, ce.external_event_id, ce.external_calendar_id,
@@ -55,10 +55,12 @@ export async function syncCalendarEntry(
         cc.token_expires_at, cc.calendar_id, cc.caldav_url,
         ev.court_name, ev.court_room, ev.event_date, ev.event_time,
         ev.hearing_type, ev.case_number, ev.case_type, ev.defendant_name,
-        ev.content_hash
+        ev.content_hash,
+        u.calendar_preferences
       FROM calendar_entries ce
       JOIN calendar_connections cc ON cc.id = ce.calendar_connection_id
       JOIN court_events ev ON ev.id = ce.court_event_id
+      JOIN users u ON u.id = ce.user_id
       WHERE ce.id = $1`,
       [calendarEntryId]
     );
@@ -72,8 +74,12 @@ export async function syncCalendarEntry(
       return true;
     }
 
+    const calPrefs = (entry as Record<string, unknown>).calendar_preferences as { eventTag?: string; eventColorId?: string } | null;
+    const tag = calPrefs?.eventTag || "";
+    const titlePrefix = tag ? `${tag} ` : "";
+
     const eventData: CalendarEventData = {
-      title: `Court: ${entry.case_number || "Unknown Case"} - ${entry.hearing_type || "Hearing"}`,
+      title: `${titlePrefix}Court: ${entry.case_number || "Unknown Case"} - ${entry.hearing_type || "Hearing"}`,
       description: [
         `Court: ${entry.court_name}`,
         `Room: ${entry.court_room || "TBD"}`,
@@ -94,9 +100,11 @@ export async function syncCalendarEntry(
     let externalEventId: string | null = entry.external_event_id;
 
     try {
+      const colorId = calPrefs?.eventColorId || null;
+
       switch (entry.provider) {
         case "google":
-          externalEventId = await syncGoogleCalendarEvent(entry, eventData, externalEventId);
+          externalEventId = await syncGoogleCalendarEvent(entry, eventData, externalEventId, colorId);
           break;
         case "microsoft":
           externalEventId = await syncMicrosoftCalendarEvent(entry, eventData, externalEventId);
@@ -200,8 +208,19 @@ async function getGoogleAccessToken(connection: CalendarSyncRow): Promise<string
 /**
  * Build the Google Calendar event body from our CalendarEventData.
  */
-export function buildGoogleEventBody(eventData: CalendarEventData): Record<string, unknown> {
+export function buildGoogleEventBody(eventData: CalendarEventData, colorId?: string | null): Record<string, unknown> {
   const hasTime = eventData.startTime !== null && eventData.startTime !== "";
+
+  const base: Record<string, unknown> = {
+    summary: eventData.title,
+    description: eventData.description,
+    location: eventData.location,
+  };
+
+  // Google Calendar colorId: "1"-"11" maps to predefined colors
+  if (colorId) {
+    base.colorId = colorId;
+  }
 
   if (hasTime) {
     const dateStr = eventData.startDate.split("T")[0];
@@ -212,23 +231,15 @@ export function buildGoogleEventBody(eventData: CalendarEventData): Record<strin
     const endFormatted = `${String(endHours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
     const endDateTime = `${dateStr}T${endFormatted}:00`;
 
-    return {
-      summary: eventData.title,
-      description: eventData.description,
-      location: eventData.location,
-      start: { dateTime: startDateTime, timeZone: "America/Denver" },
-      end: { dateTime: endDateTime, timeZone: "America/Denver" },
-    };
+    base.start = { dateTime: startDateTime, timeZone: "America/Denver" };
+    base.end = { dateTime: endDateTime, timeZone: "America/Denver" };
+    return base;
   }
 
   const dateStr = eventData.startDate.split("T")[0];
-  return {
-    summary: eventData.title,
-    description: eventData.description,
-    location: eventData.location,
-    start: { date: dateStr },
-    end: { date: dateStr },
-  };
+  base.start = { date: dateStr };
+  base.end = { date: dateStr };
+  return base;
 }
 
 /**
@@ -237,7 +248,8 @@ export function buildGoogleEventBody(eventData: CalendarEventData): Record<strin
 async function syncGoogleCalendarEvent(
   connection: CalendarSyncRow,
   eventData: CalendarEventData,
-  existingEventId: string | null
+  existingEventId: string | null,
+  colorId?: string | null
 ): Promise<string> {
   if (!config.google.clientId || !config.google.clientSecret) {
     throw new Error("Google Calendar not configured — add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET");
@@ -245,7 +257,7 @@ async function syncGoogleCalendarEvent(
 
   const accessToken = await getGoogleAccessToken(connection);
   const calendarId = connection.calendar_id || "primary";
-  const eventBody = buildGoogleEventBody(eventData);
+  const eventBody = buildGoogleEventBody(eventData, colorId);
 
   if (existingEventId) {
     // PATCH existing event
