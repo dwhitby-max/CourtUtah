@@ -3,6 +3,34 @@ import https from "https";
 import zlib from "zlib";
 import { ParsedCourtEvent } from "./courtEventParser";
 
+function decompressBuffer(buffer: Buffer, contentEncoding: string | string[] | undefined): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const enc = Array.isArray(contentEncoding)
+      ? contentEncoding[0]?.toLowerCase().trim()
+      : (contentEncoding || "").toLowerCase().trim();
+
+    if (enc.includes("gzip") || enc === "x-gzip") {
+      zlib.gunzip(buffer, (err, decoded) => {
+        if (err) return reject(err);
+        resolve(decoded);
+      });
+    } else if (enc.includes("deflate")) {
+      zlib.inflate(buffer, (err, decoded) => {
+        if (err) {
+          zlib.inflateRaw(buffer, (err2, decoded2) => {
+            if (err2) return reject(err);
+            resolve(decoded2);
+          });
+          return;
+        }
+        resolve(decoded);
+      });
+    } else {
+      resolve(buffer);
+    }
+  });
+}
+
 // ============================================================
 // REPORTS.PHP PARSER — Full Court Calendar (secondary data source)
 //
@@ -94,24 +122,17 @@ export function fetchReportHtml(
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
               },
             }, (redirectRes) => {
+              if (redirectRes.statusCode && redirectRes.statusCode >= 400) {
+                reject(new Error(`Redirect returned HTTP ${redirectRes.statusCode}`));
+                return;
+              }
               const chunks: Buffer[] = [];
               redirectRes.on("data", (chunk: Buffer) => chunks.push(chunk));
               redirectRes.on("end", () => {
                 const buffer = Buffer.concat(chunks);
-                const encoding = redirectRes.headers["content-encoding"];
-                if (encoding === "gzip") {
-                  zlib.gunzip(buffer, (err, decoded) => {
-                    if (err) return reject(err);
-                    resolve(decoded.toString("utf-8"));
-                  });
-                } else if (encoding === "deflate") {
-                  zlib.inflate(buffer, (err, decoded) => {
-                    if (err) return reject(err);
-                    resolve(decoded.toString("utf-8"));
-                  });
-                } else {
-                  resolve(buffer.toString("utf-8"));
-                }
+                decompressBuffer(buffer, redirectRes.headers["content-encoding"])
+                  .then((decoded) => resolve(decoded.toString("utf-8")))
+                  .catch(reject);
               });
               redirectRes.on("error", reject);
             })
@@ -132,20 +153,9 @@ export function fetchReportHtml(
         res.on("data", (chunk: Buffer) => chunks.push(chunk));
         res.on("end", () => {
           const buffer = Buffer.concat(chunks);
-          const encoding = res.headers["content-encoding"];
-          if (encoding === "gzip") {
-            zlib.gunzip(buffer, (err, decoded) => {
-              if (err) return reject(err);
-              resolve(decoded.toString("utf-8"));
-            });
-          } else if (encoding === "deflate") {
-            zlib.inflate(buffer, (err, decoded) => {
-              if (err) return reject(err);
-              resolve(decoded.toString("utf-8"));
-            });
-          } else {
-            resolve(buffer.toString("utf-8"));
-          }
+          decompressBuffer(buffer, res.headers["content-encoding"])
+            .then((decoded) => resolve(decoded.toString("utf-8")))
+            .catch(reject);
         });
         res.on("error", reject);
       }

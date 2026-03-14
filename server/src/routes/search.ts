@@ -5,22 +5,37 @@ import { searchCourtEvents } from "../services/searchService";
 
 const router = Router();
 
-// GET /api/search/debug — no-auth test to verify search pipeline
-router.get("/debug", async (_req: Request, res: Response) => {
+// GET /api/search/coverage — date range and counts of scraped data (public)
+router.get("/coverage", async (_req: Request, res: Response) => {
   try {
-    const results = await searchCourtEvents({ attorney: "Robinson" });
-    res.json({
-      message: "Debug search test",
-      query: "attorney=Robinson",
-      resultsCount: results.length,
-      sample: results.slice(0, 2).map(r => ({
-        caseNumber: r.caseNumber,
-        defendantName: r.defendantName,
-        prosecutingAttorney: r.prosecutingAttorney,
-      })),
-    });
+    const { getPool } = await import("../db/pool");
+    const pool = getPool();
+    if (!pool) {
+      res.status(503).json({ error: "Database unavailable" });
+      return;
+    }
+    const client = await pool.connect();
+    try {
+      const result = await client.query(
+        `SELECT COUNT(*) as total_events,
+                COUNT(DISTINCT court_name) as total_courts,
+                MIN(event_date) as earliest_date,
+                MAX(event_date) as latest_date
+         FROM court_events`
+      );
+      const row = result.rows[0];
+      res.json({
+        totalEvents: parseInt(row.total_events, 10),
+        totalCourts: parseInt(row.total_courts, 10),
+        earliestDate: row.earliest_date ? new Date(row.earliest_date).toISOString().split("T")[0] : null,
+        latestDate: row.latest_date ? new Date(row.latest_date).toISOString().split("T")[0] : null,
+      });
+    } finally {
+      client.release();
+    }
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    console.error("Failed to fetch coverage:", err);
+    res.status(500).json({ error: "Failed to fetch coverage" });
   }
 });
 
@@ -63,40 +78,6 @@ router.get("/", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("❌ Search failed:", err);
     res.status(500).json({ error: "Search failed" });
-  }
-});
-
-// GET /api/search/coverage — date range and counts of scraped data
-router.get("/coverage", async (_req: Request, res: Response) => {
-  try {
-    const { getPool } = await import("../db/pool");
-    const pool = getPool();
-    if (!pool) {
-      res.status(503).json({ error: "Database unavailable" });
-      return;
-    }
-    const client = await pool.connect();
-    try {
-      const result = await client.query(
-        `SELECT COUNT(*) as total_events,
-                COUNT(DISTINCT court_name) as total_courts,
-                MIN(event_date) as earliest_date,
-                MAX(event_date) as latest_date
-         FROM court_events`
-      );
-      const row = result.rows[0];
-      res.json({
-        totalEvents: parseInt(row.total_events, 10),
-        totalCourts: parseInt(row.total_courts, 10),
-        earliestDate: row.earliest_date ? String(row.earliest_date).split("T")[0] : null,
-        latestDate: row.latest_date ? String(row.latest_date).split("T")[0] : null,
-      });
-    } finally {
-      client.release();
-    }
-  } catch (err) {
-    console.error("❌ Coverage query failed:", err);
-    res.status(500).json({ error: "Failed to fetch coverage" });
   }
 });
 

@@ -1,0 +1,229 @@
+# Scraper Fix Instructions
+
+## Issue: Search runs but HTML results are not being parsed
+
+The scraper currently downloads the page but fails to extract search results because:
+
+1. The Utah Courts server sends **gzip/deflate compressed responses**
+2. The scraper **does not decompress the response**
+3. The parser receives **binary data instead of HTML**
+4. The HTML parser therefore returns **zero results**
+
+There are also improvements needed in the request headers and HTML parsing.
+
+Follow the instructions below to fix the problem.
+
+---
+
+# Step 1 — Add compression support
+
+Open the file responsible for HTTP requests.
+
+Example file:
+
+```
+fetchUrl.ts
+network.ts
+scraper.ts
+```
+
+Add the following import at the top:
+
+```
+import zlib from "zlib";
+```
+
+---
+
+# Step 2 — Replace the response handler
+
+Locate the section where the HTTP response is read.
+
+It currently looks similar to:
+
+```
+const chunks: Buffer[] = [];
+res.on("data", (chunk) => chunks.push(chunk));
+res.on("end", () => {
+  resolve(Buffer.concat(chunks));
+});
+```
+
+Replace it with the following code so compressed responses are decompressed.
+
+```
+const chunks: Buffer[] = [];
+
+res.on("data", (chunk: Buffer) => {
+  chunks.push(chunk);
+});
+
+res.on("end", () => {
+  const buffer = Buffer.concat(chunks);
+  const encoding = res.headers["content-encoding"];
+
+  if (encoding === "gzip") {
+    zlib.gunzip(buffer, (err, decoded) => {
+      if (err) return reject(err);
+      resolve(decoded);
+    });
+  } else if (encoding === "deflate") {
+    zlib.inflate(buffer, (err, decoded) => {
+      if (err) return reject(err);
+      resolve(decoded);
+    });
+  } else {
+    resolve(buffer);
+  }
+});
+```
+
+This ensures the HTML returned by the server is readable.
+
+---
+
+# Step 3 — Fix request headers
+
+Update the HTTP request headers to match a normal browser request.
+
+Find where headers are defined and replace them with:
+
+```
+headers: {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Encoding": "gzip, deflate",
+  "Connection": "keep-alive"
+}
+```
+
+These headers ensure the server returns the correct page instead of a placeholder.
+
+---
+
+# Step 4 — Add debugging to verify HTML
+
+Immediately after the HTML is downloaded, add this line:
+
+```
+console.log(html.slice(0, 500));
+```
+
+If the scraper is working correctly, the output should look like normal HTML such as:
+
+```
+<html>
+<head>
+<title>Utah Courts</title>
+```
+
+If you see unreadable characters such as:
+
+```
+��8�...
+```
+
+then the response is still compressed and the decompression step is not working.
+
+---
+
+# Step 5 — Improve HTML parsing (recommended)
+
+The current scraper uses regular expressions like:
+
+```
+/<li[^>]*>([\s\S]*?)<\/li>/gi
+```
+
+Regex is unreliable for parsing HTML.
+
+Install the Cheerio DOM parser.
+
+Run:
+
+```
+npm install cheerio
+```
+
+Then update the parser.
+
+Example:
+
+```
+import cheerio from "cheerio";
+
+const $ = cheerio.load(html);
+
+$('a[href*="search.php"]').each((_, element) => {
+  const href = $(element).attr("href");
+  const text = $(element).text();
+});
+```
+
+This approach is significantly more reliable than regex.
+
+---
+
+# Step 6 — Verify report page POST request
+
+Ensure the POST request to `reports.php` includes all required fields.
+
+Example request body:
+
+```
+loc=XXXXD&d=all&judge=&atty=
+```
+
+If the server returns empty results, inspect the HTML form on the Utah Courts site and confirm that all hidden fields are included.
+
+---
+
+# Step 7 — Alternative solution (recommended)
+
+Instead of manually handling HTTP requests, replace the request logic with Axios.
+
+Install Axios:
+
+```
+npm install axios
+```
+
+Then replace the fetch function with:
+
+```
+import axios from "axios";
+
+export async function fetchUrl(url: string) {
+  const res = await axios.get(url, {
+    responseType: "arraybuffer",
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Encoding": "gzip, deflate"
+    }
+  });
+
+  return Buffer.from(res.data);
+}
+```
+
+Axios automatically handles:
+
+* gzip/deflate compression
+* redirects
+* timeouts
+
+This greatly simplifies the networking code.
+
+---
+
+# Expected Result
+
+After applying these fixes:
+
+1. The scraper downloads readable HTML
+2. The parser can detect the court links and events
+3. The search results populate correctly
+4. The system can extract case data from the Utah Courts site
+
+If the scraper still returns zero results, print the downloaded HTML and inspect it to confirm the expected elements exist.

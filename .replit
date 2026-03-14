@@ -42,10 +42,10 @@ args = "Start application"
 name = "Start application"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "webview"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "bash start.sh"
 waitForPort = 5000
-
-[workflows.workflow.metadata]
-outputType = "webview"

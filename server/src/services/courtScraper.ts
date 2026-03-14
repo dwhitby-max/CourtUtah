@@ -4,6 +4,34 @@ import zlib from "zlib";
 
 const COURT_CALENDARS_BASE = "https://legacy.utcourts.gov/cal";
 
+function decompressBuffer(buffer: Buffer, contentEncoding: string | string[] | undefined): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const enc = Array.isArray(contentEncoding)
+      ? contentEncoding[0]?.toLowerCase().trim()
+      : (contentEncoding || "").toLowerCase().trim();
+
+    if (enc.includes("gzip") || enc === "x-gzip") {
+      zlib.gunzip(buffer, (err, decoded) => {
+        if (err) return reject(err);
+        resolve(decoded);
+      });
+    } else if (enc.includes("deflate")) {
+      zlib.inflate(buffer, (err, decoded) => {
+        if (err) {
+          zlib.inflateRaw(buffer, (err2, decoded2) => {
+            if (err2) return reject(err);
+            resolve(decoded2);
+          });
+          return;
+        }
+        resolve(decoded);
+      });
+    } else {
+      resolve(buffer);
+    }
+  });
+}
+
 export interface CourtInfo {
   name: string;
   type: "DistrictCourt" | "JusticeCourt";
@@ -81,21 +109,9 @@ function fetchUrlOnce(url: string, timeoutMs: number): Promise<Buffer> {
         res.on("data", (chunk: Buffer) => chunks.push(chunk));
         res.on("end", () => {
           const buffer = Buffer.concat(chunks);
-          const encoding = res.headers["content-encoding"];
-
-          if (encoding === "gzip") {
-            zlib.gunzip(buffer, (err, decoded) => {
-              if (err) return reject(err);
-              resolve(decoded);
-            });
-          } else if (encoding === "deflate") {
-            zlib.inflate(buffer, (err, decoded) => {
-              if (err) return reject(err);
-              resolve(decoded);
-            });
-          } else {
-            resolve(buffer);
-          }
+          decompressBuffer(buffer, res.headers["content-encoding"])
+            .then(resolve)
+            .catch(reject);
         });
         res.on("error", reject);
       }
@@ -103,7 +119,9 @@ function fetchUrlOnce(url: string, timeoutMs: number): Promise<Buffer> {
 
     req.on("timeout", () => {
       req.destroy();
-      reject(new Error(`Timeout after ${timeoutMs}ms for ${url}`));
+      const err = new Error(`Timeout after ${timeoutMs}ms for ${url}`);
+      (err as NodeJS.ErrnoException).code = "ETIMEDOUT";
+      reject(err);
     });
     req.on("error", reject);
   });

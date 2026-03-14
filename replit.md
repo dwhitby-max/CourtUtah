@@ -36,11 +36,6 @@ shared/          # types.ts — shared TypeScript interfaces
 - **Dev server serves built client** from `client/build/` as static files with SPA fallback
 - **Single port:** 5000 on 0.0.0.0
 
-## Database
-- PostgreSQL via Replit built-in (DATABASE_URL auto-set)
-- 8 tables + schema_migrations
-- Migrations run via `node server/dist/server/src/db/migrate.js`
-
 ## Key Environment Variables
 - `DATABASE_URL` — auto-set by Replit PostgreSQL
 - `JWT_SECRET` — set (auto-generated)
@@ -64,6 +59,22 @@ shared/          # types.ts — shared TypeScript interfaces
 - All former `indigo-*` Tailwind classes replaced with `amber-*` / `slate-*` equivalents
 - Logo displayed in nav bar (Layout.tsx) and on auth pages (Login, Register, Forgot/Reset Password)
 
+## Scraper Details
+- `courtScraper.ts` — HTTP client with gzip/deflate decompression, browser-like headers, redirect-following, retry with exponential backoff
+- `courtEventParser.ts` — regex-based HTML parser for search.php results (casehover blocks)
+- `reportParser.ts` — POST request parser for reports.php (enriches events with attorneys, charges, OTN, DOB)
+- `schedulerService.ts` — cron job (2 AM UTC daily) orchestrates fetch → parse → DB upsert
+- `searchService.ts` — SQL query builder for /api/search (queries DB, not live scrape)
+- `/api/search/coverage` — public endpoint showing event count, court count, date range
+- Compression: both fetchers use shared `decompressBuffer()` helper supporting gzip, x-gzip, deflate with inflateRaw fallback
+
+## Database
+- PostgreSQL via Replit built-in (DATABASE_URL auto-set)
+- 13 migrations (001–013, including google_oauth, calendar_preferences, admin_and_court_whitelist)
+- Migrations run via `node server/dist/server/src/db/migrate.js`
+
 ## Fixes Applied on Replit Setup
 - Renamed `client/src/store/authStore.ts` → `authStore.tsx` (contained JSX)
 - Added `app.set("trust proxy", 1)` for express-rate-limit behind Replit proxy
+- Added gzip/deflate decompression to courtScraper.ts and reportParser.ts (Utah courts server sends compressed responses)
+- Moved /api/search/coverage before auth middleware (SearchForm needs public access for event count display)
