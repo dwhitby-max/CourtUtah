@@ -61,7 +61,7 @@ export default function WatchedCasesPage() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-900">Watched Cases</h1>
-        <Link to="/search" className="bg-indigo-600 text-white px-4 py-2 rounded-md text-sm hover:bg-indigo-700">
+        <Link to="/search" className="bg-amber-700 text-white px-4 py-2 rounded-md text-sm hover:bg-slate-700">
           Search & Add
         </Link>
       </div>
@@ -72,7 +72,7 @@ export default function WatchedCasesPage() {
       {cases.length === 0 ? (
         <div className="bg-white shadow rounded-lg p-8 text-center text-gray-500">
           <p>No watched cases yet.</p>
-          <p className="mt-2"><Link to="/search" className="text-indigo-600 hover:underline">Search for court events</Link> to start watching.</p>
+          <p className="mt-2"><Link to="/search" className="text-amber-700 hover:underline">Search for court events</Link> to start watching.</p>
         </div>
       ) : (
         <div className="bg-white shadow rounded-lg overflow-hidden">
@@ -96,7 +96,7 @@ export default function WatchedCasesPage() {
                     <td className="px-4 py-3 text-sm">{wc.search_value}</td>
                     <td className="px-4 py-3 text-sm">{wc.matching_events_count}</td>
                     <td className="px-4 py-3 text-sm space-x-3">
-                      <button onClick={() => handleSync(wc.id)} className="text-indigo-600 hover:text-indigo-800 font-medium">
+                      <button onClick={() => handleSync(wc.id)} className="text-amber-700 hover:text-slate-800 font-medium">
                         Sync to Calendar
                       </button>
                       <button onClick={() => handleDelete(wc.id)} className="text-red-600 hover:text-red-800 font-medium">
@@ -118,7 +118,7 @@ export default function WatchedCasesPage() {
                 </div>
                 <div className="text-sm text-gray-500">{wc.matching_events_count} matching event{wc.matching_events_count !== "1" ? "s" : ""}</div>
                 <div className="flex space-x-4 pt-1">
-                  <button onClick={() => handleSync(wc.id)} className="text-indigo-600 hover:text-indigo-800 text-sm font-medium">
+                  <button onClick={() => handleSync(wc.id)} className="text-amber-700 hover:text-slate-800 text-sm font-medium">
                     Sync to Calendar
                   </button>
                   <button onClick={() => handleDelete(wc.id)} className="text-red-600 hover:text-red-800 text-sm font-medium">

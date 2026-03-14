@@ -109,7 +109,8 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
       <div className="max-w-md w-full space-y-8">
         <div className="text-center">
-          <h1 className="text-3xl font-bold text-indigo-800">Court Calendar Tracker</h1>
+          <img src="/logo.svg" alt="Court Calendar Tracker" className="h-16 w-16 mx-auto mb-3" />
+          <h1 className="text-3xl font-bold text-slate-800">Court Calendar Tracker</h1>
           <h2 className="mt-2 text-xl text-gray-600">Sign in to your account</h2>
         </div>
 
@@ -141,7 +142,7 @@ export default function LoginPage() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500"
+              className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-amber-500 focus:border-amber-500"
             />
           </div>
 
@@ -152,23 +153,23 @@ export default function LoginPage() {
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500"
+              className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-amber-500 focus:border-amber-500"
             />
           </div>
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-indigo-600 text-white py-2 rounded-md font-medium hover:bg-indigo-700 disabled:opacity-50"
+            className="w-full bg-amber-700 text-white py-2 rounded-md font-medium hover:bg-slate-700 disabled:opacity-50"
           >
             {loading ? "Signing in..." : "Sign In"}
           </button>
 
           <div className="flex justify-between text-sm">
-            <Link to="/forgot-password" className="text-indigo-600 hover:text-indigo-500">
+            <Link to="/forgot-password" className="text-amber-700 hover:text-amber-600">
               Forgot password?
             </Link>
-            <Link to="/register" className="text-indigo-600 hover:text-indigo-500">
+            <Link to="/register" className="text-amber-700 hover:text-amber-600">
               Create account
             </Link>
           </div>

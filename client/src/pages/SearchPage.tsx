@@ -139,7 +139,7 @@ export default function SearchPage() {
                         <td className="px-4 py-3 text-sm space-y-1">
                           <button
                             onClick={() => handleWatch(event)}
-                            className="text-indigo-600 hover:text-indigo-800 text-sm font-medium block"
+                            className="text-amber-700 hover:text-slate-800 text-sm font-medium block"
                           >
                             Watch
                           </button>

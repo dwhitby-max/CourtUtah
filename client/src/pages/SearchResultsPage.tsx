@@ -67,7 +67,7 @@ export default function SearchResultsPage() {
         <h1 className="text-2xl font-bold text-gray-900">Search Results</h1>
         <button
           onClick={() => navigate("/search")}
-          className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
+          className="text-amber-700 hover:text-slate-800 text-sm font-medium"
         >
           New Search
         </button>
@@ -143,7 +143,7 @@ export default function SearchResultsPage() {
                         <td className="px-4 py-3 text-sm space-y-1">
                           <button
                             onClick={() => handleWatch(event)}
-                            className="text-indigo-600 hover:text-indigo-800 text-sm font-medium block"
+                            className="text-amber-700 hover:text-slate-800 text-sm font-medium block"
                           >
                             Watch
                           </button>

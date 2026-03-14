@@ -41,7 +41,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <Link to="/watched-cases"
           className="bg-white shadow rounded-lg p-6 hover:shadow-md transition-shadow">
-          <div className="text-3xl font-bold text-indigo-600">{stats.watchedCases}</div>
+          <div className="text-3xl font-bold text-amber-700">{stats.watchedCases}</div>
           <div className="text-gray-600 mt-1">Watched Cases</div>
         </Link>
 
@@ -63,15 +63,15 @@ export default function DashboardPage() {
         <div className="space-y-3 text-sm text-gray-600">
           <div className="flex items-start space-x-3">
             <span className={`font-bold ${stats.calendarConnections > 0 ? "text-green-600" : "text-gray-400"}`}>1.</span>
-            <span><Link to="/calendar-settings" className="text-indigo-600 hover:underline">Connect a calendar</Link> (Google, Microsoft, Apple, or CalDAV)</span>
+            <span><Link to="/calendar-settings" className="text-amber-700 hover:underline">Connect a calendar</Link> (Google, Microsoft, Apple, or CalDAV)</span>
           </div>
           <div className="flex items-start space-x-3">
             <span className="font-bold text-gray-400">2.</span>
-            <span><Link to="/search" className="text-indigo-600 hover:underline">Search</Link> for a court case by name, case number, OTN, or citation</span>
+            <span><Link to="/search" className="text-amber-700 hover:underline">Search</Link> for a court case by name, case number, OTN, or citation</span>
           </div>
           <div className="flex items-start space-x-3">
             <span className="font-bold text-gray-400">3.</span>
-            <span>Add results to your <Link to="/watched-cases" className="text-indigo-600 hover:underline">watched cases</Link> to auto-sync to your calendar</span>
+            <span>Add results to your <Link to="/watched-cases" className="text-amber-700 hover:underline">watched cases</Link> to auto-sync to your calendar</span>
           </div>
           <div className="flex items-start space-x-3">
             <span className="font-bold text-gray-400">4.</span>

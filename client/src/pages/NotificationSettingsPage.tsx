@@ -63,7 +63,7 @@ export default function NotificationSettingsPage() {
           <div className="space-y-3">
             <label className="flex items-center space-x-3">
               <input type="checkbox" checked={emailEnabled} onChange={(e) => setEmailEnabled(e.target.checked)}
-                className="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500" />
+                className="h-4 w-4 text-amber-700 border-gray-300 rounded focus:ring-amber-500" />
               <div>
                 <span className="text-sm text-gray-700">Email notifications</span>
                 <p className="text-xs text-gray-500">Receive schedule changes and event matches via email</p>
@@ -71,7 +71,7 @@ export default function NotificationSettingsPage() {
             </label>
             <label className="flex items-center space-x-3">
               <input type="checkbox" checked={smsEnabled} onChange={(e) => setSmsEnabled(e.target.checked)}
-                className="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500" />
+                className="h-4 w-4 text-amber-700 border-gray-300 rounded focus:ring-amber-500" />
               <div>
                 <span className="text-sm text-gray-700">SMS notifications</span>
                 <p className="text-xs text-gray-500">Text message alerts (requires phone number below)</p>
@@ -79,7 +79,7 @@ export default function NotificationSettingsPage() {
             </label>
             <label className="flex items-center space-x-3">
               <input type="checkbox" checked={inAppEnabled} onChange={(e) => setInAppEnabled(e.target.checked)}
-                className="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500" />
+                className="h-4 w-4 text-amber-700 border-gray-300 rounded focus:ring-amber-500" />
               <div>
                 <span className="text-sm text-gray-700">In-app notifications</span>
                 <p className="text-xs text-gray-500">Real-time notifications in the notification bell</p>
@@ -92,7 +92,7 @@ export default function NotificationSettingsPage() {
           <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number (for SMS)</label>
           <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)}
             placeholder="+1234567890"
-            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500" />
+            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-amber-500 focus:border-amber-500" />
           <p className="mt-1 text-xs text-gray-500">Required for SMS notifications. Include country code.</p>
         </div>
 
@@ -101,7 +101,7 @@ export default function NotificationSettingsPage() {
           <select
             value={frequency}
             onChange={(e) => setFrequency(e.target.value as NotificationFrequency)}
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-amber-500 focus:border-amber-500"
           >
             <option value="immediate">Immediate — notify me right away</option>
             <option value="daily_digest">Daily Digest — summary email each morning (6 AM UTC)</option>
@@ -122,7 +122,7 @@ export default function NotificationSettingsPage() {
         </div>
 
         <button type="submit" disabled={saving}
-          className="bg-indigo-600 text-white px-6 py-2 rounded-md text-sm font-medium hover:bg-indigo-700 disabled:opacity-50">
+          className="bg-amber-700 text-white px-6 py-2 rounded-md text-sm font-medium hover:bg-slate-700 disabled:opacity-50">
           {saving ? "Saving..." : "Save Settings"}
         </button>
       </form>

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 160" width="140" height="160">
+  <!-- Shield outer -->
+  <path d="M20 10 L120 10 Q130 10 130 20 L130 100 Q130 140 70 158 Q10 140 10 100 L10 20 Q10 10 20 10 Z" fill="#1e293b"/>
+  <!-- Shield inner -->
+  <path d="M28 20 L112 20 Q118 20 118 26 L118 96 Q118 130 70 146 Q22 130 22 96 L22 26 Q22 20 28 20 Z" fill="#f1f5f9"/>
+  <!-- Calendar header bar (gold) -->
+  <rect x="36" y="30" width="68" height="18" rx="4" fill="#b45309"/>
+  <text x="70" y="43" text-anchor="middle" font-size="11" font-weight="600" fill="#ffffff" font-family="system-ui, -apple-system, sans-serif">COURT</text>
+  <!-- Calendar day dots -->
+  <circle cx="46" cy="62" r="4" fill="#cbd5e1"/>
+  <circle cx="58" cy="62" r="4" fill="#cbd5e1"/>
+  <circle cx="70" cy="62" r="4.5" fill="#b45309"/>
+  <circle cx="82" cy="62" r="4" fill="#cbd5e1"/>
+  <circle cx="94" cy="62" r="4" fill="#cbd5e1"/>
+  <circle cx="46" cy="76" r="4" fill="#cbd5e1"/>
+  <circle cx="58" cy="76" r="4" fill="#cbd5e1"/>
+  <circle cx="70" cy="76" r="4" fill="#cbd5e1"/>
+  <circle cx="82" cy="76" r="4" fill="#cbd5e1"/>
+  <circle cx="94" cy="76" r="4" fill="#cbd5e1"/>
+  <circle cx="46" cy="90" r="4" fill="#cbd5e1"/>
+  <circle cx="58" cy="90" r="4" fill="#cbd5e1"/>
+  <!-- Gavel (gold) -->
+  <rect x="56" y="105" width="30" height="10" rx="4" fill="#b45309" opacity="0.8"/>
+  <rect x="68" y="115" width="6" height="20" rx="2" fill="#b45309" opacity="0.8"/>
+</svg>

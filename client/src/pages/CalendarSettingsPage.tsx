@@ -179,7 +179,7 @@ export default function CalendarSettingsPage() {
                     {(status === "expired" || status === "expiring") && (conn.provider === "google" || conn.provider === "microsoft") && (
                       <button
                         onClick={() => conn.provider === "google" ? handleGoogle() : handleMicrosoft()}
-                        className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
+                        className="text-amber-700 hover:text-slate-800 text-sm font-medium"
                       >
                         Re-authorize
                       </button>
@@ -199,25 +199,25 @@ export default function CalendarSettingsPage() {
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Add Calendar</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <button onClick={handleGoogle}
-            className="border-2 border-gray-200 rounded-lg p-4 text-left hover:border-indigo-400 transition-colors">
+            className="border-2 border-gray-200 rounded-lg p-4 text-left hover:border-amber-500 transition-colors">
             <div className="font-medium text-gray-900">Google Calendar</div>
             <div className="text-sm text-gray-500 mt-1">Connect via Google OAuth</div>
           </button>
 
           <button onClick={handleMicrosoft}
-            className="border-2 border-gray-200 rounded-lg p-4 text-left hover:border-indigo-400 transition-colors">
+            className="border-2 border-gray-200 rounded-lg p-4 text-left hover:border-amber-500 transition-colors">
             <div className="font-medium text-gray-900">Microsoft Outlook</div>
             <div className="text-sm text-gray-500 mt-1">Connect via Microsoft OAuth</div>
           </button>
 
           <button onClick={() => setShowApple(!showApple)}
-            className="border-2 border-gray-200 rounded-lg p-4 text-left hover:border-indigo-400 transition-colors">
+            className="border-2 border-gray-200 rounded-lg p-4 text-left hover:border-amber-500 transition-colors">
             <div className="font-medium text-gray-900">Apple iCloud</div>
             <div className="text-sm text-gray-500 mt-1">Connect with app-specific password</div>
           </button>
 
           <button onClick={() => setShowCaldav(!showCaldav)}
-            className="border-2 border-gray-200 rounded-lg p-4 text-left hover:border-indigo-400 transition-colors">
+            className="border-2 border-gray-200 rounded-lg p-4 text-left hover:border-amber-500 transition-colors">
             <div className="font-medium text-gray-900">CalDAV / Other</div>
             <div className="text-sm text-gray-500 mt-1">Connect any CalDAV-compatible calendar</div>
           </button>
@@ -227,13 +227,13 @@ export default function CalendarSettingsPage() {
           <form onSubmit={handleAppleSubmit} className="mt-4 border-t pt-4 space-y-3">
             <h3 className="font-medium">Apple iCloud Connection</h3>
             <p className="text-sm text-gray-500">
-              Use your Apple ID email and an <a href="https://support.apple.com/en-us/102654" target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline">app-specific password</a>.
+              Use your Apple ID email and an <a href="https://support.apple.com/en-us/102654" target="_blank" rel="noopener noreferrer" className="text-amber-700 underline">app-specific password</a>.
             </p>
             <input type="email" required placeholder="Apple ID (email)" value={appleUser} onChange={(e) => setAppleUser(e.target.value)}
               className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm" />
             <input type="password" required placeholder="App-specific password" value={applePass} onChange={(e) => setApplePass(e.target.value)}
               className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm" />
-            <button type="submit" className="bg-indigo-600 text-white px-4 py-2 rounded-md text-sm hover:bg-indigo-700">Connect</button>
+            <button type="submit" className="bg-amber-700 text-white px-4 py-2 rounded-md text-sm hover:bg-slate-700">Connect</button>
           </form>
         )}
 
@@ -246,7 +246,7 @@ export default function CalendarSettingsPage() {
               className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm" />
             <input type="password" required placeholder="Password" value={caldavPass} onChange={(e) => setCaldavPass(e.target.value)}
               className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm" />
-            <button type="submit" className="bg-indigo-600 text-white px-4 py-2 rounded-md text-sm hover:bg-indigo-700">Connect</button>
+            <button type="submit" className="bg-amber-700 text-white px-4 py-2 rounded-md text-sm hover:bg-slate-700">Connect</button>
           </form>
         )}
       </div>

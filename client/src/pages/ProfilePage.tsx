@@ -68,7 +68,7 @@ export default function ProfilePage() {
           <label className="block text-sm font-medium text-gray-700 mb-1">Phone (for SMS notifications)</label>
           <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)}
             placeholder="+1234567890"
-            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500" />
+            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-amber-500 focus:border-amber-500" />
         </div>
 
         <div>
@@ -76,17 +76,17 @@ export default function ProfilePage() {
           <div className="space-y-3">
             <label className="flex items-center space-x-3">
               <input type="checkbox" checked={emailEnabled} onChange={(e) => setEmailEnabled(e.target.checked)}
-                className="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500" />
+                className="h-4 w-4 text-amber-700 border-gray-300 rounded focus:ring-amber-500" />
               <span className="text-sm text-gray-700">Email notifications</span>
             </label>
             <label className="flex items-center space-x-3">
               <input type="checkbox" checked={smsEnabled} onChange={(e) => setSmsEnabled(e.target.checked)}
-                className="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500" />
+                className="h-4 w-4 text-amber-700 border-gray-300 rounded focus:ring-amber-500" />
               <span className="text-sm text-gray-700">SMS notifications (requires phone number)</span>
             </label>
             <label className="flex items-center space-x-3">
               <input type="checkbox" checked={inAppEnabled} onChange={(e) => setInAppEnabled(e.target.checked)}
-                className="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500" />
+                className="h-4 w-4 text-amber-700 border-gray-300 rounded focus:ring-amber-500" />
               <span className="text-sm text-gray-700">In-app notifications</span>
             </label>
           </div>
@@ -96,7 +96,7 @@ export default function ProfilePage() {
             <select
               value={frequency}
               onChange={(e) => setFrequency(e.target.value as "immediate" | "daily_digest" | "weekly_digest")}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-amber-500 focus:border-amber-500"
             >
               <option value="immediate">Immediate — notify me right away</option>
               <option value="daily_digest">Daily Digest — summary email each morning</option>
@@ -109,7 +109,7 @@ export default function ProfilePage() {
         </div>
 
         <button type="submit" disabled={saving}
-          className="bg-indigo-600 text-white px-6 py-2 rounded-md text-sm font-medium hover:bg-indigo-700 disabled:opacity-50">
+          className="bg-amber-700 text-white px-6 py-2 rounded-md text-sm font-medium hover:bg-slate-700 disabled:opacity-50">
           {saving ? "Saving..." : "Save Changes"}
         </button>
       </form>

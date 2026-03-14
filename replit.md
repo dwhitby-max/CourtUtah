@@ -57,6 +57,13 @@ shared/          # types.ts — shared TypeScript interfaces
 - OAuth tokens encrypted AES-256-GCM
 - Per-request correlation IDs
 
+## Brand / UI Theme
+- **Primary accent:** amber-700 (`#b45309`) — buttons, links, active states
+- **Nav background:** slate-800 (`#1e293b`) — top navigation bar
+- **Logo:** shield + gavel SVG (`client/public/logo.svg`), favicon (`favicon.svg`, `favicon-32.png`), PWA icon (`logo-192.png`)
+- All former `indigo-*` Tailwind classes replaced with `amber-*` / `slate-*` equivalents
+- Logo displayed in nav bar (Layout.tsx) and on auth pages (Login, Register, Forgot/Reset Password)
+
 ## Fixes Applied on Replit Setup
 - Renamed `client/src/store/authStore.ts` → `authStore.tsx` (contained JSX)
 - Added `app.set("trust proxy", 1)` for express-rate-limit behind Replit proxy

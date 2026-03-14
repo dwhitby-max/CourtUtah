@@ -61,7 +61,7 @@ export default function NotificationsPage() {
         </h1>
         {unreadCount > 0 && (
           <button onClick={handleMarkAllRead}
-            className="text-indigo-600 hover:text-indigo-800 text-sm font-medium">
+            className="text-amber-700 hover:text-slate-800 text-sm font-medium">
             Mark all as read
           </button>
         )}
@@ -76,7 +76,7 @@ export default function NotificationsPage() {
           {notifications.map((n) => (
             <div
               key={n.id}
-              className={`bg-white shadow rounded-lg p-4 ${!n.read ? "border-l-4 border-indigo-500" : ""}`}
+              className={`bg-white shadow rounded-lg p-4 ${!n.read ? "border-l-4 border-amber-600" : ""}`}
             >
               <div className="flex justify-between items-start">
                 <div className="flex-1">
@@ -93,7 +93,7 @@ export default function NotificationsPage() {
                 </div>
                 {!n.read && (
                   <button onClick={() => handleMarkRead(n.id)}
-                    className="text-indigo-600 hover:text-indigo-800 text-xs font-medium ml-4 whitespace-nowrap">
+                    className="text-amber-700 hover:text-slate-800 text-xs font-medium ml-4 whitespace-nowrap">
                     Mark read
                   </button>
                 )}
