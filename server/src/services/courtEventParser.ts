@@ -107,8 +107,8 @@ export function parseHtmlCalendarResults(html: string): ParsedCourtEvent[] {
 
   if (!html || html.trim().length === 0) return events;
 
-  // Check for no-results indicators
-  if (html.includes("0 results found")) return events;
+  // Check for no-results indicators (use regex to avoid "1000" matching "0 results")
+  if (/\b0 results found\b/i.test(html)) return events;
   if (html.includes("currently being updated")) return events;
 
   // Check result count
