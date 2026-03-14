@@ -11,6 +11,7 @@ export default function SearchPage() {
   const [error, setError] = useState("");
   const [watchSuccess, setWatchSuccess] = useState("");
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [debugInfo, setDebugInfo] = useState("");
 
   async function handleSearch(params: Record<string, string>) {
     setError("");
@@ -18,12 +19,16 @@ export default function SearchPage() {
     setSearched(true);
     setWatchSuccess("");
     setExpandedId(null);
+    setDebugInfo(`Searching with params: ${JSON.stringify(params)}`);
 
     try {
       const data = await searchCourtEvents(params);
+      setDebugInfo(prev => prev + ` | API returned ${data.resultsCount} results`);
       setResults(data.results);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Search failed");
+      const msg = err instanceof Error ? err.message : "Search failed";
+      setDebugInfo(prev => prev + ` | ERROR: ${msg}`);
+      setError(msg);
       setResults([]);
     } finally {
       setLoading(false);
@@ -71,6 +76,8 @@ export default function SearchPage() {
       <h1 className="text-2xl font-bold text-gray-900">Search Court Calendars</h1>
 
       <SearchForm onSearch={handleSearch} loading={loading} />
+
+      {debugInfo && <div className="bg-blue-50 text-blue-700 p-3 rounded-md text-xs font-mono">{debugInfo}</div>}
 
       {error && <div className="bg-red-50 text-red-700 p-4 rounded-md text-sm">{error}</div>}
       {watchSuccess && <div className="bg-green-50 text-green-700 p-4 rounded-md text-sm">{watchSuccess}</div>}

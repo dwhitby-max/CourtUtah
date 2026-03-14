@@ -5,6 +5,25 @@ import { searchCourtEvents } from "../services/searchService";
 
 const router = Router();
 
+// GET /api/search/debug — no-auth test to verify search pipeline
+router.get("/debug", async (_req: Request, res: Response) => {
+  try {
+    const results = await searchCourtEvents({ attorney: "Robinson" });
+    res.json({
+      message: "Debug search test",
+      query: "attorney=Robinson",
+      resultsCount: results.length,
+      sample: results.slice(0, 2).map(r => ({
+        caseNumber: r.caseNumber,
+        defendantName: r.defendantName,
+        prosecutingAttorney: r.prosecutingAttorney,
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 router.use(authenticateToken);
 router.use(heavyLimiter);
 

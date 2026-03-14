@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import https from "https";
+import zlib from "zlib";
 import { ParsedCourtEvent } from "./courtEventParser";
 
 // ============================================================
@@ -68,29 +69,50 @@ export function fetchReportHtml(
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
           "Content-Length": Buffer.byteLength(postData),
-          "User-Agent": "UtahCourtCalendarTracker/1.0",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Encoding": "gzip, deflate",
+          "Connection": "keep-alive",
         },
         timeout: timeoutMs,
       },
       (res) => {
-        // Follow redirects (up to 3)
         if (
           res.statusCode &&
           res.statusCode >= 300 &&
           res.statusCode < 400 &&
           res.headers.location
         ) {
-          // On redirect, do a GET to the new location
           const redirectUrl = res.headers.location.startsWith("http")
             ? res.headers.location
             : `https://${url.hostname}${res.headers.location}`;
           https
-            .get(redirectUrl, { timeout: timeoutMs }, (redirectRes) => {
+            .get(redirectUrl, {
+              timeout: timeoutMs,
+              headers: {
+                "Accept-Encoding": "gzip, deflate",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+              },
+            }, (redirectRes) => {
               const chunks: Buffer[] = [];
               redirectRes.on("data", (chunk: Buffer) => chunks.push(chunk));
-              redirectRes.on("end", () =>
-                resolve(Buffer.concat(chunks).toString("utf-8"))
-              );
+              redirectRes.on("end", () => {
+                const buffer = Buffer.concat(chunks);
+                const encoding = redirectRes.headers["content-encoding"];
+                if (encoding === "gzip") {
+                  zlib.gunzip(buffer, (err, decoded) => {
+                    if (err) return reject(err);
+                    resolve(decoded.toString("utf-8"));
+                  });
+                } else if (encoding === "deflate") {
+                  zlib.inflate(buffer, (err, decoded) => {
+                    if (err) return reject(err);
+                    resolve(decoded.toString("utf-8"));
+                  });
+                } else {
+                  resolve(buffer.toString("utf-8"));
+                }
+              });
               redirectRes.on("error", reject);
             })
             .on("error", reject)
@@ -108,9 +130,23 @@ export function fetchReportHtml(
 
         const chunks: Buffer[] = [];
         res.on("data", (chunk: Buffer) => chunks.push(chunk));
-        res.on("end", () =>
-          resolve(Buffer.concat(chunks).toString("utf-8"))
-        );
+        res.on("end", () => {
+          const buffer = Buffer.concat(chunks);
+          const encoding = res.headers["content-encoding"];
+          if (encoding === "gzip") {
+            zlib.gunzip(buffer, (err, decoded) => {
+              if (err) return reject(err);
+              resolve(decoded.toString("utf-8"));
+            });
+          } else if (encoding === "deflate") {
+            zlib.inflate(buffer, (err, decoded) => {
+              if (err) return reject(err);
+              resolve(decoded.toString("utf-8"));
+            });
+          } else {
+            resolve(buffer.toString("utf-8"));
+          }
+        });
         res.on("error", reject);
       }
     );

@@ -1,5 +1,6 @@
 import https from "https";
 import http from "http";
+import zlib from "zlib";
 
 const COURT_CALENDARS_BASE = "https://legacy.utcourts.gov/cal";
 
@@ -55,13 +56,14 @@ function fetchUrlOnce(url: string, timeoutMs: number): Promise<Buffer> {
       url,
       {
         headers: {
-          "User-Agent": "UtahCourtCalendarTracker/1.0 (+https://github.com/utcourtcal)",
-          Accept: "text/html,application/xhtml+xml,*/*",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Encoding": "gzip, deflate",
+          "Connection": "keep-alive",
         },
         timeout: timeoutMs,
       },
       (res) => {
-        // Follow redirects
         if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           const redirectUrl = res.headers.location.startsWith("http")
             ? res.headers.location
@@ -77,7 +79,24 @@ function fetchUrlOnce(url: string, timeoutMs: number): Promise<Buffer> {
 
         const chunks: Buffer[] = [];
         res.on("data", (chunk: Buffer) => chunks.push(chunk));
-        res.on("end", () => resolve(Buffer.concat(chunks)));
+        res.on("end", () => {
+          const buffer = Buffer.concat(chunks);
+          const encoding = res.headers["content-encoding"];
+
+          if (encoding === "gzip") {
+            zlib.gunzip(buffer, (err, decoded) => {
+              if (err) return reject(err);
+              resolve(decoded);
+            });
+          } else if (encoding === "deflate") {
+            zlib.inflate(buffer, (err, decoded) => {
+              if (err) return reject(err);
+              resolve(decoded);
+            });
+          } else {
+            resolve(buffer);
+          }
+        });
         res.on("error", reject);
       }
     );
@@ -214,6 +233,7 @@ export async function fetchCourtList(): Promise<CourtInfo[]> {
   console.log("🔄 Fetching court list from legacy.utcourts.gov/cal/...");
   const htmlBuffer = await fetchUrl(`${COURT_CALENDARS_BASE}/`);
   const html = htmlBuffer.toString("utf-8");
+  console.log(`📄 Court list HTML preview (first 300 chars): ${html.slice(0, 300)}`);
   const courts = parseCourtListHtml(html);
   console.log(`✅ Found ${courts.length} courts (District + Justice)`);
   return courts;
