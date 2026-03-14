@@ -35,6 +35,20 @@ export async function searchCourtEvents(params: SearchRequest): Promise<CourtEve
     paramIndex++;
   }
 
+  if (params.dateFrom && params.dateTo) {
+    conditions.push(`event_date >= $${paramIndex} AND event_date <= $${paramIndex + 1}`);
+    values.push(params.dateFrom, params.dateTo);
+    paramIndex += 2;
+  } else if (params.dateFrom) {
+    conditions.push(`event_date >= $${paramIndex}`);
+    values.push(params.dateFrom);
+    paramIndex++;
+  } else if (params.dateTo) {
+    conditions.push(`event_date <= $${paramIndex}`);
+    values.push(params.dateTo);
+    paramIndex++;
+  }
+
   if (params.defendantOtn) {
     conditions.push(`UPPER(defendant_otn) LIKE $${paramIndex}`);
     values.push(`%${params.defendantOtn.toUpperCase()}%`);

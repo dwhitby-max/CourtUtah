@@ -15,6 +15,8 @@ router.get("/", async (req: Request, res: Response) => {
     caseNumber: req.query.case_number as string | undefined,
     courtName: req.query.court_name as string | undefined,
     courtDate: req.query.court_date as string | undefined,
+    dateFrom: req.query.date_from as string | undefined,
+    dateTo: req.query.date_to as string | undefined,
     defendantOtn: req.query.defendant_otn as string | undefined,
     citationNumber: req.query.citation_number as string | undefined,
     charges: req.query.charges as string | undefined,

@@ -9,7 +9,8 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
   const [defendantName, setDefendantName] = useState("");
   const [caseNumber, setCaseNumber] = useState("");
   const [courtName, setCourtName] = useState("");
-  const [courtDate, setCourtDate] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [defendantOtn, setDefendantOtn] = useState("");
   const [citationNumber, setCitationNumber] = useState("");
   const [charges, setCharges] = useState("");
@@ -22,7 +23,8 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
     if (defendantName) params.defendant_name = defendantName;
     if (caseNumber) params.case_number = caseNumber;
     if (courtName) params.court_name = courtName;
-    if (courtDate) params.court_date = courtDate;
+    if (dateFrom) params.date_from = dateFrom;
+    if (dateTo) params.date_to = dateTo;
     if (defendantOtn) params.defendant_otn = defendantOtn;
     if (citationNumber) params.citation_number = citationNumber;
     if (charges) params.charges = charges;
@@ -72,11 +74,23 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Court Date</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Date From</label>
           <input
             type="date"
-            value={courtDate}
-            onChange={(e) => setCourtDate(e.target.value)}
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            max={dateTo || undefined}
+            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-amber-500 focus:border-amber-500"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Date To</label>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            min={dateFrom || undefined}
             className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-amber-500 focus:border-amber-500"
           />
         </div>

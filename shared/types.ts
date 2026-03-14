@@ -88,6 +88,8 @@ export interface SearchRequest {
   caseNumber?: string;
   courtName?: string;
   courtDate?: string;
+  dateFrom?: string;
+  dateTo?: string;
   defendantOtn?: string;
   citationNumber?: string;
   charges?: string;
