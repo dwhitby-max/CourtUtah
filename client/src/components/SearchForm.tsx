@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { apiFetch } from "@/api/client";
 
 interface SearchFormProps {
   onSearch: (params: Record<string, string>) => void;
@@ -16,6 +17,19 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
   const [charges, setCharges] = useState("");
   const [judgeName, setJudgeName] = useState("");
   const [attorney, setAttorney] = useState("");
+  const [coverage, setCoverage] = useState<{
+    totalEvents: number;
+    totalCourts: number;
+    earliestDate: string | null;
+    latestDate: string | null;
+  } | null>(null);
+
+  useEffect(() => {
+    apiFetch("/search/coverage")
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => { if (data) setCoverage(data); })
+      .catch(() => {});
+  }, []);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -37,7 +51,16 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="bg-white shadow rounded-lg p-6">
-      <h2 className="text-lg font-semibold text-gray-900 mb-4">Search Court Calendars</h2>
+      <h2 className="text-lg font-semibold text-gray-900 mb-2">Search Court Calendars</h2>
+
+      {coverage && coverage.totalEvents > 0 && (
+        <p className="text-sm text-gray-500 mb-4">
+          {coverage.totalEvents.toLocaleString()} events across {coverage.totalCourts} courts
+          {coverage.earliestDate && coverage.latestDate && (
+            <> &middot; {coverage.earliestDate} to {coverage.latestDate}</>
+          )}
+        </p>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <div>

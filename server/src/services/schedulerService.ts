@@ -41,16 +41,26 @@ function buildDateList(daysAhead: number): string[] {
   return dates;
 }
 
+/** Random delay between 0 and maxMs milliseconds */
+function randomDelay(maxMs: number): Promise<void> {
+  const ms = Math.floor(Math.random() * maxMs);
+  const minutes = Math.round(ms / 60000);
+  console.log(`⏰ Random start delay: ${minutes} minutes`);
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 /**
  * Start the daily cron job for scraping court calendars.
- * Runs at 2:00 AM UTC every day.
+ * Cron fires at 2:00 AM UTC; a random 0–60 min delay staggers the actual start
+ * so requests don't hit utcourts.gov at the exact same time every day.
  */
 export function startScheduler(): void {
-  console.log("⏰ Starting court calendar scheduler (daily at 2:00 AM UTC)");
+  console.log("⏰ Starting court calendar scheduler (daily ~2:00–3:00 AM UTC)");
 
-  // Main scrape job — daily at 2 AM UTC
+  // Main scrape job — daily at 2 AM UTC + random 0-60 min offset
   cron.schedule("0 2 * * *", async () => {
-    console.log("⏰ Scheduled scrape triggered");
+    console.log("⏰ Scheduled scrape triggered, adding random delay...");
+    await randomDelay(60 * 60 * 1000);
     await runScrapeJob();
   });
 
