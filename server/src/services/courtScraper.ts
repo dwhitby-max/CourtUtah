@@ -279,3 +279,77 @@ export async function fetchCourtCalendarHtml(
   const buffer = await fetchUrl(url);
   return buffer.toString("utf-8");
 }
+
+/**
+ * Live search parameters for utcourts.gov search.php GET form.
+ */
+export interface LiveSearchParams {
+  /** Party/defendant name (min 2 chars) */
+  partyName?: string;
+  /** Case number (min 3 digits) */
+  caseNumber?: string;
+  /** Judge name (min 2 chars) */
+  judgeName?: string;
+  /** Attorney last name (min 2 chars) */
+  attorneyLastName?: string;
+  /** Attorney first name */
+  attorneyFirstName?: string;
+  /** Attorney bar number */
+  attorneyBarNumber?: string;
+  /** Date in YYYY-MM-DD format, or "all" for all dates */
+  date?: string;
+  /** Court location code (e.g. "1868D") */
+  locationCode?: string;
+}
+
+/**
+ * GET from legacy.utcourts.gov/cal/search.php with query parameters.
+ *
+ * The form uses method="get" with these parameters:
+ *   t = search type: "p" (party), "c" (case), "j" (judge), "a" (attorney)
+ *   p = party name
+ *   c = case number
+ *   j = judge name
+ *   f = attorney first name
+ *   l = attorney last name
+ *   b = attorney bar number
+ *   d = date in YYYY-MM-DD format or "all"
+ *   loc = court location code
+ */
+export async function liveSearchUtcourts(params: LiveSearchParams): Promise<string> {
+  const qs: Record<string, string> = {};
+
+  // Determine search type and set the appropriate field
+  if (params.caseNumber) {
+    qs.t = "c";
+    qs.c = params.caseNumber;
+  } else if (params.partyName) {
+    qs.t = "p";
+    qs.p = params.partyName;
+  } else if (params.judgeName) {
+    qs.t = "j";
+    qs.j = params.judgeName;
+  } else if (params.attorneyLastName || params.attorneyBarNumber) {
+    qs.t = "a";
+    if (params.attorneyLastName) qs.l = params.attorneyLastName;
+    if (params.attorneyFirstName) qs.f = params.attorneyFirstName;
+    if (params.attorneyBarNumber) qs.b = params.attorneyBarNumber;
+  } else {
+    throw new Error("At least one search field (party name, case number, judge, or attorney) is required");
+  }
+
+  // Date — already in YYYY-MM-DD or "all"
+  qs.d = (params.date && params.date !== "all") ? params.date : "all";
+
+  // Location
+  if (params.locationCode) {
+    qs.loc = params.locationCode;
+  }
+
+  const queryString = new URLSearchParams(qs).toString();
+  const url = `${COURT_CALENDARS_BASE}/search.php?${queryString}`;
+  console.log(`🔍 Live search GET: ${url}`);
+
+  const buffer = await fetchUrl(url);
+  return buffer.toString("utf-8");
+}
