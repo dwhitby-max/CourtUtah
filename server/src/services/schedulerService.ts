@@ -4,7 +4,7 @@ import { fetchCourtList, fetchCourtCalendarHtml, fetchUrl, buildSearchUrl, Court
 import { parseHtmlCalendarResults, parseCourtCalendarText, ParsedCourtEvent } from "./courtEventParser";
 import { detectChanges, processChanges } from "./changeDetector";
 import { syncCalendarEntry } from "./calendarSync";
-import { buildReportUrl, parseReportHtml, enrichEventsWithReportData } from "./reportParser";
+import { buildReportUrl, fetchReportHtml, parseReportHtml, enrichEventsWithReportData } from "./reportParser";
 import { captureException, captureMessage } from "./sentryService";
 import { matchWatchedCases } from "./watchedCaseMatcher";
 import { sendDigestNotifications } from "./digestService";
@@ -176,8 +176,8 @@ export async function runScrapeJob(): Promise<{
         // Build charges lookup: case_number::event_date -> charges[]
         const chargesLookup = new Map<string, string[]>();
         try {
-          const reportHtml = await fetchUrl(buildReportUrl(court.locationCode), 1, 15000);
-          const reportEvents = parseReportHtml(reportHtml.toString("utf-8"));
+          const reportHtml = await fetchReportHtml(court.locationCode, 15000);
+          const reportEvents = parseReportHtml(reportHtml);
           if (reportEvents.length > 0) {
             const enrichedCount = enrichEventsWithReportData(allCourtEvents, reportEvents);
             if (enrichedCount > 0) {

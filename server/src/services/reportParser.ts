@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import https from "https";
 import { ParsedCourtEvent } from "./courtEventParser";
 
 // ============================================================
@@ -13,7 +14,7 @@ import { ParsedCourtEvent } from "./courtEventParser";
 // parser doesn't provide. Results are used to enrich existing
 // court_events records by matching on case_number + event_date.
 //
-// URL format: reports.php?loc=XXXXD (e.g., reports.php?loc=0211D)
+// URL format: POST to reports.php with form data loc=XXXXD&d=all&judge=&atty=
 // ============================================================
 
 const REPORTS_BASE = "https://legacy.utcourts.gov/cal/reports.php";
@@ -43,6 +44,86 @@ export interface ReportEvent {
  */
 export function buildReportUrl(locationCode: string): string {
   return `${REPORTS_BASE}?loc=${encodeURIComponent(locationCode)}`;
+}
+
+/**
+ * Fetch reports.php HTML via POST with the required form data.
+ * reports.php requires a POST request with form fields:
+ *   loc=XXXXD&d=all&judge=&atty=
+ */
+export function fetchReportHtml(
+  locationCode: string,
+  timeoutMs = 15000
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const postData = `loc=${encodeURIComponent(locationCode)}&d=all&judge=&atty=`;
+    const url = new URL(REPORTS_BASE);
+
+    const req = https.request(
+      {
+        hostname: url.hostname,
+        port: 443,
+        path: url.pathname,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "Content-Length": Buffer.byteLength(postData),
+          "User-Agent": "UtahCourtCalendarTracker/1.0",
+        },
+        timeout: timeoutMs,
+      },
+      (res) => {
+        // Follow redirects (up to 3)
+        if (
+          res.statusCode &&
+          res.statusCode >= 300 &&
+          res.statusCode < 400 &&
+          res.headers.location
+        ) {
+          // On redirect, do a GET to the new location
+          const redirectUrl = res.headers.location.startsWith("http")
+            ? res.headers.location
+            : `https://${url.hostname}${res.headers.location}`;
+          https
+            .get(redirectUrl, { timeout: timeoutMs }, (redirectRes) => {
+              const chunks: Buffer[] = [];
+              redirectRes.on("data", (chunk: Buffer) => chunks.push(chunk));
+              redirectRes.on("end", () =>
+                resolve(Buffer.concat(chunks).toString("utf-8"))
+              );
+              redirectRes.on("error", reject);
+            })
+            .on("error", reject)
+            .on("timeout", function (this: ReturnType<typeof https.get>) {
+              this.destroy();
+              reject(new Error("Redirect request timed out"));
+            });
+          return;
+        }
+
+        if (res.statusCode && res.statusCode >= 400) {
+          reject(new Error(`reports.php returned HTTP ${res.statusCode}`));
+          return;
+        }
+
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () =>
+          resolve(Buffer.concat(chunks).toString("utf-8"))
+        );
+        res.on("error", reject);
+      }
+    );
+
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("reports.php POST request timed out"));
+    });
+
+    req.write(postData);
+    req.end();
+  });
 }
 
 /**
@@ -83,331 +164,155 @@ function hashReportEvent(event: Omit<ReportEvent, "contentHash">): string {
 /**
  * Parse the Full Court Calendar HTML from reports.php.
  *
- * The reports page renders cases in HTML table rows, organized by
- * judge/courtroom, with each case containing:
- * - Time, date, case number, case type
- * - Defendant name (and sometimes plaintiff)
- * - OTN, DOB, citation #, sheriff #, LEA #
- * - Prosecuting attorney and defense attorney
- * - Charge descriptions
- * - Hearing type
+ * The reports page uses div-based layout (not tables). Each case block contains:
+ * - Time + date + court info header
+ * - col-sm-4: defendant/parties with vs. pattern
+ * - col-sm-4: attorneys (DEF ATTY: / PLA ATTY:)
+ * - col-sm-4: case #, case type, judge, courtroom
+ * - Additional bottomline div: OTN, DOB, charges, citation/sheriff/LEA
  *
- * The HTML structure uses <table> with <tr>/<td> rows.
- * Courtroom/judge headers appear as spanning rows.
- * Individual cases appear as data rows with multiple cells.
+ * Cases are separated by time headers within "nobreakdiv box" containers.
  */
 export function parseReportHtml(html: string): ReportEvent[] {
   const events: ReportEvent[] = [];
 
   if (!html || html.trim().length === 0) return events;
-
-  // Check for no-data indicators
   if (html.includes("No cases") || html.includes("no cases")) return events;
   if (html.includes("currently being updated")) return events;
+  if (!html.includes("Case #")) return events;
 
-  // Strategy: extract table rows and parse each case block.
-  // The reports.php output uses <table> elements with case data in rows.
+  // Split into case blocks by finding each time header followed by case data
+  // Each time appears twice: once in <strong class="printhide"> and once in <strong class="printshow">
+  // We match only the printhide version to avoid duplicates
+  const casePattern = /<strong class="printhide">\s*(\d{1,2}:\d{2}\s*[AP]M)\s*<\/strong>([\s\S]*?)(?=<strong class="printhide">\s*\d{1,2}:\d{2}\s*[AP]M\s*<\/strong>|<div class="break">|$)/gi;
 
-  // Extract all table rows
-  const rows = extractTableRows(html);
-  if (rows.length === 0) {
-    // Fallback: try parsing as text blocks (some courts may use divs)
-    return parseReportTextFallback(html);
-  }
-
-  let currentJudge: string | null = null;
-  let currentCourtRoom: string | null = null;
-
-  for (const row of rows) {
-    const cells = extractCells(row);
-
-    // Detect judge/courtroom header rows (typically have colspan or single cell)
-    if (isHeaderRow(row, cells)) {
-      const headerText = stripHtml(row);
-      const judgeMatch = headerText.match(/(?:Judge|JUDGE)[:\s]+([A-Z][A-Za-z\s.'-]+?)(?=\s+(?:COURTROOM|CTRM|COURT\s*ROOM)|$)/);
-      if (judgeMatch) {
-        currentJudge = judgeMatch[1].trim();
-      }
-      const roomMatch = headerText.match(/((?:COURTROOM|CTRM|COURT\s*ROOM)\s*\S+)/i);
-      if (roomMatch) {
-        currentCourtRoom = roomMatch[1].trim();
-      }
-      // Sometimes the header has no "Judge:" label — just "NAME COURTROOM N"
-      if (!judgeMatch && roomMatch) {
-        const beforeRoom = headerText.slice(0, headerText.indexOf(roomMatch[1])).trim();
-        if (beforeRoom.length >= 3 && /^[A-Z][A-Z\s.'-]+$/.test(beforeRoom)) {
-          currentJudge = beforeRoom;
-        }
-      }
-      // Sometimes the header is just the judge name in ALL CAPS (no courtroom)
-      if (!judgeMatch && !roomMatch && /^[A-Z][A-Z\s.'-]{3,}$/.test(headerText.trim())) {
-        currentJudge = headerText.trim();
-      }
-      continue;
-    }
-
-    // Try to parse a case data row
-    const parsed = parseCaseRow(cells, currentJudge, currentCourtRoom);
-    if (parsed) {
-      events.push(parsed);
-    }
-  }
-
-  return events;
-}
-
-/**
- * Extract <tr> blocks from HTML.
- */
-function extractTableRows(html: string): string[] {
-  const rows: string[] = [];
-  const pattern = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
   let match;
-  while ((match = pattern.exec(html)) !== null) {
-    rows.push(match[1]);
-  }
-  return rows;
-}
+  while ((match = casePattern.exec(html)) !== null) {
+    const eventTime = match[1].trim();
+    const blockHtml = match[2];
 
-/**
- * Extract <td> or <th> cell contents from a row.
- */
-function extractCells(rowHtml: string): string[] {
-  const cells: string[] = [];
-  const pattern = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
-  let match;
-  while ((match = pattern.exec(rowHtml)) !== null) {
-    cells.push(stripHtml(match[1]));
-  }
-  return cells;
-}
+    // Skip blocks without case numbers
+    if (!blockHtml.includes("Case #")) continue;
 
-/**
- * Detect if a row is a header (judge/courtroom) rather than case data.
- */
-function isHeaderRow(rowHtml: string, cells: string[]): boolean {
-  // Rows with colspan are usually headers
-  if (/colspan/i.test(rowHtml)) return true;
-  // Single-cell rows with short text are often headers
-  if (cells.length === 1 && cells[0].length < 100) return true;
-  // Rows with judge or courtroom keywords
-  if (cells.length <= 2) {
-    const text = cells.join(" ");
-    if (/(?:Judge|COURTROOM|CTRM)/i.test(text)) return true;
-  }
-  return false;
-}
-
-/**
- * Parse a single case data row into a ReportEvent.
- *
- * The cell structure varies by court but commonly includes:
- * Cell 0: Time (e.g., "1:30 PM")
- * Cell 1: Case # and type
- * Cell 2: Hearing type
- * Cell 3: Party names (plaintiff vs defendant)
- * Cell 4: Attorney info
- * Cell 5: OTN/DOB/Citation info
- * Cell 6: Charges
- *
- * This parser handles flexible cell ordering by searching for known patterns.
- */
-function parseCaseRow(
-  cells: string[],
-  currentJudge: string | null,
-  currentCourtRoom: string | null
-): ReportEvent | null {
-  if (cells.length === 0) return null;
-
-  const fullText = cells.join(" | ");
-
-  // Must have a time pattern to be a valid case
-  const timeMatch = fullText.match(/(\d{1,2}:\d{2}\s*[AP]M)/i);
-  if (!timeMatch) return null;
-
-  // Single-cell rows in table context (not fallback) are usually headers
-  // But if the single cell has a time + date + case#, it's valid data
-  if (cells.length === 1 && fullText.length < 30) return null;
-  if (!timeMatch) return null;
-
-  const eventTime = timeMatch[1].trim();
-
-  // Extract date (M/D/YYYY)
-  let eventDate: string | null = null;
-  const dateMatch = fullText.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (dateMatch) {
-    const month = dateMatch[1].padStart(2, "0");
-    const day = dateMatch[2].padStart(2, "0");
-    eventDate = `${dateMatch[3]}-${month}-${day}`;
-  }
-
-  // Case number
-  const caseMatch = fullText.match(/(?:Case\s*#?\s*|#\s*)(\d{6,})/i);
-  const caseNumber = caseMatch ? caseMatch[1] : null;
-
-  // Defendant name (after "vs." or "v.")
-  let defendantName: string | null = null;
-  const vsMatch = fullText.match(/vs?\.?\s+([A-Z][A-Z\s,.'-]+?)(?=\s*\||$|\s{2,}|\s+(?:ATTY|OTN|DOB|Case))/i);
-  if (vsMatch) {
-    defendantName = vsMatch[1].replace(/[,.\s]+$/, "").trim();
-  }
-
-  // Prosecuting attorney
-  let prosecutingAttorney: string | null = null;
-  const prosMatch = fullText.match(/(?:Pros(?:ecuting)?\.?\s*(?:Atty|Attorney)[:\s]+|PROS\s+ATTY[:\s]+)([A-Za-z\s,.'-]+?)(?=\s*\||$|\s{2,}|Def)/i);
-  if (prosMatch) {
-    prosecutingAttorney = prosMatch[1].replace(/[,.\s]+$/, "").trim();
-  }
-  // Fallback: first ATTY: line
-  if (!prosecutingAttorney) {
-    const attyMatch = fullText.match(/ATTY:\s*([A-Za-z\s,.'-]+?)(?=\s*\||$|\s+ATTY:|\s{2,})/i);
-    if (attyMatch) {
-      prosecutingAttorney = attyMatch[1].replace(/[,.\s]+$/, "").trim();
+    // Extract date (M/D/YYYY)
+    let eventDate: string | null = null;
+    const dateMatch = blockHtml.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (dateMatch) {
+      eventDate = `${dateMatch[3]}-${dateMatch[1].padStart(2, "0")}-${dateMatch[2].padStart(2, "0")}`;
     }
-  }
 
-  // Defense attorney
-  let defenseAttorney: string | null = null;
-  const defMatch = fullText.match(/(?:Def(?:ense)?\.?\s*(?:Atty|Attorney)[:\s]+|DEF\s+ATTY[:\s]+)([A-Za-z\s,.'-]+?)(?=\s*\||$|\s{2,})/i);
-  if (defMatch) {
-    defenseAttorney = defMatch[1].replace(/[,.\s]+$/, "").trim();
-  }
-  // Fallback: second ATTY: line
-  if (!defenseAttorney) {
-    const attyMatches = fullText.match(/ATTY:\s*([A-Za-z\s,.'-]+?)(?=\s*\||$|\s+ATTY:|\s{2,})/gi);
-    if (attyMatches && attyMatches.length >= 2) {
-      defenseAttorney = attyMatches[1].replace(/^ATTY:\s*/i, "").replace(/[,.\s]+$/, "").trim();
+    // Extract hearing type from header (text before the date section)
+    let hearingType: string | null = null;
+    const htMatch = blockHtml.match(/\n([A-Z][A-Z\s/()-]+?(?:HEARING|ARRAIGNMENT|CONFERENCE|TRIAL|MOTION|SENTENCING|DISPOSITION|REVIEW|PRETRIAL|PRELIMINARY|PLEA|ROLL CALL|SCHEDULING|PROBATION|INJUNCTION|WARRANT|SHOW CAUSE|ORDER|EVIDENTIARY)[A-Z\s/()-]*?)\s*(?:<\/div>|<br)/i);
+    if (htMatch) {
+      hearingType = htMatch[1].trim().replace(/\s+/g, " ");
     }
-  }
 
-  // OTN
-  let defendantOtn: string | null = null;
-  const otnMatch = fullText.match(/OTN[:\s]+(\S+)/i);
-  if (otnMatch) {
-    defendantOtn = otnMatch[1].trim();
-  }
-
-  // DOB
-  let defendantDob: string | null = null;
-  const dobMatch = fullText.match(/DOB[:\s]+(\d{1,2}\/\d{1,2}\/\d{4})/i);
-  if (dobMatch) {
-    const parts = dobMatch[1].split("/");
-    if (parts.length === 3) {
-      defendantDob = `${parts[2]}-${parts[0].padStart(2, "0")}-${parts[1].padStart(2, "0")}`;
+    // Extract defendant name (after vs.)
+    let defendantName: string | null = null;
+    const vsMatch = blockHtml.match(/vs\.\s*<br>\s*<span class="indent">\s*([^<]+)/i);
+    if (vsMatch) {
+      defendantName = vsMatch[1].trim();
     }
-  }
 
-  // Citation number
-  let citationNumber: string | null = null;
-  const citMatch = fullText.match(/CITATION\s*#?[:\s]+(\S+)/i);
-  if (citMatch) {
-    citationNumber = citMatch[1].trim();
-  }
+    // Extract attorneys
+    let prosecutingAttorney: string | null = null;
+    let defenseAttorney: string | null = null;
 
-  // Sheriff number
-  let sheriffNumber: string | null = null;
-  const shMatch = fullText.match(/SHERIFF\s*#?[:\s]+(\S+)/i);
-  if (shMatch) {
-    sheriffNumber = shMatch[1].trim();
-  }
-
-  // LEA number
-  let leaNumber: string | null = null;
-  const leaMatch = fullText.match(/LEA\s*#?[:\s]+(\S+)/i);
-  if (leaMatch) {
-    leaNumber = leaMatch[1].trim();
-  }
-
-  // Hearing type
-  let hearingType: string | null = null;
-  const htMatch = fullText.match(
-    /(ARRAIGNMENT|PRETRIAL|SENTENCING|DISPOSITION|PRELIMINARY|REVIEW|STATUS|CONFERENCE|TRIAL|MOTION|EVIDENTIARY|PROBATION|PLEA|ROLL CALL|SCHEDULING|BENCH TRIAL|JURY TRIAL)/i
-  );
-  if (htMatch) {
-    hearingType = htMatch[1].trim();
-  }
-
-  // Charges — look for charge patterns (statute codes or descriptions)
-  const charges: string[] = [];
-  // Pattern: "(charge description)" or charge code like "76-5-103" or labeled sections
-  const chargePattern = /(?:Charge[s]?[:\s]+|(?:^|\|)\s*)(\d{1,3}-\d{1,2}-\d{1,4}[A-Za-z()\s,./-]*)/gi;
-  let chMatch;
-  while ((chMatch = chargePattern.exec(fullText)) !== null) {
-    const charge = chMatch[1].trim();
-    if (charge.length > 3 && charge.length < 200) {
-      charges.push(charge);
+    const plaMatch = blockHtml.match(/<strong>PLA ATTY:<\/strong>\s*([^<]+)/i);
+    if (plaMatch) {
+      prosecutingAttorney = plaMatch[1].trim();
     }
-  }
-  // Also look for descriptive charges after "Charge:" label
-  const chargeDescMatch = fullText.match(/Charge[s]?[:\s]+([^|]+)/i);
-  if (chargeDescMatch && charges.length === 0) {
-    const desc = chargeDescMatch[1].trim();
-    if (desc.length > 3 && desc.length < 300) {
-      // Split by semicolons or numbered items
-      const parts = desc.split(/\s*;\s*|\s*\d+\)\s*/);
-      for (const part of parts) {
-        const trimmed = part.trim();
-        if (trimmed.length > 3) {
-          charges.push(trimmed);
-        }
+    const defAttyMatch = blockHtml.match(/<strong>DEF ATTY:<\/strong>\s*([^<]+)/i);
+    if (defAttyMatch) {
+      defenseAttorney = defAttyMatch[1].trim();
+    }
+
+    // Extract case number and case type from the case info div
+    let caseNumber: string | null = null;
+    let caseType: string | null = null;
+    let judgeName: string | null = null;
+    let courtRoom: string | null = null;
+
+    const caseMatch = blockHtml.match(/Case\s*#\s*(\d+)/i);
+    if (caseMatch) {
+      caseNumber = caseMatch[1];
+    }
+
+    // Case type, judge, courtroom are in the right col-sm-4
+    // Pattern: Case # NNNNN<br /> CaseType<br> JUDGE NAME<br> COURTROOM X
+    const rightColMatch = blockHtml.match(/Case\s*#\s*\d+\s*<br\s*\/?>\s*[\r\n]*\s*([^<\r\n]+)\s*<br\s*\/?>\s*[\r\n]*\s*([^<\r\n]+)\s*<br\s*\/?>\s*[\r\n]*\s*([^<\r\n]+)/i);
+    if (rightColMatch) {
+      caseType = rightColMatch[1].trim() || null;
+      judgeName = rightColMatch[2].trim() || null;
+      courtRoom = rightColMatch[3].trim() || null;
+    }
+
+    // Extract OTN
+    let defendantOtn: string | null = null;
+    const otnMatch = blockHtml.match(/OTN:\s*(\d+)/i);
+    if (otnMatch) {
+      defendantOtn = otnMatch[1].trim();
+    }
+
+    // Extract DOB
+    let defendantDob: string | null = null;
+    const dobMatch = blockHtml.match(/DOB:\s*(\d{1,2}\/\d{1,2}\/\d{4})/i);
+    if (dobMatch) {
+      const parts = dobMatch[1].split("/");
+      if (parts.length === 3) {
+        defendantDob = `${parts[2]}-${parts[0].padStart(2, "0")}-${parts[1].padStart(2, "0")}`;
       }
     }
-  }
 
-  const eventData: Omit<ReportEvent, "contentHash"> = {
-    caseNumber,
-    eventDate,
-    eventTime,
-    courtRoom: currentCourtRoom,
-    judgeName: currentJudge,
-    hearingType,
-    defendantName,
-    defendantOtn,
-    defendantDob,
-    prosecutingAttorney,
-    defenseAttorney,
-    citationNumber,
-    sheriffNumber,
-    leaNumber,
-    charges,
-  };
+    // Extract citation, sheriff, LEA numbers
+    let citationNumber: string | null = null;
+    const citMatch = blockHtml.match(/CITATION\s*#?:\s*(\S+)/i);
+    if (citMatch) citationNumber = citMatch[1].trim();
 
-  return {
-    ...eventData,
-    contentHash: hashReportEvent(eventData),
-  };
-}
+    let sheriffNumber: string | null = null;
+    const shMatch = blockHtml.match(/SHERIFF\s*#?:\s*(\S+)/i);
+    if (shMatch) sheriffNumber = shMatch[1].trim();
 
-/**
- * Fallback parser for reports that use divs or text blocks instead of tables.
- * Uses a text-based approach similar to the legacy PDF parser.
- */
-function parseReportTextFallback(html: string): ReportEvent[] {
-  const events: ReportEvent[] = [];
-  const text = stripHtml(html);
+    let leaNumber: string | null = null;
+    const leaMatch = blockHtml.match(/LEA\s*#?:\s*(\S+)/i);
+    if (leaMatch) leaNumber = leaMatch[1].trim();
 
-  if (!text || text.length < 20) return events;
-
-  // Split on time patterns as block boundaries
-  const timePattern = /(?:^|\n)\s*(\d{1,2}:\d{2}\s*[AP]M)/gi;
-  const positions: number[] = [];
-  let tm;
-  while ((tm = timePattern.exec(text)) !== null) {
-    positions.push(tm.index);
-  }
-
-  for (let i = 0; i < positions.length; i++) {
-    const start = positions[i];
-    const end = i + 1 < positions.length ? positions[i + 1] : text.length;
-    const block = text.slice(start, end).trim();
-
-    if (block.length < 10) continue;
-
-    // Re-use the row parser with the block as a single "cell"
-    const parsed = parseCaseRow([block], null, null);
-    if (parsed) {
-      events.push(parsed);
+    // Extract charges (Utah statute codes like 76-5-103, 41-6a-502)
+    const charges: string[] = [];
+    const chargePattern = /(\d{2,3}-\d{1,2}[a-z]?-\d{1,4}(?:\.\d+)?(?:\([^)]*\))?[A-Za-z()\s,./-]*?)(?=<br|<\/p|<\/div|\n|$)/gi;
+    let chMatch;
+    while ((chMatch = chargePattern.exec(blockHtml)) !== null) {
+      const rawCharge = chMatch[1].replace(/<[^>]+>/g, "").trim();
+      // Must start with a plausible Utah statute prefix (41+)
+      const prefixNum = parseInt(rawCharge.split("-")[0], 10);
+      if (rawCharge.length > 5 && rawCharge.length < 200 && prefixNum >= 41) {
+        charges.push(rawCharge);
+      }
     }
+
+    const eventData: Omit<ReportEvent, "contentHash"> = {
+      caseNumber,
+      eventDate,
+      eventTime,
+      courtRoom,
+      judgeName,
+      hearingType,
+      defendantName,
+      defendantOtn,
+      defendantDob,
+      prosecutingAttorney,
+      defenseAttorney,
+      citationNumber,
+      sheriffNumber,
+      leaNumber,
+      charges,
+    };
+
+    events.push({
+      ...eventData,
+      contentHash: hashReportEvent(eventData),
+    });
   }
 
   return events;
