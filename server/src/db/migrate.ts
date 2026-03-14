@@ -5,8 +5,8 @@ import path from "path";
 async function runMigrations(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
-    console.error("❌ DATABASE_URL not set — cannot run migrations");
-    process.exit(1);
+    console.warn("⚠️  DATABASE_URL not set — skipping migrations");
+    return;
   }
 
   const pool = new Pool({
@@ -68,6 +68,6 @@ async function runMigrations(): Promise<void> {
 }
 
 runMigrations().catch((err) => {
-  console.error("❌ Migration runner failed:", err);
-  process.exit(1);
+  console.error("⚠️  Migration runner failed (non-fatal):", err.message || err);
+  // Don't exit with error — let the server start anyway
 });

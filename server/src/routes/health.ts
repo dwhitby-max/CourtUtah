@@ -4,16 +4,24 @@ import { getPool, testConnection, getPoolStats } from "../db/pool";
 const router = Router();
 
 router.get("/", async (_req: Request, res: Response) => {
-  let dbStatus = "disconnected";
+  let dbStatus = "unknown";
   const pool = getPool();
 
   if (pool) {
+    // Race the DB check against a 3s timeout so we never exceed Replit's 5s health-check deadline
     try {
-      const connected = await testConnection();
+      const connected = await Promise.race([
+        testConnection(),
+        new Promise<boolean>((_, reject) =>
+          setTimeout(() => reject(new Error("db check timeout")), 3000)
+        ),
+      ]);
       dbStatus = connected ? "connected" : "disconnected";
     } catch {
-      dbStatus = "error";
+      dbStatus = "timeout";
     }
+  } else {
+    dbStatus = "no_pool";
   }
 
   const poolStats = getPoolStats();

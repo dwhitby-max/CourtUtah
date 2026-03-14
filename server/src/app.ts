@@ -14,9 +14,10 @@ const app = express();
 
 app.set("trust proxy", 1);
 
-// 1. Health checks FIRST (before middleware) — Rule 17.2
+// 1. Health checks FIRST (before ALL middleware) — must respond within 5s for Replit autoscale
 app.use("/health", healthRouter);
 app.use("/api/status", healthRouter);
+app.get("/__replit_health", (_req, res) => res.status(200).json({ status: "ok" }));
 
 // 2. Request logging (correlation IDs on all requests)
 app.use(requestLogger);
