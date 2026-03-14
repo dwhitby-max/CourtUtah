@@ -28,6 +28,9 @@ router.get("/connections", async (req: Request, res: Response) => {
       [currentUser.userId]
     );
     res.json({ connections: result.rows });
+  } catch (err) {
+    console.error("❌ GET /api/calendar/connections failed:", err);
+    res.status(500).json({ error: "Failed to fetch calendar connections" });
   } finally {
     client.release();
   }
@@ -70,7 +73,6 @@ router.get("/google/callback", async (req: Request, res: Response) => {
   }
 
   try {
-    // Exchange code for tokens
     const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -114,7 +116,6 @@ router.get("/google/callback", async (req: Request, res: Response) => {
       client.release();
     }
 
-    // Redirect back to the app's calendar settings page
     res.redirect("/calendar-settings?connected=google");
   } catch (err) {
     console.error("❌ Google OAuth callback failed:", err);
@@ -236,6 +237,9 @@ router.post("/apple", async (req: Request, res: Response) => {
     );
 
     res.status(201).json({ message: "Apple iCloud calendar connected" });
+  } catch (err) {
+    console.error("❌ POST /api/calendar/apple failed:", err);
+    res.status(500).json({ error: "Failed to connect Apple calendar" });
   } finally {
     client.release();
   }
@@ -270,6 +274,9 @@ router.post("/caldav", async (req: Request, res: Response) => {
     );
 
     res.status(201).json({ message: "CalDAV calendar connected" });
+  } catch (err) {
+    console.error("❌ POST /api/calendar/caldav failed:", err);
+    res.status(500).json({ error: "Failed to connect CalDAV calendar" });
   } finally {
     client.release();
   }
@@ -295,6 +302,9 @@ router.delete("/connections/:id", async (req: Request, res: Response) => {
     }
 
     res.json({ message: "Calendar connection removed" });
+  } catch (err) {
+    console.error("❌ DELETE /api/calendar/connections/:id failed:", err);
+    res.status(500).json({ error: "Failed to remove calendar connection" });
   } finally {
     client.release();
   }

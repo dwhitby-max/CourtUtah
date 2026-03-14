@@ -29,7 +29,6 @@ router.post("/register", async (req: Request, res: Response) => {
 
   const client = await pool.connect();
   try {
-    // Check existing
     const existing = await client.query("SELECT id FROM users WHERE email = $1", [email.toLowerCase()]);
     if (existing.rows.length > 0) {
       res.status(409).json({ error: "Email already registered" });
@@ -49,7 +48,6 @@ router.post("/register", async (req: Request, res: Response) => {
     const user = result.rows[0];
     const token = generateToken({ userId: user.id, email: user.email });
 
-    // Send verification email (non-blocking — don't fail registration if email fails)
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     sendVerificationEmail(user.email, verificationToken, baseUrl).catch((err) => {
       console.error("⚠️  Verification email send failed:", err);
@@ -66,12 +64,15 @@ router.post("/register", async (req: Request, res: Response) => {
         createdAt: user.created_at,
       },
     });
+  } catch (err) {
+    console.error("❌ POST /api/auth/register failed:", err);
+    res.status(500).json({ error: "Registration failed" });
   } finally {
     client.release();
   }
 });
 
-// GET /api/auth/verify-email — verify email via token link
+// GET /api/auth/verify-email
 router.get("/verify-email", async (req: Request, res: Response) => {
   const { token } = req.query;
 
@@ -94,20 +95,21 @@ router.get("/verify-email", async (req: Request, res: Response) => {
     );
 
     if (result.rows.length === 0) {
-      // Redirect to app with error
       res.redirect("/login?verified=invalid");
       return;
     }
 
     console.log(`✅ Email verified for user ${result.rows[0].email}`);
-    // Redirect to app with success
     res.redirect("/login?verified=success");
+  } catch (err) {
+    console.error("❌ GET /api/auth/verify-email failed:", err);
+    res.redirect("/login?verified=expired");
   } finally {
     client.release();
   }
 });
 
-// POST /api/auth/resend-verification — resend verification email
+// POST /api/auth/resend-verification
 router.post("/resend-verification", async (req: Request, res: Response) => {
   const { email } = req.body;
   if (!email) { res.status(400).json({ error: "Email is required" }); return; }
@@ -117,7 +119,6 @@ router.post("/resend-verification", async (req: Request, res: Response) => {
 
   const client = await pool.connect();
   try {
-    // Generate new token
     const newToken = crypto.randomBytes(32).toString("hex");
     const result = await client.query(
       `UPDATE users
@@ -127,7 +128,6 @@ router.post("/resend-verification", async (req: Request, res: Response) => {
       [newToken, email.toLowerCase()]
     );
 
-    // Always return success to avoid email enumeration
     if (result.rows.length > 0) {
       const baseUrl = `${req.protocol}://${req.get("host")}`;
       sendVerificationEmail(email.toLowerCase(), newToken, baseUrl).catch((err) => {
@@ -136,6 +136,9 @@ router.post("/resend-verification", async (req: Request, res: Response) => {
     }
 
     res.json({ message: "If the email exists and is unverified, a verification link has been sent." });
+  } catch (err) {
+    console.error("❌ POST /api/auth/resend-verification failed:", err);
+    res.status(500).json({ error: "Failed to resend verification" });
   } finally {
     client.release();
   }
@@ -187,6 +190,9 @@ router.post("/login", async (req: Request, res: Response) => {
         createdAt: user.created_at,
       },
     });
+  } catch (err) {
+    console.error("❌ POST /api/auth/login failed:", err);
+    res.status(500).json({ error: "Login failed" });
   } finally {
     client.release();
   }
@@ -204,14 +210,13 @@ router.post("/forgot-password", async (req: Request, res: Response) => {
   try {
     const result = await client.query("SELECT id FROM users WHERE email = $1", [email.toLowerCase()]);
 
-    // Always return success to prevent email enumeration
     if (result.rows.length === 0) {
       res.json({ message: "If an account exists with that email, a reset link has been sent" });
       return;
     }
 
     const resetToken = crypto.randomBytes(32).toString("hex");
-    const resetExpires = new Date(Date.now() + 3600000); // 1 hour
+    const resetExpires = new Date(Date.now() + 3600000);
 
     await client.query(
       `UPDATE users SET reset_password_token = $1, reset_password_expires = $2 WHERE email = $3`,
@@ -222,6 +227,9 @@ router.post("/forgot-password", async (req: Request, res: Response) => {
     await sendPasswordResetEmail(email.toLowerCase(), resetToken, baseUrl);
 
     res.json({ message: "If an account exists with that email, a reset link has been sent" });
+  } catch (err) {
+    console.error("❌ POST /api/auth/forgot-password failed:", err);
+    res.status(500).json({ error: "Failed to process password reset" });
   } finally {
     client.release();
   }
@@ -264,6 +272,9 @@ router.post("/reset-password", async (req: Request, res: Response) => {
     );
 
     res.json({ message: "Password has been reset successfully" });
+  } catch (err) {
+    console.error("❌ POST /api/auth/reset-password failed:", err);
+    res.status(500).json({ error: "Failed to reset password" });
   } finally {
     client.release();
   }
@@ -271,7 +282,6 @@ router.post("/reset-password", async (req: Request, res: Response) => {
 
 // PATCH /api/auth/profile
 router.patch("/profile", async (req: Request, res: Response) => {
-  // This route needs auth — import is already at top
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
 
@@ -320,6 +330,9 @@ router.patch("/profile", async (req: Request, res: Response) => {
         createdAt: user.created_at,
       },
     });
+  } catch (err) {
+    console.error("❌ PATCH /api/auth/profile failed:", err);
+    res.status(500).json({ error: "Failed to update profile" });
   } finally {
     client.release();
   }

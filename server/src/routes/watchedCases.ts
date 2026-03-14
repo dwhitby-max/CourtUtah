@@ -25,6 +25,9 @@ router.get("/", async (req: Request, res: Response) => {
     );
 
     res.json({ watchedCases: result.rows });
+  } catch (err) {
+    console.error("❌ GET /api/watched-cases failed:", err);
+    res.status(500).json({ error: "Failed to fetch watched cases" });
   } finally {
     client.release();
   }
@@ -60,6 +63,9 @@ router.post("/", async (req: Request, res: Response) => {
     );
 
     res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error("❌ POST /api/watched-cases failed:", err);
+    res.status(500).json({ error: "Failed to create watched case" });
   } finally {
     client.release();
   }
@@ -85,13 +91,15 @@ router.delete("/:id", async (req: Request, res: Response) => {
     }
 
     res.json({ message: "Watched case deleted" });
+  } catch (err) {
+    console.error("❌ DELETE /api/watched-cases/:id failed:", err);
+    res.status(500).json({ error: "Failed to delete watched case" });
   } finally {
     client.release();
   }
 });
 
 // POST /api/watched-cases/:id/sync
-// Creates calendar entries for all matching court events
 router.post("/:id/sync", async (req: Request, res: Response) => {
   if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
   const currentUser = req.user;
@@ -100,7 +108,6 @@ router.post("/:id/sync", async (req: Request, res: Response) => {
 
   const client = await pool.connect();
   try {
-    // Get the watched case
     const wcResult = await client.query(
       `SELECT * FROM watched_cases WHERE id = $1 AND user_id = $2`,
       [req.params.id, currentUser.userId]
@@ -113,7 +120,6 @@ router.post("/:id/sync", async (req: Request, res: Response) => {
 
     const wc = wcResult.rows[0];
 
-    // Get user's active calendar connection
     const calResult = await client.query(
       `SELECT id FROM calendar_connections WHERE user_id = $1 AND is_active = true LIMIT 1`,
       [currentUser.userId]
@@ -126,7 +132,6 @@ router.post("/:id/sync", async (req: Request, res: Response) => {
 
     const calConnectionId = calResult.rows[0].id;
 
-    // Build search query based on search type
     const columnMap: Record<string, string> = {
       defendant_name: "defendant_name",
       case_number: "case_number",
@@ -161,7 +166,6 @@ router.post("/:id/sync", async (req: Request, res: Response) => {
 
     let created = 0;
     for (const event of eventsResult.rows) {
-      // Check if entry already exists
       const existingEntry = await client.query(
         `SELECT id FROM calendar_entries
          WHERE watched_case_id = $1 AND court_event_id = $2 AND calendar_connection_id = $3`,
@@ -183,6 +187,9 @@ router.post("/:id/sync", async (req: Request, res: Response) => {
       entriesCreated: created,
       eventsMatched: eventsResult.rows.length,
     });
+  } catch (err) {
+    console.error("❌ POST /api/watched-cases/:id/sync failed:", err);
+    res.status(500).json({ error: "Failed to sync watched case" });
   } finally {
     client.release();
   }

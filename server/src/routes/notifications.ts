@@ -13,8 +13,15 @@ router.get("/", async (req: Request, res: Response) => {
   const pool = getPool();
   if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
 
-  const limit = Math.min(parseInt(String(req.query.limit) || "50", 10), 100);
-  const offset = parseInt(String(req.query.offset) || "0", 10);
+  const rawLimit = req.query.limit !== undefined ? String(req.query.limit) : "50";
+  const rawOffset = req.query.offset !== undefined ? String(req.query.offset) : "0";
+  const limit = Math.min(parseInt(rawLimit, 10), 100);
+  const offset = parseInt(rawOffset, 10);
+
+  if (isNaN(limit) || isNaN(offset) || limit < 0 || offset < 0) {
+    res.status(400).json({ error: "Invalid limit or offset" });
+    return;
+  }
 
   const client = await pool.connect();
   try {
@@ -39,6 +46,9 @@ router.get("/", async (req: Request, res: Response) => {
       unreadCount: parseInt(countResult.rows[0].unread_count, 10),
       total: parseInt(countResult.rows[0].total, 10),
     });
+  } catch (err) {
+    console.error("❌ GET /api/notifications failed:", err);
+    res.status(500).json({ error: "Failed to fetch notifications" });
   } finally {
     client.release();
   }
@@ -64,6 +74,9 @@ router.patch("/:id/read", async (req: Request, res: Response) => {
     }
 
     res.json({ message: "Notification marked as read" });
+  } catch (err) {
+    console.error("❌ PATCH /api/notifications/:id/read failed:", err);
+    res.status(500).json({ error: "Failed to update notification" });
   } finally {
     client.release();
   }
@@ -83,6 +96,9 @@ router.patch("/read-all", async (req: Request, res: Response) => {
       [currentUser.userId]
     );
     res.json({ message: "All notifications marked as read" });
+  } catch (err) {
+    console.error("❌ PATCH /api/notifications/read-all failed:", err);
+    res.status(500).json({ error: "Failed to mark notifications as read" });
   } finally {
     client.release();
   }
