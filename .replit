@@ -11,9 +11,9 @@ HOST = "0.0.0.0"
 NODE_ENV = "development"
 
 [deployment]
-deploymentTarget = "vm"
+deploymentTarget = "autoscale"
 build = ["bash", "-c", "npm run build"]
-run = ["bash", "-c", "NODE_ENV=production npm run migrate 2>&1 || echo 'Migration had warnings'; NODE_ENV=production node server/dist/server/src/index.js"]
+run = ["bash", "start-production.sh"]
 
 [[ports]]
 localPort = 5000
