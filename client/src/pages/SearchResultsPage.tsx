@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useSearch } from "@/hooks/useSearch";
 import { useAuth } from "@/store/authStore";
 import { apiFetch } from "@/api/client";
+import { addEventToCalendar } from "@/api/calendar";
 import { CourtEvent } from "@shared/types";
 
 export default function SearchResultsPage() {
@@ -14,6 +15,8 @@ export default function SearchResultsPage() {
   const [watchSuccess, setWatchSuccess] = useState("");
   const [watchError, setWatchError] = useState("");
   const [watchingIds, setWatchingIds] = useState<Set<number>>(new Set());
+  const [calSyncingIds, setCalSyncingIds] = useState<Set<number>>(new Set());
+  const [calSyncedIds, setCalSyncedIds] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -55,6 +58,25 @@ export default function SearchResultsPage() {
       setWatchSuccess("");
     } finally {
       setWatchingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(event.id);
+        return next;
+      });
+    }
+  }
+
+  async function handleAddToCalendar(event: CourtEvent) {
+    setCalSyncingIds((prev) => new Set(prev).add(event.id));
+    try {
+      const data = await addEventToCalendar(event.id);
+      setCalSyncedIds((prev) => new Set(prev).add(event.id));
+      setWatchSuccess(data.message);
+      setWatchError("");
+    } catch (err) {
+      setWatchError(err instanceof Error ? err.message : "Failed to add to calendar");
+      setWatchSuccess("");
+    } finally {
+      setCalSyncingIds((prev) => {
         const next = new Set(prev);
         next.delete(event.id);
         return next;
@@ -174,13 +196,26 @@ export default function SearchResultsPage() {
                         <td className="px-4 py-3 text-sm">{event.hearingType || "N/A"}</td>
                         <td className="px-4 py-3 text-sm space-y-1">
                           {isLoggedIn && (
-                            <button
-                              onClick={() => handleWatchAndSync(event)}
-                              disabled={watchingIds.has(event.id)}
-                              className="text-amber-700 hover:text-slate-800 text-sm font-medium block disabled:opacity-50"
-                            >
-                              {watchingIds.has(event.id) ? "Syncing..." : "Watch & Sync to Calendar"}
-                            </button>
+                            <>
+                              <button
+                                onClick={() => handleAddToCalendar(event)}
+                                disabled={calSyncingIds.has(event.id) || calSyncedIds.has(event.id)}
+                                className="text-amber-700 hover:text-slate-800 text-sm font-medium block disabled:opacity-50"
+                              >
+                                {calSyncingIds.has(event.id)
+                                  ? "Adding..."
+                                  : calSyncedIds.has(event.id)
+                                    ? "Added to Calendar"
+                                    : "Add to Calendar"}
+                              </button>
+                              <button
+                                onClick={() => handleWatchAndSync(event)}
+                                disabled={watchingIds.has(event.id)}
+                                className="text-gray-500 hover:text-gray-700 text-xs block disabled:opacity-50"
+                              >
+                                {watchingIds.has(event.id) ? "Syncing..." : "Watch & Auto-Sync"}
+                              </button>
+                            </>
                           )}
                           {!isLoggedIn && (
                             <button

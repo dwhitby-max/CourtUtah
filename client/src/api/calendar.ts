@@ -41,6 +41,16 @@ export async function connectCaldav(caldavUrl: string, username: string, passwor
   return data;
 }
 
+export async function addEventToCalendar(courtEventId: number): Promise<{ message: string; calendarEntryId: number; synced: boolean }> {
+  const res = await apiFetch("/calendar/events", {
+    method: "POST",
+    body: JSON.stringify({ courtEventId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Failed to add event to calendar");
+  return data;
+}
+
 export async function removeConnection(id: number): Promise<void> {
   const res = await apiFetch(`/calendar/connections/${id}`, { method: "DELETE" });
   if (!res.ok) {
