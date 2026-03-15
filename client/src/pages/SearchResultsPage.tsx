@@ -3,8 +3,15 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useSearch } from "@/hooks/useSearch";
 import { useAuth } from "@/store/authStore";
 import { apiFetch } from "@/api/client";
-import { addEventToCalendar } from "@/api/calendar";
+import { addEventToCalendar, getCalendarConnections } from "@/api/calendar";
 import { CourtEvent } from "@shared/types";
+
+const providerLabels: Record<string, string> = {
+  google: "Google Calendar",
+  microsoft: "Outlook",
+  apple: "iCloud",
+  caldav: "CalDAV",
+};
 
 export default function SearchResultsPage() {
   const location = useLocation();
@@ -17,6 +24,7 @@ export default function SearchResultsPage() {
   const [watchingIds, setWatchingIds] = useState<Set<number>>(new Set());
   const [calSyncingIds, setCalSyncingIds] = useState<Set<number>>(new Set());
   const [calSyncedIds, setCalSyncedIds] = useState<Set<number>>(new Set());
+  const [calendarProvider, setCalendarProvider] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -28,6 +36,18 @@ export default function SearchResultsPage() {
       search(searchParams);
     }
   }, [location.search]);
+
+  useEffect(() => {
+    if (isLoggedIn) {
+      getCalendarConnections()
+        .then(data => {
+          const active = (data.connections as Array<{ provider: string; is_active: boolean }>)
+            .find(c => c.is_active);
+          setCalendarProvider(active?.provider ?? null);
+        })
+        .catch(() => {});
+    }
+  }, [isLoggedIn]);
 
   async function handleWatchAndSync(event: CourtEvent) {
     const searchType = event.caseNumber ? "case_number" : "defendant_name";
@@ -205,8 +225,8 @@ export default function SearchResultsPage() {
                                 {calSyncingIds.has(event.id)
                                   ? "Adding..."
                                   : calSyncedIds.has(event.id)
-                                    ? "Added to Calendar"
-                                    : "Add to Calendar"}
+                                    ? `Added to ${calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar"}`
+                                    : `Add to ${calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar"}`}
                               </button>
                               <button
                                 onClick={() => handleWatchAndSync(event)}

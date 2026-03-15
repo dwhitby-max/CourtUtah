@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import SearchForm from "@/components/SearchForm";
 import { searchCourtEvents } from "@/api/search";
-import { addEventToCalendar } from "@/api/calendar";
+import { addEventToCalendar, getCalendarConnections } from "@/api/calendar";
 import { apiFetch } from "@/api/client";
 import { useAuth } from "@/store/authStore";
 import { CourtEvent } from "@shared/types";
@@ -28,6 +28,13 @@ function timeAgo(dateStr: string): string {
   if (diffDays < 7) return `${diffDays}d ago`;
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Denver" });
 }
+
+const providerLabels: Record<string, string> = {
+  google: "Google Calendar",
+  microsoft: "Outlook",
+  apple: "iCloud",
+  caldav: "CalDAV",
+};
 
 /** Convert camelCase search params to snake_case query params */
 function toQueryParams(params: Record<string, string>): Record<string, string> {
@@ -69,13 +76,26 @@ export default function SearchPage() {
   const [calSyncedIds, setCalSyncedIds] = useState<Set<number>>(new Set());
   const [lastSearchParams, setLastSearchParams] = useState<Record<string, string> | null>(null);
   const [lastSearchSavedId, setLastSearchSavedId] = useState<number | null>(null);
+  const [calendarProvider, setCalendarProvider] = useState<string | null>(null);
 
-  // Load saved searches on mount for logged-in users
+  // Load saved searches and calendar provider on mount for logged-in users
   useEffect(() => {
     if (isLoggedIn) {
       fetchSavedSearches();
+      fetchCalendarProvider();
     }
   }, [isLoggedIn]);
+
+  async function fetchCalendarProvider() {
+    try {
+      const data = await getCalendarConnections();
+      const active = (data.connections as Array<{ provider: string; is_active: boolean }>)
+        .find(c => c.is_active);
+      setCalendarProvider(active?.provider ?? null);
+    } catch {
+      // non-fatal
+    }
+  }
 
   async function fetchSavedSearches() {
     setLoadingSaved(true);
@@ -341,8 +361,8 @@ export default function SearchPage() {
                                 {calSyncingIds.has(event.id)
                                   ? "Adding..."
                                   : calSyncedIds.has(event.id)
-                                    ? "Added to Calendar"
-                                    : "Add to Calendar"}
+                                    ? `Added to ${calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar"}`
+                                    : `Add to ${calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar"}`}
                               </button>
                               <button
                                 onClick={() => handleWatch(event)}
