@@ -27,7 +27,7 @@ export default function LoginCallbackPage() {
         if (!data.user.tosAgreedAt) {
           navigate("/accept-terms", { replace: true });
         } else {
-          navigate("/", { replace: true });
+          navigate("/dashboard", { replace: true });
         }
       })
       .catch(() => {

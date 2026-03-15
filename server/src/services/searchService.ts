@@ -107,20 +107,33 @@ export async function searchCourtEvents(params: SearchRequest): Promise<CourtEve
   }
 }
 
+/** Format a DB date/timestamp to YYYY-MM-DD string */
+function toDateString(val: unknown): string {
+  if (!val) return "";
+  if (val instanceof Date) return val.toISOString().split("T")[0];
+  const s = String(val);
+  // If it already looks like YYYY-MM-DD, return as-is
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  // Try to parse and extract date portion
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) return d.toISOString().split("T")[0];
+  return s;
+}
+
 function mapRowToCourtEvent(row: Record<string, unknown>): CourtEvent {
   return {
     id: row.id as number,
     courtType: row.court_type as string,
     courtName: row.court_name as string,
     courtRoom: row.court_room as string | null,
-    eventDate: row.event_date ? String(row.event_date) : "",
+    eventDate: toDateString(row.event_date),
     eventTime: row.event_time as string | null,
     hearingType: row.hearing_type as string | null,
     caseNumber: row.case_number as string | null,
     caseType: row.case_type as string | null,
     defendantName: row.defendant_name as string | null,
     defendantOtn: row.defendant_otn as string | null,
-    defendantDob: row.defendant_dob ? String(row.defendant_dob) : null,
+    defendantDob: toDateString(row.defendant_dob) || null,
     citationNumber: row.citation_number as string | null,
     sheriffNumber: row.sheriff_number as string | null,
     leaNumber: row.lea_number as string | null,
@@ -134,6 +147,6 @@ function mapRowToCourtEvent(row: Record<string, unknown>): CourtEvent {
     sourcePageNumber: row.source_page_number as number | null,
     contentHash: row.content_hash as string,
     charges: Array.isArray(row.charges) ? row.charges as string[] : [],
-    scrapedAt: row.scraped_at ? String(row.scraped_at) : "",
+    scrapedAt: row.scraped_at ? toDateString(row.scraped_at) : "",
   };
 }

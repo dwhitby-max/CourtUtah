@@ -23,7 +23,7 @@ export default function AcceptTermsPage() {
       }
       const data = await res.json();
       setUser(data.user);
-      navigate("/", { replace: true });
+      navigate("/dashboard", { replace: true });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {

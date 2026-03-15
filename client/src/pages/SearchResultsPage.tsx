@@ -1,17 +1,19 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useSearch } from "@/hooks/useSearch";
+import { useAuth } from "@/store/authStore";
 import { apiFetch } from "@/api/client";
 import { CourtEvent } from "@shared/types";
-import { useState } from "react";
 
 export default function SearchResultsPage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { isLoggedIn } = useAuth();
   const { results, searched, loading, error, search } = useSearch();
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [watchSuccess, setWatchSuccess] = useState("");
   const [watchError, setWatchError] = useState("");
+  const [watchingIds, setWatchingIds] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -24,10 +26,12 @@ export default function SearchResultsPage() {
     }
   }, [location.search]);
 
-  async function handleWatch(event: CourtEvent) {
+  async function handleWatchAndSync(event: CourtEvent) {
     const searchType = event.caseNumber ? "case_number" : "defendant_name";
     const searchValue = event.caseNumber || event.defendantName || "Unknown";
     const label = `${event.caseNumber || "Unknown Case"} - ${event.defendantName || "Unknown"} (${event.courtName})`;
+
+    setWatchingIds((prev) => new Set(prev).add(event.id));
 
     try {
       const res = await apiFetch("/watched-cases", {
@@ -36,11 +40,25 @@ export default function SearchResultsPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setWatchSuccess(`Added "${label}" to watched cases`);
+
+      const { initialSearch } = data;
+      if (initialSearch && initialSearch.newEntries > 0) {
+        setWatchSuccess(`Added "${label}" to watched cases and synced ${initialSearch.newEntries} event(s) to your calendar.`);
+      } else if (initialSearch && initialSearch.eventsFound > 0) {
+        setWatchSuccess(`Added "${label}" to watched cases. ${initialSearch.eventsFound} event(s) found — connect a calendar in Calendar Settings to sync.`);
+      } else {
+        setWatchSuccess(`Added "${label}" to watched cases. Future events will be tracked automatically.`);
+      }
       setWatchError("");
     } catch (err) {
       setWatchError(err instanceof Error ? err.message : "Failed to add watched case");
       setWatchSuccess("");
+    } finally {
+      setWatchingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(event.id);
+        return next;
+      });
     }
   }
 
@@ -59,6 +77,17 @@ export default function SearchResultsPage() {
       event.leaNumber ||
       (event.charges && event.charges.length > 0)
     );
+  }
+
+  function formatDate(dateStr: string): string {
+    if (!dateStr) return "N/A";
+    // Already YYYY-MM-DD from parser or DB
+    const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (match) {
+      const [, y, m, d] = match;
+      return `${parseInt(m)}/${parseInt(d)}/${y}`;
+    }
+    return dateStr;
   }
 
   return (
@@ -96,7 +125,8 @@ export default function SearchResultsPage() {
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date/Time</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Time</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Case</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Defendant</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Court</th>
@@ -109,13 +139,15 @@ export default function SearchResultsPage() {
                     <>
                       <tr key={event.id} className="hover:bg-gray-50">
                         <td className="px-4 py-3 text-sm whitespace-nowrap">
-                          <div>{event.eventDate}</div>
-                          <div className="text-gray-500">{event.eventTime || "TBD"}</div>
+                          <div>{formatDate(event.eventDate)}</div>
                           {event.isVirtual && (
                             <span className="inline-block mt-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
                               Virtual
                             </span>
                           )}
+                        </td>
+                        <td className="px-4 py-3 text-sm whitespace-nowrap font-medium">
+                          {event.eventTime || "TBD"}
                         </td>
                         <td className="px-4 py-3 text-sm">
                           <div className="font-medium">{event.caseNumber || "N/A"}</div>
@@ -141,12 +173,23 @@ export default function SearchResultsPage() {
                         </td>
                         <td className="px-4 py-3 text-sm">{event.hearingType || "N/A"}</td>
                         <td className="px-4 py-3 text-sm space-y-1">
-                          <button
-                            onClick={() => handleWatch(event)}
-                            className="text-amber-700 hover:text-slate-800 text-sm font-medium block"
-                          >
-                            Watch
-                          </button>
+                          {isLoggedIn && (
+                            <button
+                              onClick={() => handleWatchAndSync(event)}
+                              disabled={watchingIds.has(event.id)}
+                              className="text-amber-700 hover:text-slate-800 text-sm font-medium block disabled:opacity-50"
+                            >
+                              {watchingIds.has(event.id) ? "Syncing..." : "Watch & Sync to Calendar"}
+                            </button>
+                          )}
+                          {!isLoggedIn && (
+                            <button
+                              onClick={() => navigate("/login")}
+                              className="text-amber-700 hover:text-slate-800 text-sm font-medium block"
+                            >
+                              Log in to track
+                            </button>
+                          )}
                           {hasDetails(event) && (
                             <button
                               onClick={() => toggleExpand(event.id)}
@@ -159,7 +202,7 @@ export default function SearchResultsPage() {
                       </tr>
                       {expandedId === event.id && (
                         <tr key={`${event.id}-detail`} className="bg-gray-50">
-                          <td colSpan={6} className="px-6 py-3">
+                          <td colSpan={7} className="px-6 py-3">
                             <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
                               {event.prosecutingAttorney && (
                                 <div>

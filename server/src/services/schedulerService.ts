@@ -79,6 +79,12 @@ export async function runWatchedCaseSearch(watchedCaseId: number): Promise<{
     const html = await liveSearchUtcourts(liveParams);
     const parsed = parseHtmlCalendarResults(html);
 
+    // Update last_refreshed_at even if no results
+    await client.query(
+      `UPDATE watched_cases SET last_refreshed_at = NOW(), updated_at = NOW() WHERE id = $1`,
+      [wc.id]
+    );
+
     if (parsed.length === 0) {
       console.log(`  📭 No results for "${wc.label}"`);
       return { eventsFound: 0, newEntries: 0, changes: 0 };
@@ -206,21 +212,26 @@ function buildWhereClause(wc: WatchedCaseRow): { whereClause: string; searchVal:
 
 /**
  * Start the scheduler. Runs daily to refresh all active watched case searches.
+ * Times are in Mountain Time (America/Denver = UTC-7 MST / UTC-6 MDT).
+ *
+ * Refresh window: 5:15–6:15 AM MT (12:15–13:15 UTC during MDT, 11:15–12:15 UTC during MST).
+ * Cron fires at 11:15 AM UTC (≈5:15 AM MST / 5:15 AM MDT depending on season),
+ * then adds a random 0–60 min delay before starting. Each case gets a random
+ * gap between searches so they don't all hit utcourts.gov at once.
  */
 export function startScheduler(): void {
-  console.log("⏰ Starting watched-case refresh scheduler (daily ~2:00–3:00 AM UTC)");
+  console.log("⏰ Starting watched-case refresh scheduler (daily ~5:15–6:15 AM MT)");
 
-  // Daily refresh of all watched cases — 2 AM UTC + random 0-60 min offset
-  cron.schedule("0 2 * * *", async () => {
-    console.log("⏰ Scheduled watched-case refresh triggered, adding random delay...");
+  // Daily refresh — 11:15 UTC (~5:15 AM MT) + random 0-60 min start delay
+  cron.schedule("15 11 * * *", async () => {
     const delay = Math.floor(Math.random() * 60 * 60 * 1000);
-    console.log(`⏰ Random start delay: ${Math.round(delay / 60000)} minutes`);
+    console.log(`⏰ Scheduled refresh triggered, starting in ${Math.round(delay / 60000)} minutes`);
     await new Promise((r) => setTimeout(r, delay));
     await refreshAllWatchedCases();
   });
 
-  // Daily digest — every day at 6 AM UTC
-  cron.schedule("0 6 * * *", async () => {
+  // Daily digest — 7:00 AM MT (13:00 UTC), after refresh window completes
+  cron.schedule("0 13 * * *", async () => {
     console.log("📬 Daily digest triggered");
     try {
       await sendDigestNotifications("daily_digest");
@@ -232,8 +243,8 @@ export function startScheduler(): void {
     }
   });
 
-  // Weekly digest — every Monday at 6 AM UTC
-  cron.schedule("0 6 * * 1", async () => {
+  // Weekly digest — Monday 7:00 AM MT (13:00 UTC)
+  cron.schedule("0 13 * * 1", async () => {
     console.log("📬 Weekly digest triggered");
     try {
       await sendDigestNotifications("weekly_digest");
@@ -295,15 +306,19 @@ export async function refreshAllWatchedCases(): Promise<{
     let totalNewEntries = 0;
     let totalChanges = 0;
 
-    for (const wc of watchedCases) {
+    // Shuffle the order so the same cases don't always run first
+    const shuffled = [...watchedCases].sort(() => Math.random() - 0.5);
+
+    for (const wc of shuffled) {
       try {
         const result = await runWatchedCaseSearch(wc.id);
         totalEvents += result.eventsFound;
         totalNewEntries += result.newEntries;
         totalChanges += result.changes;
 
-        // Rate limit: 2s between searches to be respectful of utcourts.gov
-        await new Promise((r) => setTimeout(r, 2000));
+        // Random delay between 3-15s per search to spread load on utcourts.gov
+        const gap = 3000 + Math.floor(Math.random() * 12000);
+        await new Promise((r) => setTimeout(r, gap));
       } catch (err) {
         console.error(`❌ Refresh failed for watched case ${wc.id} (${wc.label}):`, err instanceof Error ? err.message : err);
         captureException(err instanceof Error ? err : new Error(String(err)), {
