@@ -3,7 +3,6 @@ import SearchForm from "@/components/SearchForm";
 import { searchCourtEvents } from "@/api/search";
 import { addEventToCalendar, getCalendarConnections } from "@/api/calendar";
 import { apiFetch } from "@/api/client";
-import { useAuth } from "@/store/authStore";
 import { CourtEvent } from "@shared/types";
 
 interface SavedSearchRow {
@@ -62,7 +61,6 @@ function toQueryParams(params: Record<string, string>): Record<string, string> {
 }
 
 export default function SearchPage() {
-  const { isLoggedIn } = useAuth();
   const [results, setResults] = useState<CourtEvent[]>([]);
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -78,13 +76,11 @@ export default function SearchPage() {
   const [lastSearchSavedId, setLastSearchSavedId] = useState<number | null>(null);
   const [calendarProvider, setCalendarProvider] = useState<string | null>(null);
 
-  // Load saved searches and calendar provider on mount for logged-in users
+  // Load saved searches and calendar provider on mount
   useEffect(() => {
-    if (isLoggedIn) {
-      fetchSavedSearches();
-      fetchCalendarProvider();
-    }
-  }, [isLoggedIn]);
+    fetchSavedSearches();
+    fetchCalendarProvider();
+  }, []);
 
   async function fetchCalendarProvider() {
     try {
@@ -129,9 +125,7 @@ export default function SearchPage() {
       setCalSyncingIds(new Set());
       setCalSyncedIds(new Set());
       // Refresh saved searches list after search (it may have been auto-saved)
-      if (isLoggedIn) {
-        fetchSavedSearches();
-      }
+      fetchSavedSearches();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Search failed";
       setDebugInfo(prev => prev + ` | ERROR: ${msg}`);
@@ -228,6 +222,8 @@ export default function SearchPage() {
     );
   }
 
+  const calLabel = calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar";
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-gray-900">Search Court Calendars</h1>
@@ -235,7 +231,7 @@ export default function SearchPage() {
       <SearchForm onSearch={handleSearch} loading={loading} />
 
       {/* Saved Searches */}
-      {isLoggedIn && savedSearches.length > 0 && (
+      {savedSearches.length > 0 && (
         <div className="bg-white shadow rounded-lg p-5">
           <h2 className="text-lg font-semibold text-gray-900 mb-3">Your Saved Searches</h2>
           <div className="space-y-3">
@@ -280,7 +276,9 @@ export default function SearchPage() {
             <h2 className="text-lg font-semibold text-gray-900">
               {results.length} Result{results.length !== 1 ? "s" : ""} Found
             </h2>
-            {isLoggedIn && lastSearchParams && !lastSearchSavedId && (
+            {lastSearchSavedId ? (
+              <span className="text-sm text-green-600 font-medium">Search saved</span>
+            ) : lastSearchParams ? (
               <button
                 onClick={handleSaveSearch}
                 disabled={loading}
@@ -288,10 +286,7 @@ export default function SearchPage() {
               >
                 Save Search
               </button>
-            )}
-            {isLoggedIn && lastSearchSavedId && (
-              <span className="text-sm text-green-600 font-medium">Search saved</span>
-            )}
+            ) : null}
           </div>
 
           {results.length === 0 ? (
@@ -351,30 +346,23 @@ export default function SearchPage() {
                         </td>
                         <td className="px-4 py-3 text-sm">{event.hearingType || "N/A"}</td>
                         <td className="px-4 py-3 text-sm space-y-1">
-                          {isLoggedIn && (
-                            <>
-                              <button
-                                onClick={() => handleAddToCalendar(event)}
-                                disabled={calSyncingIds.has(event.id) || calSyncedIds.has(event.id)}
-                                className="text-amber-700 hover:text-slate-800 text-sm font-medium block disabled:opacity-50"
-                              >
-                                {calSyncingIds.has(event.id)
-                                  ? "Adding..."
-                                  : calSyncedIds.has(event.id)
-                                    ? `Added to ${calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar"}`
-                                    : `Add to ${calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar"}`}
-                              </button>
-                              <button
-                                onClick={() => handleWatch(event)}
-                                className="text-gray-500 hover:text-gray-700 text-xs block"
-                              >
-                                Watch & Auto-Sync
-                              </button>
-                            </>
-                          )}
-                          {!isLoggedIn && (
-                            <span className="text-gray-400 text-xs">Log in to save</span>
-                          )}
+                          <button
+                            onClick={() => handleAddToCalendar(event)}
+                            disabled={calSyncingIds.has(event.id) || calSyncedIds.has(event.id)}
+                            className="text-amber-700 hover:text-slate-800 text-sm font-medium block disabled:opacity-50"
+                          >
+                            {calSyncingIds.has(event.id)
+                              ? "Adding..."
+                              : calSyncedIds.has(event.id)
+                                ? `Added to ${calLabel}`
+                                : `Add to ${calLabel}`}
+                          </button>
+                          <button
+                            onClick={() => handleWatch(event)}
+                            className="text-gray-500 hover:text-gray-700 text-xs block"
+                          >
+                            Watch & Auto-Sync
+                          </button>
                           {hasDetails(event) && (
                             <button
                               onClick={() => toggleExpand(event.id)}

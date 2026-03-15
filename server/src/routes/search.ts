@@ -1,38 +1,14 @@
 import { Router, Request, Response } from "express";
-import jwt from "jsonwebtoken";
 import { heavyLimiter } from "../middleware/rateLimiter";
+import { authenticateToken } from "../middleware/auth";
 import { searchCourtEvents } from "../services/searchService";
 import { liveSearchUtcourts, LiveSearchParams } from "../services/courtScraper";
 import { parseHtmlCalendarResults, ParsedCourtEvent } from "../services/courtEventParser";
 import { CourtEvent } from "../../../shared/types";
 import { getPool } from "../db/pool";
 import { config } from "../config/env";
-import { AuthPayload } from "../middleware/auth";
 
 const router = Router();
-
-/** Type guard for JWT payload shape */
-function isAuthPayload(obj: unknown): obj is AuthPayload {
-  if (typeof obj !== "object" || obj === null) return false;
-  const o = obj as Record<string, unknown>;
-  return typeof o.userId === "number" && typeof o.email === "string";
-}
-
-/**
- * Try to extract user from Authorization header without requiring it.
- * Returns the user payload or null if not authenticated.
- */
-function optionalAuth(req: Request): AuthPayload | null {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-  if (!token || !config.jwtSecret) return null;
-  try {
-    const payload = jwt.verify(token, config.jwtSecret);
-    return isAuthPayload(payload) ? payload : null;
-  } catch {
-    return null;
-  }
-}
 
 // GET /api/search/coverage — date range and counts of scraped data (public)
 router.get("/coverage", async (_req: Request, res: Response) => {
@@ -224,7 +200,7 @@ async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<void> {
 
 // GET /api/search — supports: defendant_name, case_number, court_name, court_date,
 // date_from, date_to, defendant_otn, citation_number, charges, judge_name, attorney
-router.get("/", async (req: Request, res: Response) => {
+router.get("/", authenticateToken, async (req: Request, res: Response) => {
   console.log("🔍 Search params:", req.query);
   /** Extract a query param as string or undefined (type-safe) */
   function qp(key: string): string | undefined {
@@ -251,19 +227,20 @@ router.get("/", async (req: Request, res: Response) => {
     return;
   }
 
-  const user = optionalAuth(req);
+  if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const userId = req.user.userId;
   const pKey = searchParamsKey(searchParams);
 
   try {
     // Check if this search has been run before (has cached results in DB)
-    const existingSaved = user ? await findExistingSavedSearch(user.userId, pKey) : null;
+    const existingSaved = await findExistingSavedSearch(userId, pKey);
 
     // If this is a returning search with cached data, use DB results
-    if (existingSaved && user) {
+    if (existingSaved) {
       const dbResults = await searchCourtEvents(searchParams);
       if (dbResults.length > 0) {
         // Update last_run_at
-        await saveSearch(user.userId, searchParams, pKey, dbResults.length);
+        await saveSearch(userId, searchParams, pKey, dbResults.length);
         res.json({
           results: dbResults,
           resultsCount: dbResults.length,
@@ -282,7 +259,7 @@ router.get("/", async (req: Request, res: Response) => {
       // Fields like OTN, citation, charges can't be searched directly on utcourts
       // Fall back to DB search
       const dbResults = await searchCourtEvents(searchParams);
-      const savedId = user ? await saveSearch(user.userId, searchParams, pKey, dbResults.length) : null;
+      const savedId = await saveSearch(userId, searchParams, pKey, dbResults.length);
       res.json({
         results: dbResults,
         resultsCount: dbResults.length,
@@ -307,7 +284,7 @@ router.get("/", async (req: Request, res: Response) => {
 
     // If live returned results, use them
     if (resultSlice.length > 0) {
-      const savedId = user ? await saveSearch(user.userId, searchParams, pKey, resultSlice.length) : null;
+      const savedId = await saveSearch(userId, searchParams, pKey, resultSlice.length);
       res.json({
         results: resultSlice,
         resultsCount: filtered.length,
@@ -322,7 +299,7 @@ router.get("/", async (req: Request, res: Response) => {
     // Live returned 0 — fall back to DB (may have cached results from prior scrapes)
     console.log("📭 Live search returned 0 results, checking database...");
     const dbResults = await searchCourtEvents(searchParams);
-    const savedId = user ? await saveSearch(user.userId, searchParams, pKey, dbResults.length) : null;
+    const savedId = await saveSearch(userId, searchParams, pKey, dbResults.length);
     res.json({
       results: dbResults,
       resultsCount: dbResults.length,
