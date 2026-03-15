@@ -305,14 +305,29 @@ router.get("/", async (req: Request, res: Response) => {
     const filtered = applyAllFilters(allEvents, searchParams);
     const resultSlice = filtered.slice(0, 200);
 
-    // Auto-save the search for logged-in users
-    const savedId = user ? await saveSearch(user.userId, searchParams, pKey, resultSlice.length) : null;
+    // If live returned results, use them
+    if (resultSlice.length > 0) {
+      const savedId = user ? await saveSearch(user.userId, searchParams, pKey, resultSlice.length) : null;
+      res.json({
+        results: resultSlice,
+        resultsCount: filtered.length,
+        searchParams,
+        source: "live",
+        savedSearchId: savedId,
+        processedAt: new Date().toISOString(),
+      });
+      return;
+    }
 
+    // Live returned 0 — fall back to DB (may have cached results from prior scrapes)
+    console.log("📭 Live search returned 0 results, checking database...");
+    const dbResults = await searchCourtEvents(searchParams);
+    const savedId = user ? await saveSearch(user.userId, searchParams, pKey, dbResults.length) : null;
     res.json({
-      results: resultSlice,
-      resultsCount: filtered.length,
+      results: dbResults,
+      resultsCount: dbResults.length,
       searchParams,
-      source: "live",
+      source: dbResults.length > 0 ? "database" : "live",
       savedSearchId: savedId,
       processedAt: new Date().toISOString(),
     });
