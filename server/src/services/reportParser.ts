@@ -313,15 +313,15 @@ export function parseReportHtml(html: string): ReportEvent[] {
 
     // Extract citation, sheriff, LEA numbers
     let citationNumber: string | null = null;
-    const citMatch = blockHtml.match(/CITATION\s*#?:\s*(\S+)/i);
+    const citMatch = blockHtml.match(/CITATION\s*#?:\s*([^<\s]+)/i);
     if (citMatch) citationNumber = citMatch[1].trim();
 
     let sheriffNumber: string | null = null;
-    const shMatch = blockHtml.match(/SHERIFF\s*#?:\s*(\S+)/i);
+    const shMatch = blockHtml.match(/SHERIFF\s*#?:\s*([^<\s]+)/i);
     if (shMatch) sheriffNumber = shMatch[1].trim();
 
     let leaNumber: string | null = null;
-    const leaMatch = blockHtml.match(/LEA\s*#?:\s*(\S+)/i);
+    const leaMatch = blockHtml.match(/LEA\s*#?:\s*([^<\s]+)/i);
     if (leaMatch) leaNumber = leaMatch[1].trim();
 
     // Extract charges (Utah statute codes like 76-5-103, 41-6a-502)

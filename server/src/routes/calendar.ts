@@ -7,6 +7,138 @@ import { heavyLimiter } from "../middleware/rateLimiter";
 
 const router = Router();
 
+// Resolve the Google Calendar redirect URI:
+// Use GOOGLE_CALENDAR_REDIRECT_URI if set, otherwise fall back to GOOGLE_REDIRECT_URI
+function getGoogleCalendarRedirectUri(): string {
+  return config.google.calendarRedirectUri || config.google.redirectUri;
+}
+
+// GET /api/calendar/google/auth - Start Google OAuth flow for calendar connection
+router.get("/google/auth", authenticateToken, heavyLimiter, (req: Request, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
+
+  if (!config.google.clientId || !config.google.clientSecret) {
+    res.status(503).json({ error: "Google Calendar not configured — add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET" });
+    return;
+  }
+
+  const redirectUri = getGoogleCalendarRedirectUri();
+  if (!redirectUri) {
+    res.status(503).json({ error: "Google redirect URI not configured — add GOOGLE_CALENDAR_REDIRECT_URI or GOOGLE_REDIRECT_URI" });
+    return;
+  }
+
+  const scopes = [
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.readonly",
+  ];
+
+  const params = new URLSearchParams({
+    client_id: config.google.clientId,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    scope: scopes.join(" "),
+    access_type: "offline",
+    prompt: "consent",
+    state: String(req.user.userId),
+  });
+
+  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+  res.json({ authUrl });
+});
+
+// GET /api/calendar/google/callback - Google OAuth callback for calendar connection
+router.get("/google/callback", async (req: Request, res: Response) => {
+  const { code, state, error: oauthError } = req.query;
+
+  if (oauthError) {
+    res.redirect("/calendar-settings?error=google_denied");
+    return;
+  }
+
+  const userId = state ? parseInt(String(state), 10) : null;
+  if (!code || !userId || isNaN(userId)) {
+    res.redirect("/calendar-settings?error=missing_params");
+    return;
+  }
+
+  const redirectUri = getGoogleCalendarRedirectUri();
+
+  try {
+    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code: String(code),
+        client_id: config.google.clientId,
+        client_secret: config.google.clientSecret,
+        redirect_uri: redirectUri,
+        grant_type: "authorization_code",
+      }),
+    });
+
+    const tokens = await tokenResponse.json();
+
+    if (tokens.error) {
+      res.redirect(`/calendar-settings?error=${encodeURIComponent(tokens.error_description || tokens.error)}`);
+      return;
+    }
+
+    const pool = getPool();
+    if (!pool) { res.redirect("/calendar-settings?error=db_unavailable"); return; }
+
+    const client = await pool.connect();
+    try {
+      const expiresAt = tokens.expires_in
+        ? new Date(Date.now() + tokens.expires_in * 1000)
+        : null;
+
+      // Upsert: update existing Google connection or create new
+      const existing = await client.query(
+        "SELECT id FROM calendar_connections WHERE user_id = $1 AND provider = 'google'",
+        [userId]
+      );
+
+      if (existing.rows.length > 0) {
+        await client.query(
+          `UPDATE calendar_connections
+           SET access_token_encrypted = $1,
+               refresh_token_encrypted = COALESCE($2, refresh_token_encrypted),
+               token_expires_at = $3,
+               is_active = true,
+               updated_at = NOW()
+           WHERE user_id = $4 AND provider = 'google'`,
+          [
+            encrypt(tokens.access_token),
+            tokens.refresh_token ? encrypt(tokens.refresh_token) : null,
+            expiresAt,
+            userId,
+          ]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO calendar_connections
+           (user_id, provider, access_token_encrypted, refresh_token_encrypted, token_expires_at, calendar_id)
+           VALUES ($1, 'google', $2, $3, $4, 'primary')`,
+          [
+            userId,
+            encrypt(tokens.access_token),
+            tokens.refresh_token ? encrypt(tokens.refresh_token) : null,
+            expiresAt,
+          ]
+        );
+      }
+    } finally {
+      client.release();
+    }
+
+    res.redirect("/calendar-settings?connected=google");
+  } catch (err) {
+    console.error("❌ Google Calendar OAuth callback failed:", err);
+    res.redirect("/calendar-settings?error=google_failed");
+  }
+});
+
 // GET /api/calendar/connections
 router.get("/connections", authenticateToken, heavyLimiter, async (req: Request, res: Response) => {
   if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }

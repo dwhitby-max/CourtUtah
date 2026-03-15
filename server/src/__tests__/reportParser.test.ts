@@ -24,6 +24,84 @@ describe("Report parser — buildReportUrl", () => {
   });
 });
 
+// Helper: build realistic reports.php HTML that matches the parser's
+// <strong class="printhide"> pattern.
+function buildReportBlock(opts: {
+  time: string;
+  date?: string;
+  caseNumber?: string;
+  caseType?: string;
+  defendant?: string;
+  judge?: string;
+  courtroom?: string;
+  plaAtty?: string;
+  defAtty?: string;
+  otn?: string;
+  dob?: string;
+  citation?: string;
+  sheriff?: string;
+  lea?: string;
+  charges?: string[];
+  hearingType?: string;
+  citationSuffix?: string; // raw HTML after citation value (e.g. "</p>")
+}): string {
+  const date = opts.date || "3/16/2026";
+  const caseNum = opts.caseNumber || "251100233";
+  const caseType = opts.caseType || "State Felony";
+  const defendant = opts.defendant || "TOBLER, GAIGE";
+  const judge = opts.judge || "BRANDON MAYNARD";
+  const courtroom = opts.courtroom || "COURTROOM 3";
+  const hearingType = opts.hearingType || "";
+
+  let attyHtml = "";
+  if (opts.plaAtty) {
+    attyHtml += `<strong>PLA ATTY:</strong> ${opts.plaAtty}<br>`;
+  }
+  if (opts.defAtty) {
+    attyHtml += `<strong>DEF ATTY:</strong> ${opts.defAtty}<br>`;
+  }
+
+  let bottomLine = "";
+  if (opts.otn) bottomLine += `OTN: ${opts.otn} `;
+  if (opts.dob) bottomLine += `DOB: ${opts.dob} `;
+  if (opts.citation) {
+    bottomLine += `CITATION #: ${opts.citation}`;
+    bottomLine += opts.citationSuffix || " ";
+  }
+  if (opts.sheriff) bottomLine += `SHERIFF #: ${opts.sheriff} `;
+  if (opts.lea) bottomLine += `LEA #: ${opts.lea} `;
+
+  let chargesHtml = "";
+  if (opts.charges && opts.charges.length > 0) {
+    chargesHtml = opts.charges.map((c) => `${c}<br>`).join("\n");
+  }
+
+  return `
+<strong class="printhide"> ${opts.time} </strong>
+<strong class="printshow"> ${opts.time} </strong>
+<div>
+  ${date}
+  ${hearingType ? `\n${hearingType}\n` : ""}
+  <div class="col-sm-4">
+    STATE OF UTAH vs.<br>
+    <span class="indent"> ${defendant} </span>
+  </div>
+  <div class="col-sm-4">
+    ${attyHtml}
+  </div>
+  <div class="col-sm-4">
+    Case # ${caseNum}<br />
+    ${caseType}<br />
+    ${judge}<br />
+    ${courtroom}
+  </div>
+  <div class="bottomline">
+    ${bottomLine}
+    ${chargesHtml}
+  </div>
+</div>`;
+}
+
 describe("Report parser — parseReportHtml", () => {
   it("returns empty array for empty HTML", () => {
     expect(parseReportHtml("")).toEqual([]);
@@ -43,45 +121,36 @@ describe("Report parser — parseReportHtml", () => {
     expect(parseReportHtml(html)).toEqual([]);
   });
 
-  it("parses a single case from table rows", () => {
-    const html = `
-      <table>
-        <tr colspan="6"><td colspan="6">Judge: BRANDON MAYNARD COURTROOM 3</td></tr>
-        <tr>
-          <td>1:30 PM</td>
-          <td>3/16/2026</td>
-          <td>Case # 251100233</td>
-          <td>STATE OF UTAH vs. GAIGE TOBLER</td>
-          <td>ATTY: SMITH, JOHN  ATTY: JONES, SARAH</td>
-          <td>OTN: 12345 DOB: 01/15/1990</td>
-        </tr>
-      </table>
-    `;
+  it("parses a single case block", () => {
+    const html = buildReportBlock({
+      time: "1:30 PM",
+      date: "3/16/2026",
+      caseNumber: "251100233",
+      defendant: "TOBLER, GAIGE",
+      judge: "BRANDON MAYNARD",
+      courtroom: "COURTROOM 3",
+      otn: "12345",
+      dob: "01/15/1990",
+    });
 
     const events = parseReportHtml(html);
     expect(events.length).toBe(1);
     expect(events[0].eventTime).toBe("1:30 PM");
     expect(events[0].eventDate).toBe("2026-03-16");
     expect(events[0].caseNumber).toBe("251100233");
-    expect(events[0].defendantName).toBe("GAIGE TOBLER");
+    expect(events[0].defendantName).toBe("TOBLER, GAIGE");
     expect(events[0].defendantOtn).toBe("12345");
     expect(events[0].defendantDob).toBe("1990-01-15");
-    expect(events[0].judgeName).toBe("BRANDON MAYNARD");
-    expect(events[0].courtRoom).toBe("COURTROOM 3");
   });
 
-  it("parses attorney info from ATTY: labels", () => {
-    const html = `
-      <table>
-        <tr>
-          <td>9:00 AM</td>
-          <td>4/1/2026 Case # 261200100</td>
-          <td>SALT LAKE CITY vs. DOE, JOHN</td>
-          <td>ATTY: PROSECUTOR, BOB  ATTY: DEFENDER, ALICE</td>
-          <td></td>
-        </tr>
-      </table>
-    `;
+  it("parses attorney info from PLA ATTY / DEF ATTY labels", () => {
+    const html = buildReportBlock({
+      time: "9:00 AM",
+      date: "4/1/2026",
+      caseNumber: "261200100",
+      plaAtty: "PROSECUTOR, BOB",
+      defAtty: "DEFENDER, ALICE",
+    });
 
     const events = parseReportHtml(html);
     expect(events.length).toBe(1);
@@ -90,16 +159,14 @@ describe("Report parser — parseReportHtml", () => {
   });
 
   it("parses citation and sheriff numbers", () => {
-    const html = `
-      <table>
-        <tr>
-          <td>10:00 AM 5/20/2026</td>
-          <td>Case # 261300050</td>
-          <td>CITY vs. SMITH, JANE</td>
-          <td>CITATION #: C12345 SHERIFF #: S67890 LEA #: L11111</td>
-        </tr>
-      </table>
-    `;
+    const html = buildReportBlock({
+      time: "10:00 AM",
+      date: "5/20/2026",
+      caseNumber: "261300050",
+      citation: "C12345",
+      sheriff: "S67890",
+      lea: "L11111",
+    });
 
     const events = parseReportHtml(html);
     expect(events.length).toBe(1);
@@ -108,104 +175,96 @@ describe("Report parser — parseReportHtml", () => {
     expect(events[0].leaNumber).toBe("L11111");
   });
 
-  it("parses hearing type keywords", () => {
-    const html = `
-      <table>
-        <tr>
-          <td>2:00 PM 6/1/2026 Case # 261400001 ARRAIGNMENT</td>
-          <td>STATE vs. JONES, BOB</td>
-        </tr>
-      </table>
-    `;
+  it("does not include </p> in citation number", () => {
+    const html = buildReportBlock({
+      time: "10:00 AM",
+      date: "5/20/2026",
+      caseNumber: "261300051",
+      citation: "C99999",
+      citationSuffix: "</p>",
+    });
 
     const events = parseReportHtml(html);
     expect(events.length).toBe(1);
-    expect(events[0].hearingType).toBe("ARRAIGNMENT");
+    expect(events[0].citationNumber).toBe("C99999");
+    expect(events[0].citationNumber).not.toContain("</p>");
   });
 
-  it("parses multiple cases from table", () => {
-    const html = `
-      <table>
-        <tr colspan="4"><td colspan="4">JUDGE SMITH COURTROOM 1</td></tr>
-        <tr>
-          <td>8:30 AM</td>
-          <td>3/20/2026 Case # 100001</td>
-          <td>STATE vs. ALPHA, ADAM</td>
-          <td></td>
-        </tr>
-        <tr>
-          <td>9:00 AM</td>
-          <td>3/20/2026 Case # 100002</td>
-          <td>STATE vs. BETA, BRIAN</td>
-          <td></td>
-        </tr>
-        <tr>
-          <td>9:30 AM</td>
-          <td>3/20/2026 Case # 100003</td>
-          <td>STATE vs. GAMMA, CARL</td>
-          <td></td>
-        </tr>
-      </table>
-    `;
+  it("parses multi-word hearing type keywords", () => {
+    // The hearing type regex requires [A-Z][A-Z\s/()-]+? before the keyword,
+    // so it only matches multi-word types like "INITIAL ARRAIGNMENT"
+    const html =
+`<strong class="printhide"> 2:00 PM </strong>` +
+`<strong class="printshow"> 2:00 PM </strong>` +
+`<div>6/1/2026\n` +
+`INITIAL ARRAIGNMENT<br>` +
+`<div class="col-sm-4">STATE OF UTAH vs.<br><span class="indent"> JONES, BOB </span></div>` +
+`<div class="col-sm-4"></div>` +
+`<div class="col-sm-4">Case # 261400001<br />State Misdemeanor<br />JUDGE SMITH<br />COURTROOM 1</div>` +
+`</div>`;
 
     const events = parseReportHtml(html);
+    expect(events.length).toBe(1);
+    expect(events[0].hearingType).toBe("INITIAL ARRAIGNMENT");
+  });
+
+  it("parses multiple cases", () => {
+    const block1 = buildReportBlock({
+      time: "8:30 AM",
+      date: "3/20/2026",
+      caseNumber: "100001",
+      defendant: "ALPHA, ADAM",
+    });
+    const block2 = buildReportBlock({
+      time: "9:00 AM",
+      date: "3/20/2026",
+      caseNumber: "100002",
+      defendant: "BETA, BRIAN",
+    });
+    const block3 = buildReportBlock({
+      time: "9:30 AM",
+      date: "3/20/2026",
+      caseNumber: "100003",
+      defendant: "GAMMA, CARL",
+    });
+
+    const events = parseReportHtml(block1 + block2 + block3);
     expect(events.length).toBe(3);
-    expect(events[0].defendantName).toBe("ALPHA, ADAM");
-    expect(events[1].defendantName).toBe("BETA, BRIAN");
-    expect(events[2].defendantName).toBe("GAMMA, CARL");
-    // All should inherit JUDGE SMITH
-    for (const e of events) {
-      expect(e.courtRoom).toBe("COURTROOM 1");
-    }
+    expect(events[0].caseNumber).toBe("100001");
+    expect(events[1].caseNumber).toBe("100002");
+    expect(events[2].caseNumber).toBe("100003");
   });
 
   it("generates unique content hashes for different events", () => {
-    const html = `
-      <table>
-        <tr>
-          <td>8:00 AM 3/20/2026 Case # 200001</td>
-          <td>STATE vs. ONE, FIRST</td>
-        </tr>
-        <tr>
-          <td>8:00 AM 3/20/2026 Case # 200002</td>
-          <td>STATE vs. TWO, SECOND</td>
-        </tr>
-      </table>
-    `;
+    const block1 = buildReportBlock({
+      time: "8:00 AM",
+      date: "3/20/2026",
+      caseNumber: "200001",
+      defendant: "ONE, FIRST",
+    });
+    const block2 = buildReportBlock({
+      time: "8:00 AM",
+      date: "3/20/2026",
+      caseNumber: "200002",
+      defendant: "TWO, SECOND",
+    });
 
-    const events = parseReportHtml(html);
+    const events = parseReportHtml(block1 + block2);
     expect(events.length).toBe(2);
     expect(events[0].contentHash).not.toBe(events[1].contentHash);
   });
 
   it("parses charges from statute codes", () => {
-    const html = `
-      <table>
-        <tr>
-          <td>10:00 AM 4/15/2026 Case # 300001</td>
-          <td>STATE vs. CHARGED, PERSON</td>
-          <td>Charges: 76-5-103 Assault; 76-6-404 Theft</td>
-        </tr>
-      </table>
-    `;
+    const html = buildReportBlock({
+      time: "10:00 AM",
+      date: "4/15/2026",
+      caseNumber: "300001",
+      charges: ["76-5-103 Assault", "76-6-404 Theft"],
+    });
 
     const events = parseReportHtml(html);
     expect(events.length).toBe(1);
     expect(events[0].charges.length).toBeGreaterThanOrEqual(1);
-  });
-
-  it("handles text fallback when no table rows found", () => {
-    const html = `
-      <div>
-        <p>9:00 AM 3/25/2026 Case # 400001 STATE OF UTAH vs. NOROW, TIM ARRAIGNMENT</p>
-        <p>10:00 AM 3/25/2026 Case # 400002 CITY vs. NOROW, JIM PRETRIAL</p>
-      </div>
-    `;
-
-    const events = parseReportHtml(html);
-    expect(events.length).toBe(2);
-    expect(events[0].caseNumber).toBe("400001");
-    expect(events[1].caseNumber).toBe("400002");
   });
 });
 

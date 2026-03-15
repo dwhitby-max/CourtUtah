@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   getCalendarConnections,
+  startGoogleAuth,
   startMicrosoftAuth,
   connectApple,
   connectCaldav,
@@ -125,8 +126,13 @@ export default function CalendarSettingsPage() {
     }
   }
 
-  function handleGoogleReauth() {
-    window.location.href = "/api/auth/google";
+  async function handleGoogle() {
+    try {
+      const data = await startGoogleAuth();
+      window.location.href = data.authUrl;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start Google auth");
+    }
   }
 
   async function handleMicrosoft() {
@@ -220,7 +226,7 @@ export default function CalendarSettingsPage() {
                   <div className="flex items-center gap-3">
                     {(status === "expired" || status === "expiring") && (conn.provider === "google" || conn.provider === "microsoft") && (
                       <button
-                        onClick={() => conn.provider === "google" ? handleGoogleReauth() : handleMicrosoft()}
+                        onClick={() => conn.provider === "google" ? handleGoogle() : handleMicrosoft()}
                         className="text-amber-700 hover:text-slate-800 text-sm font-medium"
                       >
                         Re-authorize
@@ -240,10 +246,11 @@ export default function CalendarSettingsPage() {
       <div className="bg-white shadow rounded-lg p-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Add Calendar</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="border-2 border-green-200 bg-green-50 rounded-lg p-4 text-left">
-            <div className="font-medium text-green-800">Google Calendar</div>
-            <div className="text-sm text-green-600 mt-1">Connected automatically via Google Sign-In</div>
-          </div>
+          <button onClick={handleGoogle}
+            className="border-2 border-gray-200 rounded-lg p-4 text-left hover:border-amber-500 transition-colors">
+            <div className="font-medium text-gray-900">Google Calendar</div>
+            <div className="text-sm text-gray-500 mt-1">Connect via Google OAuth</div>
+          </button>
 
           <button onClick={handleMicrosoft}
             className="border-2 border-gray-200 rounded-lg p-4 text-left hover:border-amber-500 transition-colors">
