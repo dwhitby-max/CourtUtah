@@ -109,6 +109,8 @@ export interface SearchResponse {
   results: CourtEvent[];
   resultsCount: number;
   searchParams: SearchRequest;
+  source?: "live" | "database";
+  savedSearchId?: number | null;
   processedAt: string;
 }
 

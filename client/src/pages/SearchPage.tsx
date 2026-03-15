@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import SearchForm from "@/components/SearchForm";
 import { searchCourtEvents } from "@/api/search";
+import { addEventToCalendar } from "@/api/calendar";
 import { apiFetch } from "@/api/client";
 import { useAuth } from "@/store/authStore";
 import { CourtEvent } from "@shared/types";
@@ -64,6 +65,10 @@ export default function SearchPage() {
   const [debugInfo, setDebugInfo] = useState("");
   const [savedSearches, setSavedSearches] = useState<SavedSearchRow[]>([]);
   const [loadingSaved, setLoadingSaved] = useState(false);
+  const [calSyncingIds, setCalSyncingIds] = useState<Set<number>>(new Set());
+  const [calSyncedIds, setCalSyncedIds] = useState<Set<number>>(new Set());
+  const [lastSearchParams, setLastSearchParams] = useState<Record<string, string> | null>(null);
+  const [lastSearchSavedId, setLastSearchSavedId] = useState<number | null>(null);
 
   // Load saved searches on mount for logged-in users
   useEffect(() => {
@@ -99,6 +104,10 @@ export default function SearchPage() {
       const data = await searchCourtEvents(params);
       setDebugInfo(prev => prev + ` | ${data.resultsCount} results`);
       setResults(data.results);
+      setLastSearchParams(params);
+      setLastSearchSavedId(data.savedSearchId ?? null);
+      setCalSyncingIds(new Set());
+      setCalSyncedIds(new Set());
       // Refresh saved searches list after search (it may have been auto-saved)
       if (isLoggedIn) {
         fetchSavedSearches();
@@ -145,6 +154,31 @@ export default function SearchPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add watched case");
     }
+  }
+
+  async function handleAddToCalendar(event: CourtEvent) {
+    setCalSyncingIds((prev) => new Set(prev).add(event.id));
+    try {
+      const data = await addEventToCalendar(event.id);
+      setCalSyncedIds((prev) => new Set(prev).add(event.id));
+      setWatchSuccess(data.message);
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add to calendar");
+    } finally {
+      setCalSyncingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(event.id);
+        return next;
+      });
+    }
+  }
+
+  async function handleSaveSearch() {
+    if (!lastSearchParams) return;
+    // Re-run the search which will auto-save it server-side
+    await handleSearch(lastSearchParams);
+    setWatchSuccess("Search saved successfully");
   }
 
   function toggleExpand(id: number) {
@@ -222,10 +256,22 @@ export default function SearchPage() {
 
       {searched && !loading && (
         <div className="bg-white shadow rounded-lg overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200">
+          <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-gray-900">
               {results.length} Result{results.length !== 1 ? "s" : ""} Found
             </h2>
+            {isLoggedIn && lastSearchParams && !lastSearchSavedId && (
+              <button
+                onClick={handleSaveSearch}
+                disabled={loading}
+                className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-md disabled:opacity-50"
+              >
+                Save Search
+              </button>
+            )}
+            {isLoggedIn && lastSearchSavedId && (
+              <span className="text-sm text-green-600 font-medium">Search saved</span>
+            )}
           </div>
 
           {results.length === 0 ? (
@@ -286,12 +332,28 @@ export default function SearchPage() {
                         <td className="px-4 py-3 text-sm">{event.hearingType || "N/A"}</td>
                         <td className="px-4 py-3 text-sm space-y-1">
                           {isLoggedIn && (
-                            <button
-                              onClick={() => handleWatch(event)}
-                              className="text-amber-700 hover:text-slate-800 text-sm font-medium block"
-                            >
-                              Watch
-                            </button>
+                            <>
+                              <button
+                                onClick={() => handleAddToCalendar(event)}
+                                disabled={calSyncingIds.has(event.id) || calSyncedIds.has(event.id)}
+                                className="text-amber-700 hover:text-slate-800 text-sm font-medium block disabled:opacity-50"
+                              >
+                                {calSyncingIds.has(event.id)
+                                  ? "Adding..."
+                                  : calSyncedIds.has(event.id)
+                                    ? "Added to Calendar"
+                                    : "Add to Calendar"}
+                              </button>
+                              <button
+                                onClick={() => handleWatch(event)}
+                                className="text-gray-500 hover:text-gray-700 text-xs block"
+                              >
+                                Watch & Auto-Sync
+                              </button>
+                            </>
+                          )}
+                          {!isLoggedIn && (
+                            <span className="text-gray-400 text-xs">Log in to save</span>
                           )}
                           {hasDetails(event) && (
                             <button
