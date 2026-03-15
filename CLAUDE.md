@@ -1,8 +1,8 @@
 # CLAUDE.md — Utah Court Calendar Tracker
 
 **Project:** Utah Court Calendar Tracker
-**Version:** 0.12.0
-**Last Updated:** 2026-03-13
+**Version:** 0.13.0
+**Last Updated:** 2026-03-15
 **Platform:** Replit (Node.js 20, PostgreSQL, VM deployment)
 
 ---
@@ -84,7 +84,8 @@ project-root/
 │   │   ├── 006_notifications.sql
 │   │   ├── 007_change_log.sql
 │   │   ├── 008_scrape_jobs.sql
-│   │   └── 009_html_scraper_columns.sql
+│   │   ├── 009_html_scraper_columns.sql
+│   │   └── ...017_saved_searches.sql
 │   └── src/
 │       ├── index.ts
 │       ├── app.ts
@@ -95,6 +96,7 @@ project-root/
 │       │   ├── calendar.ts
 │       │   ├── notifications.ts
 │       │   ├── watchedCases.ts
+│       │   ├── savedSearches.ts
 │       │   └── health.ts
 │       ├── services/
 │       │   ├── courtScraper.ts        # HTML court list + search.php fetcher (primary)
@@ -256,6 +258,19 @@ project-root/
 | new_value | TEXT | |
 | detected_at | TIMESTAMP DEFAULT NOW() | |
 
+### saved_searches
+| Column | Type | Notes |
+|--------|------|-------|
+| id | SERIAL PRIMARY KEY | |
+| user_id | INTEGER REFERENCES users(id) ON DELETE CASCADE | |
+| search_params | JSONB NOT NULL | Full multi-field search params with _key for dedup |
+| label | VARCHAR(255) NOT NULL | Auto-generated from search fields |
+| results_count | INTEGER DEFAULT 0 | Updated on each run |
+| last_run_at | TIMESTAMP DEFAULT NOW() | |
+| is_active | BOOLEAN DEFAULT true | Soft delete |
+| created_at | TIMESTAMP DEFAULT NOW() | |
+| updated_at | TIMESTAMP DEFAULT NOW() | |
+
 ### scrape_jobs
 | Column | Type | Notes |
 |--------|------|-------|
@@ -279,6 +294,7 @@ project-root/
 4. **Change Detection:** SHA-256 hash of event data fields. Compare on each scrape cycle.
 5. **Scheduling:** node-cron runs daily at 2:00 AM UTC. Also supports manual trigger via `/api/admin/trigger-scrape` and Replit scheduled deployments.
 6. **Calendar Item Tracking:** Every calendar entry created by the app is tracked in `calendar_entries` table with the provider's external event ID. The app ONLY updates/deletes entries it created.
+7. **Saved Searches:** Searches are auto-saved for logged-in users. First-time searches always go live to utcourts.gov; subsequent runs use cached DB results. Live results are persisted to court_events for future queries.
 
 ---
 
@@ -337,10 +353,11 @@ SENTRY_DSN=
 | 2026-03-13 | 0.10.0 | Watched case auto-matching (matchWatchedCases in scheduler post-scrape), 139 tests |
 | 2026-03-13 | 0.11.0 | Parser validated against real utcourts.gov HTML — pipe-delimiter fix for defendant/judge separation. Mobile responsive: hamburger nav, card layouts. Smoke test script. 139 tests |
 | 2026-03-13 | 0.12.0 | Full search parity with utcourts.gov: judge name + attorney search (9 fields total). Notification frequency: immediate/daily/weekly digest with digestService.ts + cron jobs. ProfilePage frequency selector UI. 139 tests |
+| 2026-03-15 | 0.13.0 | Auto-saved searches: live-first scraping on first run, persists results to DB, auto-saves for logged-in users. Saved searches UI with re-run/delete. Date/time display fixes. CLAUDEv5 compliance fixes (type guards, req.user capture, no Math.random IDs). 139 tests |
 
 ---
 
-## ALL FEATURES COMPLETE (v0.12.0)
+## ALL FEATURES COMPLETE (v0.13.0)
 
 ### Core
 - ✅ User auth: register, login, password reset, email verification with resend
@@ -350,6 +367,7 @@ SENTRY_DSN=
 - ✅ PDF fallback: legacy divider-based parser for any courts still producing PDFs
 - ✅ Search: 9 fields (defendant, case#, court, date, OTN, citation, charges, judge, attorney) — full parity with utcourts.gov + 3 extras
 - ✅ Watched cases: CRUD + manual sync + auto-matching (all 9 search types)
+- ✅ Saved searches: auto-saved on first run, live-first scraping, persists results, re-run/delete UI
 - ✅ Change detection: SHA-256 content hashing + 9-field diff → change_log + user notifications
 
 ### Calendar Integrations

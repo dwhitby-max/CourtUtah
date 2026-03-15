@@ -11,6 +11,13 @@ import { AuthPayload } from "../middleware/auth";
 
 const router = Router();
 
+/** Type guard for JWT payload shape */
+function isAuthPayload(obj: unknown): obj is AuthPayload {
+  if (typeof obj !== "object" || obj === null) return false;
+  const o = obj as Record<string, unknown>;
+  return typeof o.userId === "number" && typeof o.email === "string";
+}
+
 /**
  * Try to extract user from Authorization header without requiring it.
  * Returns the user payload or null if not authenticated.
@@ -20,7 +27,8 @@ function optionalAuth(req: Request): AuthPayload | null {
   const token = authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
   if (!token || !config.jwtSecret) return null;
   try {
-    return jwt.verify(token, config.jwtSecret) as AuthPayload;
+    const payload = jwt.verify(token, config.jwtSecret);
+    return isAuthPayload(payload) ? payload : null;
   } catch {
     return null;
   }
@@ -82,7 +90,7 @@ function searchParamsKey(params: Record<string, string | undefined>): string {
   const entries = Object.entries(params)
     .filter(([, v]) => v !== undefined && v !== "")
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}=${(v as string).toUpperCase().trim()}`);
+    .map(([k, v]) => `${k}=${String(v).toUpperCase().trim()}`);
   return entries.join("&");
 }
 
@@ -218,18 +226,23 @@ async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<void> {
 // date_from, date_to, defendant_otn, citation_number, charges, judge_name, attorney
 router.get("/", async (req: Request, res: Response) => {
   console.log("🔍 Search params:", req.query);
+  /** Extract a query param as string or undefined (type-safe) */
+  function qp(key: string): string | undefined {
+    const val = req.query[key];
+    return typeof val === "string" ? val : undefined;
+  }
   const searchParams: Record<string, string | undefined> = {
-    defendantName: req.query.defendant_name as string | undefined,
-    caseNumber: req.query.case_number as string | undefined,
-    courtName: req.query.court_name as string | undefined,
-    courtDate: req.query.court_date as string | undefined,
-    dateFrom: req.query.date_from as string | undefined,
-    dateTo: req.query.date_to as string | undefined,
-    defendantOtn: req.query.defendant_otn as string | undefined,
-    citationNumber: req.query.citation_number as string | undefined,
-    charges: req.query.charges as string | undefined,
-    judgeName: req.query.judge_name as string | undefined,
-    attorney: req.query.attorney as string | undefined,
+    defendantName: qp("defendant_name"),
+    caseNumber: qp("case_number"),
+    courtName: qp("court_name"),
+    courtDate: qp("court_date"),
+    dateFrom: qp("date_from"),
+    dateTo: qp("date_to"),
+    defendantOtn: qp("defendant_otn"),
+    citationNumber: qp("citation_number"),
+    charges: qp("charges"),
+    judgeName: qp("judge_name"),
+    attorney: qp("attorney"),
   };
 
   const hasParams = Object.values(searchParams).some((v) => v !== undefined && v !== "");
@@ -246,11 +259,11 @@ router.get("/", async (req: Request, res: Response) => {
     const existingSaved = user ? await findExistingSavedSearch(user.userId, pKey) : null;
 
     // If this is a returning search with cached data, use DB results
-    if (existingSaved) {
+    if (existingSaved && user) {
       const dbResults = await searchCourtEvents(searchParams);
       if (dbResults.length > 0) {
         // Update last_run_at
-        await saveSearch(user!.userId, searchParams, pKey, dbResults.length);
+        await saveSearch(user.userId, searchParams, pKey, dbResults.length);
         res.json({
           results: dbResults,
           resultsCount: dbResults.length,
@@ -309,12 +322,16 @@ router.get("/", async (req: Request, res: Response) => {
   }
 });
 
+/** Counter for assigning temporary negative IDs to live (non-persisted) results */
+let liveIdCounter = 0;
+
 /**
  * Convert a ParsedCourtEvent to a CourtEvent for the API response.
  */
 function toCourtEvent(event: ParsedCourtEvent): CourtEvent {
+  liveIdCounter -= 1;
   return {
-    id: -Math.floor(Math.random() * 1000000),
+    id: liveIdCounter,
     courtType: "",
     courtName: event.hearingLocation || "",
     courtRoom: event.courtRoom,
