@@ -3,50 +3,28 @@ import { authenticateToken } from "../middleware/auth";
 import { requireAdmin } from "../middleware/adminAuth";
 import { heavyLimiter } from "../middleware/rateLimiter";
 import { getPool, getPoolStats } from "../db/pool";
-import { runScrapeJob } from "../services/schedulerService";
-import { fetchCourtList } from "../services/courtScraper";
+import { refreshAllWatchedCases } from "../services/schedulerService";
 
 const router = Router();
 
 router.use(authenticateToken);
 router.use(requireAdmin);
 
-// ─── Scrape Jobs ───
+// ─── Watched Case Refresh ───
 
-// GET /api/admin/scrape-jobs — list recent scrape jobs
-router.get("/scrape-jobs", async (_req: Request, res: Response) => {
-  const pool = getPool();
-  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
-
-  const client = await pool.connect();
+// POST /api/admin/trigger-refresh — manually refresh all watched cases
+router.post("/trigger-refresh", heavyLimiter, async (_req: Request, res: Response) => {
   try {
-    const result = await client.query(
-      `SELECT id, status, courts_processed, events_found, events_changed,
-              error_message, started_at, completed_at, created_at
-       FROM scrape_jobs ORDER BY created_at DESC LIMIT 50`
-    );
-    res.json({ jobs: result.rows });
-  } catch (err) {
-    console.error("❌ Failed to fetch scrape jobs:", err);
-    res.status(500).json({ error: "Failed to fetch scrape jobs" });
-  } finally {
-    client.release();
-  }
-});
-
-// POST /api/admin/trigger-scrape — manually trigger a scrape job
-router.post("/trigger-scrape", heavyLimiter, async (_req: Request, res: Response) => {
-  try {
-    const jobPromise = runScrapeJob();
-    res.json({ message: "Scrape job triggered", status: "running", triggeredAt: new Date().toISOString() });
+    const jobPromise = refreshAllWatchedCases();
+    res.json({ message: "Watched-case refresh triggered", status: "running", triggeredAt: new Date().toISOString() });
     jobPromise.then((result) => {
-      console.log(`✅ Manual scrape complete: ${result.courtsProcessed} courts, ${result.eventsFound} events, ${result.eventsChanged} changes`);
+      console.log(`✅ Manual refresh complete: ${result.casesChecked} cases, ${result.totalEvents} events, ${result.totalNewEntries} new entries`);
     }).catch((err) => {
-      console.error("❌ Manual scrape failed:", err);
+      console.error("❌ Manual refresh failed:", err);
     });
   } catch (err) {
-    console.error("❌ Failed to trigger scrape:", err);
-    res.status(500).json({ error: "Failed to trigger scrape job" });
+    console.error("❌ Failed to trigger refresh:", err);
+    res.status(500).json({ error: "Failed to trigger refresh" });
   }
 });
 
@@ -131,67 +109,6 @@ router.patch("/users/:id", async (req: Request, res: Response) => {
     res.status(500).json({ error: "Failed to update user" });
   } finally {
     client.release();
-  }
-});
-
-// ─── Court Whitelist ───
-
-// GET /api/admin/court-whitelist — get the current whitelist
-router.get("/court-whitelist", async (_req: Request, res: Response) => {
-  const pool = getPool();
-  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
-
-  const client = await pool.connect();
-  try {
-    const result = await client.query(
-      "SELECT value FROM app_settings WHERE key = 'court_whitelist'"
-    );
-    const whitelist = result.rows.length > 0 ? result.rows[0].value : [];
-    res.json({ whitelist });
-  } catch (err) {
-    console.error("❌ Failed to fetch court whitelist:", err);
-    res.status(500).json({ error: "Failed to fetch court whitelist" });
-  } finally {
-    client.release();
-  }
-});
-
-// PUT /api/admin/court-whitelist — update the whitelist
-router.put("/court-whitelist", async (req: Request, res: Response) => {
-  const pool = getPool();
-  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
-
-  const { whitelist } = req.body;
-  if (!Array.isArray(whitelist)) {
-    res.status(400).json({ error: "whitelist must be an array of location codes" });
-    return;
-  }
-
-  const client = await pool.connect();
-  try {
-    await client.query(
-      `INSERT INTO app_settings (key, value, updated_at)
-       VALUES ('court_whitelist', $1, NOW())
-       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
-      [JSON.stringify(whitelist)]
-    );
-    res.json({ message: "Court whitelist updated", whitelist });
-  } catch (err) {
-    console.error("❌ Failed to update court whitelist:", err);
-    res.status(500).json({ error: "Failed to update court whitelist" });
-  } finally {
-    client.release();
-  }
-});
-
-// GET /api/admin/available-courts — fetch all courts from utcourts.gov
-router.get("/available-courts", async (_req: Request, res: Response) => {
-  try {
-    const courts = await fetchCourtList();
-    res.json({ courts });
-  } catch (err) {
-    console.error("❌ Failed to fetch available courts:", err);
-    res.status(500).json({ error: "Failed to fetch court list from utcourts.gov" });
   }
 });
 

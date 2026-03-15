@@ -55,7 +55,7 @@ export async function syncCalendarEntry(
         cc.token_expires_at, cc.calendar_id, cc.caldav_url,
         ev.court_name, ev.court_room, ev.event_date, ev.event_time,
         ev.hearing_type, ev.case_number, ev.case_type, ev.defendant_name,
-        ev.content_hash,
+        ev.judge_name, ev.hearing_location, ev.content_hash,
         u.calendar_preferences
       FROM calendar_entries ce
       JOIN calendar_connections cc ON cc.id = ce.calendar_connection_id
@@ -78,18 +78,24 @@ export async function syncCalendarEntry(
     const tag = calPrefs?.eventTag || "";
     const titlePrefix = tag ? `${tag} ` : "";
 
+    const entryAny = entry as unknown as Record<string, string | null>;
+    const judgeName = entryAny.judge_name || null;
+    const hearingLocation = entryAny.hearing_location || null;
+
     const eventData: CalendarEventData = {
       title: `${titlePrefix}Court: ${entry.case_number || "Unknown Case"} - ${entry.hearing_type || "Hearing"}`,
       description: [
         `Court: ${entry.court_name}`,
         `Room: ${entry.court_room || "TBD"}`,
+        judgeName ? `Judge: ${judgeName}` : null,
+        hearingLocation ? `Location: ${hearingLocation}` : null,
         `Case: ${entry.case_number || "N/A"}`,
         `Type: ${entry.case_type || "N/A"}`,
         `Hearing: ${entry.hearing_type || "N/A"}`,
         `Defendant: ${entry.defendant_name || "N/A"}`,
         "",
-        "Managed by Utah Court Calendar Tracker",
-      ].join("\n"),
+        "Managed by Court Utah",
+      ].filter(Boolean).join("\n"),
       startDate: entry.event_date,
       startTime: entry.event_time,
       location: `${entry.court_name} ${entry.court_room || ""}`.trim(),

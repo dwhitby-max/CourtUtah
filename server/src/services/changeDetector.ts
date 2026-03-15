@@ -11,6 +11,7 @@ const TRACKED_FIELDS = [
   "court_room", "event_date", "event_time", "hearing_type",
   "case_number", "case_type", "defendant_name",
   "prosecuting_attorney", "defense_attorney",
+  "judge_name", "hearing_location",
 ];
 
 /**

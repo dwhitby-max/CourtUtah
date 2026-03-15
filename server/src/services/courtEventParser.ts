@@ -50,6 +50,7 @@ function hashEvent(event: Omit<ParsedCourtEvent, "contentHash">): string {
     caseType: event.caseType,
     defendantName: event.defendantName,
     judgeName: event.judgeName,
+    hearingLocation: event.hearingLocation,
   });
   return crypto.createHash("sha256").update(data).digest("hex");
 }

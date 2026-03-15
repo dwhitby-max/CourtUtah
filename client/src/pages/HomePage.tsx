@@ -47,7 +47,7 @@ export default function HomePage() {
           Never Miss a Utah Court Date
         </h1>
         <p className="mt-4 text-lg md:text-xl text-gray-600 max-w-2xl mx-auto">
-          Search 135+ Utah courts, track case schedules, and sync hearings
+          Search Utah court calendars, track case schedules, and sync hearings
           directly to your Google Calendar — automatically.
         </p>
         <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4">
@@ -115,7 +115,7 @@ export default function HomePage() {
             or a defendant keeping tabs on your own case — Court Utah keeps you informed.
           </p>
           <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-6 text-left">
-            <StatCard label="Courts Covered" value="135+" />
+            <StatCard label="Utah Courts" value="District & Justice" />
             <StatCard label="Search Fields" value="9" />
             <StatCard label="Daily Auto-Scrape" value="2 AM" />
             <StatCard label="Calendar Sync" value="Google" />

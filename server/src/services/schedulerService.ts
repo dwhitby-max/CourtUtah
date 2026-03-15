@@ -1,70 +1,225 @@
 import cron from "node-cron";
 import { getPool } from "../db/pool";
-import { fetchCourtList, fetchCourtCalendarHtml, fetchUrl, buildSearchUrl, CourtInfo } from "./courtScraper";
-import { parseHtmlCalendarResults, parseCourtCalendarText, ParsedCourtEvent } from "./courtEventParser";
+import { liveSearchUtcourts, LiveSearchParams } from "./courtScraper";
+import { parseHtmlCalendarResults, ParsedCourtEvent } from "./courtEventParser";
 import { detectChanges, processChanges } from "./changeDetector";
 import { syncCalendarEntry } from "./calendarSync";
-import { buildReportUrl, fetchReportHtml, parseReportHtml, enrichEventsWithReportData } from "./reportParser";
 import { captureException, captureMessage } from "./sentryService";
-import { matchWatchedCases } from "./watchedCaseMatcher";
+import { createNotification } from "./notificationService";
 import { sendDigestNotifications } from "./digestService";
 
 let isRunning = false;
 
-/** How many upcoming weekdays to scrape beyond today */
-const SCRAPE_DAYS_AHEAD = 14;
+interface WatchedCaseRow {
+  id: number;
+  user_id: number;
+  search_type: string;
+  search_value: string;
+  label: string;
+}
 
 /**
- * Build a list of date strings to scrape.
- * Includes "today" plus the next N weekdays (skips weekends — courts don't hold hearings).
+ * Map a watched case's search_type + search_value to LiveSearchParams
+ * for the utcourts.gov search.php endpoint.
+ *
+ * Returns null if the search type can't be mapped to a live search
+ * (e.g. court_date, citation_number, defendant_otn — these only work
+ * as local DB filters after results are fetched).
  */
-function buildDateList(daysAhead: number): string[] {
-  const dates: string[] = ["today"];
-  const now = new Date();
-  let added = 0;
-  let offset = 1;
+function watchedCaseToLiveParams(wc: WatchedCaseRow): LiveSearchParams | null {
+  switch (wc.search_type) {
+    case "defendant_name":
+      return { partyName: wc.search_value };
+    case "case_number":
+      return { caseNumber: wc.search_value };
+    case "judge_name":
+      return { judgeName: wc.search_value };
+    case "attorney":
+      return { attorneyLastName: wc.search_value };
+    default:
+      // court_name, court_date, defendant_otn, citation_number
+      // can't be directly searched via utcourts — need a primary search field
+      return null;
+  }
+}
 
-  while (added < daysAhead) {
-    const d = new Date(now);
-    d.setDate(d.getDate() + offset);
-    offset++;
+/**
+ * Run a targeted live search for a single watched case against utcourts.gov,
+ * parse results, upsert to court_events, and create/sync calendar entries.
+ *
+ * Returns the number of events found and new calendar entries created.
+ */
+export async function runWatchedCaseSearch(watchedCaseId: number): Promise<{
+  eventsFound: number;
+  newEntries: number;
+  changes: number;
+}> {
+  const pool = getPool();
+  if (!pool) return { eventsFound: 0, newEntries: 0, changes: 0 };
 
-    const dayOfWeek = d.getDay();
-    // Skip Saturday (6) and Sunday (0)
-    if (dayOfWeek === 0 || dayOfWeek === 6) continue;
+  const client = await pool.connect();
+  try {
+    // Load the watched case
+    const wcResult = await client.query<WatchedCaseRow>(
+      `SELECT id, user_id, search_type, search_value, label
+       FROM watched_cases WHERE id = $1`,
+      [watchedCaseId]
+    );
+    if (wcResult.rows.length === 0) return { eventsFound: 0, newEntries: 0, changes: 0 };
 
-    const iso = d.toISOString().split("T")[0]; // YYYY-MM-DD
-    dates.push(iso);
-    added++;
+    const wc = wcResult.rows[0];
+    const liveParams = watchedCaseToLiveParams(wc);
+    if (!liveParams) {
+      console.log(`⚠️ Watched case ${wc.id} (${wc.search_type}) cannot be searched live — skipping`);
+      return { eventsFound: 0, newEntries: 0, changes: 0 };
+    }
+
+    // Search utcourts.gov
+    console.log(`🔍 Searching utcourts.gov for watched case ${wc.id}: ${wc.search_type}="${wc.search_value}"`);
+    const html = await liveSearchUtcourts(liveParams);
+    const parsed = parseHtmlCalendarResults(html);
+
+    if (parsed.length === 0) {
+      console.log(`  📭 No results for "${wc.label}"`);
+      return { eventsFound: 0, newEntries: 0, changes: 0 };
+    }
+
+    console.log(`  📋 Found ${parsed.length} events for "${wc.label}"`);
+
+    let changes = 0;
+
+    // Upsert each event to court_events
+    for (const event of parsed) {
+      const changed = await upsertCourtEvent(event);
+      if (changed) changes++;
+    }
+
+    // Now match against the DB to create calendar entries
+    const newEntries = await createCalendarEntriesForWatchedCase(wc, client);
+
+    return { eventsFound: parsed.length, newEntries, changes };
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * After upserting events, find matching court_events for this watched case
+ * and create calendar_entries for any new matches.
+ */
+async function createCalendarEntriesForWatchedCase(
+  wc: WatchedCaseRow,
+  client: { query: <T = Record<string, unknown>>(q: string, p?: unknown[]) => Promise<{ rows: T[] }> }
+): Promise<number> {
+  // Get user's active calendar connections
+  const calResult = await client.query<{ id: number }>(
+    `SELECT id FROM calendar_connections WHERE user_id = $1 AND is_active = true`,
+    [wc.user_id]
+  );
+  if (calResult.rows.length === 0) return 0;
+
+  // Build WHERE clause for matching
+  const { whereClause, searchVal } = buildWhereClause(wc);
+
+  const eventsResult = await client.query<{ id: number }>(
+    `SELECT id FROM court_events WHERE ${whereClause} AND event_date >= CURRENT_DATE`,
+    [searchVal]
+  );
+
+  if (eventsResult.rows.length === 0) return 0;
+
+  let created = 0;
+  for (const calConn of calResult.rows) {
+    for (const event of eventsResult.rows) {
+      const existing = await client.query<{ id: number }>(
+        `SELECT id FROM calendar_entries
+         WHERE watched_case_id = $1 AND court_event_id = $2 AND calendar_connection_id = $3`,
+        [wc.id, event.id, calConn.id]
+      );
+      if (existing.rows.length > 0) continue;
+
+      const insertResult = await client.query<{ id: number }>(
+        `INSERT INTO calendar_entries (user_id, watched_case_id, court_event_id, calendar_connection_id)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [wc.user_id, wc.id, event.id, calConn.id]
+      );
+      created++;
+
+      try {
+        await syncCalendarEntry(insertResult.rows[0].id);
+      } catch (syncErr) {
+        console.warn(`  ⚠️ Sync failed for entry ${insertResult.rows[0].id}: ${syncErr instanceof Error ? syncErr.message : syncErr}`);
+      }
+    }
   }
 
-  return dates;
-}
+  if (created > 0) {
+    await createNotification({
+      userId: wc.user_id,
+      type: "new_match",
+      title: `New matches for "${wc.label}"`,
+      message: `Found ${eventsResult.rows.length} court events matching your search "${wc.label}". Calendar entries have been created automatically.`,
+      metadata: {
+        watchedCaseId: wc.id,
+        searchType: wc.search_type,
+        searchValue: wc.search_value,
+      },
+    });
+  }
 
-/** Random delay between 0 and maxMs milliseconds */
-function randomDelay(maxMs: number): Promise<void> {
-  const ms = Math.floor(Math.random() * maxMs);
-  const minutes = Math.round(ms / 60000);
-  console.log(`⏰ Random start delay: ${minutes} minutes`);
-  return new Promise((r) => setTimeout(r, ms));
+  return created;
 }
 
 /**
- * Start the daily cron job for scraping court calendars.
- * Cron fires at 2:00 AM UTC; a random 0–60 min delay staggers the actual start
- * so requests don't hit utcourts.gov at the exact same time every day.
+ * Build a WHERE clause for matching a watched case against court_events.
+ */
+function buildWhereClause(wc: WatchedCaseRow): { whereClause: string; searchVal: string } {
+  if (wc.search_type === "attorney") {
+    return {
+      whereClause: `(UPPER(prosecuting_attorney) LIKE $1 OR UPPER(defense_attorney) LIKE $1)`,
+      searchVal: `%${wc.search_value.toUpperCase()}%`,
+    };
+  }
+
+  const columnMap: Record<string, string> = {
+    defendant_name: "defendant_name",
+    case_number: "case_number",
+    court_name: "court_name",
+    court_date: "event_date",
+    defendant_otn: "defendant_otn",
+    citation_number: "citation_number",
+    judge_name: "judge_name",
+  };
+
+  const column = columnMap[wc.search_type];
+  if (!column) return { whereClause: "1=0", searchVal: "" };
+
+  if (wc.search_type === "court_date") {
+    return { whereClause: `${column} = $1`, searchVal: wc.search_value };
+  }
+
+  return {
+    whereClause: `UPPER(${column}) LIKE $1`,
+    searchVal: `%${wc.search_value.toUpperCase()}%`,
+  };
+}
+
+/**
+ * Start the scheduler. Runs daily to refresh all active watched case searches.
  */
 export function startScheduler(): void {
-  console.log("⏰ Starting court calendar scheduler (daily ~2:00–3:00 AM UTC)");
+  console.log("⏰ Starting watched-case refresh scheduler (daily ~2:00–3:00 AM UTC)");
 
-  // Main scrape job — daily at 2 AM UTC + random 0-60 min offset
+  // Daily refresh of all watched cases — 2 AM UTC + random 0-60 min offset
   cron.schedule("0 2 * * *", async () => {
-    console.log("⏰ Scheduled scrape triggered, adding random delay...");
-    await randomDelay(60 * 60 * 1000);
-    await runScrapeJob();
+    console.log("⏰ Scheduled watched-case refresh triggered, adding random delay...");
+    const delay = Math.floor(Math.random() * 60 * 60 * 1000);
+    console.log(`⏰ Random start delay: ${Math.round(delay / 60000)} minutes`);
+    await new Promise((r) => setTimeout(r, delay));
+    await refreshAllWatchedCases();
   });
 
-  // Daily digest — every day at 6 AM UTC (after scrape completes)
+  // Daily digest — every day at 6 AM UTC
   cron.schedule("0 6 * * *", async () => {
     console.log("📬 Daily digest triggered");
     try {
@@ -92,290 +247,111 @@ export function startScheduler(): void {
 }
 
 /**
- * Run a full scrape job — fetches all court HTML calendars, parses events,
- * detects changes, and triggers calendar syncs.
+ * Refresh all active watched cases by running targeted searches against utcourts.gov.
+ * This replaces the old bulk scrape — only fetches data relevant to users' saved searches.
  */
-export async function runScrapeJob(): Promise<{
-  courtsProcessed: number;
-  eventsFound: number;
-  eventsChanged: number;
+export async function refreshAllWatchedCases(): Promise<{
+  casesChecked: number;
+  totalEvents: number;
+  totalNewEntries: number;
+  totalChanges: number;
 }> {
   if (isRunning) {
-    console.warn("⚠️  Scrape job already running — skipping");
-    return { courtsProcessed: 0, eventsFound: 0, eventsChanged: 0 };
+    console.warn("⚠️ Refresh already running — skipping");
+    return { casesChecked: 0, totalEvents: 0, totalNewEntries: 0, totalChanges: 0 };
   }
 
   isRunning = true;
   const pool = getPool();
-
-  let jobId: number | null = null;
+  if (!pool) {
+    isRunning = false;
+    return { casesChecked: 0, totalEvents: 0, totalNewEntries: 0, totalChanges: 0 };
+  }
 
   try {
-    // Create job record
-    if (pool) {
-      const client = await pool.connect();
-      try {
-        const result = await client.query(
-          `INSERT INTO scrape_jobs (status, started_at) VALUES ('running', NOW()) RETURNING id`
-        );
-        jobId = result.rows[0].id;
-      } finally {
-        client.release();
-      }
+    console.log("🔄 Starting watched-case refresh...");
+
+    const client = await pool.connect();
+    let watchedCases: WatchedCaseRow[];
+    try {
+      const result = await client.query<WatchedCaseRow>(
+        `SELECT id, user_id, search_type, search_value, label
+         FROM watched_cases WHERE is_active = true`
+      );
+      watchedCases = result.rows;
+    } finally {
+      client.release();
     }
 
-    console.log("🔄 Starting court calendar scrape (HTML format)...");
+    if (watchedCases.length === 0) {
+      console.log("📭 No active watched cases — nothing to refresh");
+      isRunning = false;
+      return { casesChecked: 0, totalEvents: 0, totalNewEntries: 0, totalChanges: 0 };
+    }
 
-    const allCourts = await fetchCourtList();
-    const dates = buildDateList(SCRAPE_DAYS_AHEAD);
+    console.log(`🔍 Refreshing ${watchedCases.length} active watched cases...`);
+
     let totalEvents = 0;
-    let totalChanged = 0;
-    let courtsProcessed = 0;
+    let totalNewEntries = 0;
+    let totalChanges = 0;
 
-    // Apply court whitelist filter if configured
-    let courts = allCourts;
-    if (pool) {
-      const client = await pool.connect();
+    for (const wc of watchedCases) {
       try {
-        const wlResult = await client.query(
-          "SELECT value FROM app_settings WHERE key = 'court_whitelist'"
-        );
-        if (wlResult.rows.length > 0) {
-          const whitelist = wlResult.rows[0].value as string[];
-          if (Array.isArray(whitelist) && whitelist.length > 0) {
-            courts = allCourts.filter((c) => whitelist.includes(c.locationCode));
-            console.log(`🔍 Court whitelist active: ${courts.length} of ${allCourts.length} courts selected`);
-          }
-        }
-      } finally {
-        client.release();
-      }
-    }
+        const result = await runWatchedCaseSearch(wc.id);
+        totalEvents += result.eventsFound;
+        totalNewEntries += result.newEntries;
+        totalChanges += result.changes;
 
-    console.log(`📅 Scraping ${courts.length} courts × ${dates.length} dates (today + ${SCRAPE_DAYS_AHEAD} weekdays)`);
-
-    for (const court of courts) {
-      try {
-        let courtEventCount = 0;
-        const allCourtEvents: ParsedCourtEvent[] = [];
-
-        for (const date of dates) {
-          try {
-            const parsedEvents = await scrapeCourtEventsForDate(court, date);
-            allCourtEvents.push(...parsedEvents);
-
-            // Rate limit: 1s between requests to be respectful of utcourts.gov
-            await new Promise((r) => setTimeout(r, 1000));
-          } catch (err) {
-            // Log per-date failures but continue with other dates
-            console.warn(`  ⚠️  Failed ${court.name} on ${date}: ${err instanceof Error ? err.message : err}`);
-          }
-        }
-
-        // Enrich events with reports.php data (attorneys, charges, OTN, DOB)
-        // Build charges lookup: case_number::event_date -> charges[]
-        const chargesLookup = new Map<string, string[]>();
-        try {
-          const reportHtml = await fetchReportHtml(court.locationCode, 15000);
-          const reportEvents = parseReportHtml(reportHtml);
-          if (reportEvents.length > 0) {
-            const enrichedCount = enrichEventsWithReportData(allCourtEvents, reportEvents);
-            if (enrichedCount > 0) {
-              console.log(`  📋 Enriched ${enrichedCount} events from reports.php for ${court.name}`);
-            }
-            // Build charges map
-            for (const re of reportEvents) {
-              if (re.caseNumber && re.eventDate && re.charges.length > 0) {
-                chargesLookup.set(`${re.caseNumber}::${re.eventDate}`, re.charges);
-              }
-            }
-          }
-          // Rate limit after report fetch
-          await new Promise((r) => setTimeout(r, 1000));
-        } catch {
-          // reports.php enrichment is best-effort — don't fail the court
-        }
-
-        // Upsert all events (enriched or not)
-        for (const event of allCourtEvents) {
-          totalEvents++;
-          courtEventCount++;
-          const eventCharges = (event.caseNumber && event.eventDate)
-            ? chargesLookup.get(`${event.caseNumber}::${event.eventDate}`) ?? []
-            : [];
-          const changed = await upsertCourtEvent(
-            event,
-            court.name,
-            court.type,
-            buildSearchUrl(court.locationCode, "today"),
-            eventCharges
-          );
-          if (changed) totalChanged++;
-        }
-
-        courtsProcessed++;
-        if (courtEventCount > 0) {
-          console.log(`  ✅ ${court.name}: ${courtEventCount} events across ${dates.length} dates`);
-        }
+        // Rate limit: 2s between searches to be respectful of utcourts.gov
+        await new Promise((r) => setTimeout(r, 2000));
       } catch (err) {
-        console.error(`❌ Failed to scrape ${court.name}:`, err instanceof Error ? err.message : err);
+        console.error(`❌ Refresh failed for watched case ${wc.id} (${wc.label}):`, err instanceof Error ? err.message : err);
         captureException(err instanceof Error ? err : new Error(String(err)), {
-          tags: { service: "scheduler", court: court.name },
+          tags: { service: "scheduler", watchedCaseId: String(wc.id) },
         });
       }
     }
 
-    // Update job record
-    if (pool && jobId) {
-      const client = await pool.connect();
-      try {
-        await client.query(
-          `UPDATE scrape_jobs
-           SET status = 'completed', courts_processed = $1,
-               events_found = $2, events_changed = $3, completed_at = NOW()
-           WHERE id = $4`,
-          [courtsProcessed, totalEvents, totalChanged, jobId]
-        );
-      } finally {
-        client.release();
-      }
-    }
-
-    console.log(`✅ Scrape complete: ${courtsProcessed} courts, ${totalEvents} events, ${totalChanged} changes`);
-
-    // Auto-match newly scraped events against active watched cases
-    try {
-      const matchResult = await matchWatchedCases();
-      if (matchResult.newEntriesCreated > 0) {
-        console.log(`🔗 Auto-match: ${matchResult.watchedCasesChecked} watched cases checked, ${matchResult.newEntriesCreated} new entries, ${matchResult.syncTriggered} synced`);
-      }
-    } catch (matchErr) {
-      // Auto-matching failure is non-fatal — scrape data is already saved
-      console.error("⚠️  Auto-match failed (non-fatal):", matchErr instanceof Error ? matchErr.message : matchErr);
-      captureException(matchErr instanceof Error ? matchErr : new Error(String(matchErr)), {
-        tags: { service: "scheduler", phase: "auto-match" },
-      });
-    }
+    console.log(`✅ Refresh complete: ${watchedCases.length} cases, ${totalEvents} events, ${totalNewEntries} new entries, ${totalChanges} changes`);
 
     captureMessage(
-      `Scrape complete: ${courtsProcessed} courts, ${totalEvents} events, ${totalChanged} changes`,
+      `Watched-case refresh: ${watchedCases.length} cases, ${totalEvents} events, ${totalNewEntries} new entries`,
       "info",
-      { tags: { service: "scheduler" }, extra: { courtsProcessed, totalEvents, totalChanged } }
+      { tags: { service: "scheduler" }, extra: { casesChecked: watchedCases.length, totalEvents, totalNewEntries, totalChanges } }
     );
-    return { courtsProcessed, eventsFound: totalEvents, eventsChanged: totalChanged };
+
+    return { casesChecked: watchedCases.length, totalEvents, totalNewEntries, totalChanges };
   } catch (err) {
-    console.error("❌ Scrape job failed:", err);
+    console.error("❌ Refresh job failed:", err);
     captureException(err instanceof Error ? err : new Error(String(err)), {
-      tags: { service: "scheduler", phase: "job" },
+      tags: { service: "scheduler", phase: "refresh" },
     });
-
-    if (pool && jobId) {
-      const client = await pool.connect();
-      try {
-        await client.query(
-          `UPDATE scrape_jobs SET status = 'failed', error_message = $1, completed_at = NOW() WHERE id = $2`,
-          [err instanceof Error ? err.message : String(err), jobId]
-        );
-      } finally {
-        client.release();
-      }
-    }
-
-    return { courtsProcessed: 0, eventsFound: 0, eventsChanged: 0 };
+    return { casesChecked: 0, totalEvents: 0, totalNewEntries: 0, totalChanges: 0 };
   } finally {
     isRunning = false;
   }
 }
 
 /**
- * Scrape events for a single court on a single date.
- * Primary: HTML from search.php
- * Fallback: PDF text (legacy format, only for "today")
- */
-async function scrapeCourtEventsForDate(court: CourtInfo, date: string): Promise<ParsedCourtEvent[]> {
-  // Primary path: fetch HTML calendar results
-  try {
-    const html = await fetchCourtCalendarHtml(court.locationCode, date);
-
-    // Check if this looks like valid HTML results
-    if (html.includes("results found") || html.includes("Case #")) {
-      const events = parseHtmlCalendarResults(html);
-      if (events.length > 0) {
-        return events;
-      }
-    }
-
-    // HTML returned but no events
-    if (html.includes("0 results found") || html.includes("currently being updated")) {
-      return [];
-    }
-  } catch (err) {
-    // Only warn on today — future dates failing is less critical
-    if (date === "today") {
-      console.warn(`  ⚠️  HTML scrape failed for ${court.name}: ${err instanceof Error ? err.message : err}`);
-    }
-  }
-
-  // Fallback: try legacy PDF URL (only makes sense for "today")
-  if (date === "today") {
-    try {
-      const legacyPdfUrl = `https://www.utcourts.gov/cal/data/${court.locationCode}.pdf`;
-      const pdfBuffer = await fetchUrl(legacyPdfUrl, 1, 10000);
-
-      if (pdfBuffer.length > 100 && pdfBuffer.slice(0, 5).toString() === "%PDF-") {
-        let pdfParse;
-        try {
-          pdfParse = require("pdf-parse");
-        } catch {
-          return [];
-        }
-
-        const data = await pdfParse(pdfBuffer);
-        const events = parseCourtCalendarText(
-          data.text,
-          court.name,
-          court.type,
-          legacyPdfUrl
-        );
-        if (events.length > 0) {
-          return events;
-        }
-      }
-    } catch {
-      // PDF fallback failed — not unexpected
-    }
-  }
-
-  return [];
-}
-
-/**
  * Insert or update a court event. Returns true if the event changed.
  */
-async function upsertCourtEvent(
-  event: ParsedCourtEvent,
-  courtName: string,
-  courtType: string,
-  sourceUrl: string,
-  charges: string[] = []
-): Promise<boolean> {
+async function upsertCourtEvent(event: ParsedCourtEvent): Promise<boolean> {
   const pool = getPool();
   if (!pool) return false;
 
   const client = await pool.connect();
   try {
-    // Look for existing event by case_number + event_date + court_name
+    // Look for existing event by case_number + event_date + court name from hearing location
     const existing = await client.query(
       `SELECT * FROM court_events
-       WHERE case_number = $1 AND event_date = $2 AND court_name = $3
+       WHERE case_number = $1 AND event_date = $2
        LIMIT 1`,
-      [event.caseNumber, event.eventDate, courtName]
+      [event.caseNumber, event.eventDate]
     );
 
     if (existing.rows.length > 0) {
       const existingRow = existing.rows[0];
 
-      // Check for changes
       const changes = detectChanges(existingRow, {
         court_room: event.courtRoom,
         event_date: event.eventDate,
@@ -386,10 +362,11 @@ async function upsertCourtEvent(
         defendant_name: event.defendantName,
         prosecuting_attorney: event.prosecutingAttorney,
         defense_attorney: event.defenseAttorney,
+        judge_name: event.judgeName,
+        hearing_location: event.hearingLocation,
       } as Record<string, unknown>);
 
       if (changes.length > 0) {
-        // Update the event
         await client.query(
           `UPDATE court_events SET
             court_room = $1, event_time = $2, hearing_type = $3,
@@ -398,9 +375,8 @@ async function upsertCourtEvent(
             defense_attorney = $9, citation_number = $10,
             sheriff_number = $11, lea_number = $12,
             content_hash = $13, scraped_at = NOW(), updated_at = NOW(),
-            judge_name = $14, hearing_location = $15, is_virtual = $16,
-            source_url = $17, charges = $19
-          WHERE id = $18`,
+            judge_name = $14, hearing_location = $15, is_virtual = $16
+          WHERE id = $17`,
           [
             event.courtRoom, event.eventTime, event.hearingType,
             event.caseType, event.defendantName, event.defendantOtn,
@@ -408,12 +384,10 @@ async function upsertCourtEvent(
             event.defenseAttorney, event.citationNumber,
             event.sheriffNumber, event.leaNumber,
             event.contentHash, event.judgeName, event.hearingLocation,
-            event.isVirtual, sourceUrl, existingRow.id,
-            JSON.stringify(charges),
+            event.isVirtual, existingRow.id,
           ]
         );
 
-        // Process changes (log + notify)
         await processChanges(existingRow.id, changes);
 
         // Re-sync affected calendar entries
@@ -438,18 +412,17 @@ async function upsertCourtEvent(
         hearing_type, case_number, case_type, defendant_name,
         defendant_otn, defendant_dob, prosecuting_attorney,
         defense_attorney, citation_number, sheriff_number,
-        lea_number, source_pdf_url, content_hash,
-        judge_name, hearing_location, is_virtual, source_url, charges
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
+        lea_number, content_hash,
+        judge_name, hearing_location, is_virtual
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
       [
-        courtType, courtName, event.courtRoom, event.eventDate,
+        "", event.hearingLocation || "", event.courtRoom, event.eventDate,
         event.eventTime, event.hearingType, event.caseNumber,
         event.caseType, event.defendantName, event.defendantOtn,
         event.defendantDob, event.prosecutingAttorney,
         event.defenseAttorney, event.citationNumber,
-        event.sheriffNumber, event.leaNumber, sourceUrl,
-        event.contentHash, event.judgeName, event.hearingLocation,
-        event.isVirtual, sourceUrl, JSON.stringify(charges),
+        event.sheriffNumber, event.leaNumber, event.contentHash,
+        event.judgeName, event.hearingLocation, event.isVirtual,
       ]
     );
 
