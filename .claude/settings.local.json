@@ -3,7 +3,10 @@
     "allow": [
       "Bash(git commit:*)",
       "Bash(npm run:*)",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx vitest:*)",
+      "Bash(curl:*)"
     ]
   }
 }
