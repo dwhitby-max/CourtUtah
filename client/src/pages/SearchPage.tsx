@@ -1,10 +1,60 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import SearchForm from "@/components/SearchForm";
 import { searchCourtEvents } from "@/api/search";
 import { apiFetch } from "@/api/client";
+import { useAuth } from "@/store/authStore";
 import { CourtEvent } from "@shared/types";
 
+interface SavedSearchRow {
+  id: number;
+  search_params: Record<string, string>;
+  label: string;
+  results_count: number;
+  last_run_at: string;
+  created_at: string;
+}
+
+function timeAgo(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+  if (diffMins < 1) return "just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Denver" });
+}
+
+/** Convert camelCase search params to snake_case query params */
+function toQueryParams(params: Record<string, string>): Record<string, string> {
+  const map: Record<string, string> = {
+    defendantName: "defendant_name",
+    caseNumber: "case_number",
+    courtName: "court_name",
+    courtDate: "court_date",
+    dateFrom: "date_from",
+    dateTo: "date_to",
+    defendantOtn: "defendant_otn",
+    citationNumber: "citation_number",
+    charges: "charges",
+    judgeName: "judge_name",
+    attorney: "attorney",
+  };
+  const result: Record<string, string> = {};
+  for (const [key, val] of Object.entries(params)) {
+    if (val && key !== "_key") {
+      const snakeKey = map[key] || key;
+      result[snakeKey] = val;
+    }
+  }
+  return result;
+}
+
 export default function SearchPage() {
+  const { isLoggedIn } = useAuth();
   const [results, setResults] = useState<CourtEvent[]>([]);
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -12,6 +62,30 @@ export default function SearchPage() {
   const [watchSuccess, setWatchSuccess] = useState("");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [debugInfo, setDebugInfo] = useState("");
+  const [savedSearches, setSavedSearches] = useState<SavedSearchRow[]>([]);
+  const [loadingSaved, setLoadingSaved] = useState(false);
+
+  // Load saved searches on mount for logged-in users
+  useEffect(() => {
+    if (isLoggedIn) {
+      fetchSavedSearches();
+    }
+  }, [isLoggedIn]);
+
+  async function fetchSavedSearches() {
+    setLoadingSaved(true);
+    try {
+      const res = await apiFetch("/saved-searches");
+      if (res.ok) {
+        const data = await res.json();
+        setSavedSearches(data.savedSearches || []);
+      }
+    } catch {
+      // non-fatal
+    } finally {
+      setLoadingSaved(false);
+    }
+  }
 
   async function handleSearch(params: Record<string, string>) {
     setError("");
@@ -23,8 +97,12 @@ export default function SearchPage() {
 
     try {
       const data = await searchCourtEvents(params);
-      setDebugInfo(prev => prev + ` | API returned ${data.resultsCount} results`);
+      setDebugInfo(prev => prev + ` | ${data.resultsCount} results`);
       setResults(data.results);
+      // Refresh saved searches list after search (it may have been auto-saved)
+      if (isLoggedIn) {
+        fetchSavedSearches();
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Search failed";
       setDebugInfo(prev => prev + ` | ERROR: ${msg}`);
@@ -32,6 +110,22 @@ export default function SearchPage() {
       setResults([]);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleRunSavedSearch(saved: SavedSearchRow) {
+    const queryParams = toQueryParams(saved.search_params);
+    await handleSearch(queryParams);
+  }
+
+  async function handleDeleteSavedSearch(id: number) {
+    try {
+      const res = await apiFetch(`/saved-searches/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        setSavedSearches(prev => prev.filter(s => s.id !== id));
+      }
+    } catch {
+      // non-fatal
     }
   }
 
@@ -57,7 +151,16 @@ export default function SearchPage() {
     setExpandedId(expandedId === id ? null : id);
   }
 
-  /** Check if an event has any detail data worth expanding for */
+  function formatDate(dateStr: string): string {
+    if (!dateStr) return "N/A";
+    const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (match) {
+      const [, y, m, d] = match;
+      return `${parseInt(m)}/${parseInt(d)}/${y}`;
+    }
+    return dateStr;
+  }
+
   function hasDetails(event: CourtEvent): boolean {
     return !!(
       event.prosecutingAttorney ||
@@ -76,6 +179,41 @@ export default function SearchPage() {
       <h1 className="text-2xl font-bold text-gray-900">Search Court Calendars</h1>
 
       <SearchForm onSearch={handleSearch} loading={loading} />
+
+      {/* Saved Searches */}
+      {isLoggedIn && savedSearches.length > 0 && (
+        <div className="bg-white shadow rounded-lg p-5">
+          <h2 className="text-lg font-semibold text-gray-900 mb-3">Your Saved Searches</h2>
+          <div className="space-y-3">
+            {savedSearches.map((saved) => (
+              <div key={saved.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 p-3 bg-gray-50 rounded-md">
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-gray-900 truncate">{saved.label}</div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400 mt-1">
+                    <span>{saved.results_count} result{saved.results_count !== 1 ? "s" : ""}</span>
+                    <span>Last run {timeAgo(saved.last_run_at)}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <button
+                    onClick={() => handleRunSavedSearch(saved)}
+                    disabled={loading}
+                    className="text-amber-700 hover:text-slate-800 text-sm font-medium disabled:opacity-50"
+                  >
+                    Run Again
+                  </button>
+                  <button
+                    onClick={() => handleDeleteSavedSearch(saved.id)}
+                    className="text-red-600 hover:text-red-800 text-sm font-medium"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {debugInfo && <div className="bg-blue-50 text-blue-700 p-3 rounded-md text-xs font-mono">{debugInfo}</div>}
 
@@ -99,7 +237,8 @@ export default function SearchPage() {
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date/Time</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Time</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Case</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Defendant</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Court</th>
@@ -112,13 +251,15 @@ export default function SearchPage() {
                     <>
                       <tr key={event.id} className="hover:bg-gray-50">
                         <td className="px-4 py-3 text-sm whitespace-nowrap">
-                          <div>{event.eventDate}</div>
-                          <div className="text-gray-500">{event.eventTime || "TBD"}</div>
+                          <div>{formatDate(event.eventDate)}</div>
                           {event.isVirtual && (
                             <span className="inline-block mt-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
                               Virtual
                             </span>
                           )}
+                        </td>
+                        <td className="px-4 py-3 text-sm whitespace-nowrap font-medium">
+                          {event.eventTime || "TBD"}
                         </td>
                         <td className="px-4 py-3 text-sm">
                           <div className="font-medium">{event.caseNumber || "N/A"}</div>
@@ -144,12 +285,14 @@ export default function SearchPage() {
                         </td>
                         <td className="px-4 py-3 text-sm">{event.hearingType || "N/A"}</td>
                         <td className="px-4 py-3 text-sm space-y-1">
-                          <button
-                            onClick={() => handleWatch(event)}
-                            className="text-amber-700 hover:text-slate-800 text-sm font-medium block"
-                          >
-                            Watch
-                          </button>
+                          {isLoggedIn && (
+                            <button
+                              onClick={() => handleWatch(event)}
+                              className="text-amber-700 hover:text-slate-800 text-sm font-medium block"
+                            >
+                              Watch
+                            </button>
+                          )}
                           {hasDetails(event) && (
                             <button
                               onClick={() => toggleExpand(event.id)}
@@ -162,7 +305,7 @@ export default function SearchPage() {
                       </tr>
                       {expandedId === event.id && (
                         <tr key={`${event.id}-detail`} className="bg-gray-50">
-                          <td colSpan={6} className="px-6 py-3">
+                          <td colSpan={7} className="px-6 py-3">
                             <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
                               {event.prosecutingAttorney && (
                                 <div>
