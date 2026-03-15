@@ -74,7 +74,7 @@ export async function searchCourtEvents(params: SearchRequest): Promise<CourtEve
   }
 
   if (params.attorney) {
-    conditions.push(`(UPPER(prosecuting_attorney) LIKE $${paramIndex} OR UPPER(defense_attorney) LIKE $${paramIndex})`);
+    conditions.push(`(UPPER(REPLACE(prosecuting_attorney, chr(13), '')) LIKE $${paramIndex} OR UPPER(REPLACE(defense_attorney, chr(13), '')) LIKE $${paramIndex})`);
     values.push(`%${params.attorney.toUpperCase()}%`);
     paramIndex++;
   }

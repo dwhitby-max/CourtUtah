@@ -267,11 +267,11 @@ export function parseReportHtml(html: string): ReportEvent[] {
 
     const plaMatch = blockHtml.match(/<strong>PLA ATTY:<\/strong>\s*([^<]+)/i);
     if (plaMatch) {
-      prosecutingAttorney = plaMatch[1].trim();
+      prosecutingAttorney = plaMatch[1].replace(/\r/g, "").trim();
     }
     const defAttyMatch = blockHtml.match(/<strong>DEF ATTY:<\/strong>\s*([^<]+)/i);
     if (defAttyMatch) {
-      defenseAttorney = defAttyMatch[1].trim();
+      defenseAttorney = defAttyMatch[1].replace(/\r/g, "").trim();
     }
 
     // Extract case number and case type from the case info div
