@@ -14,6 +14,7 @@ export interface UserPublic {
   isAdmin: boolean;
   notificationPreferences: NotificationPreferences;
   calendarPreferences: CalendarPreferences;
+  tosAgreedAt: string | null;
   createdAt: string;
 }
 

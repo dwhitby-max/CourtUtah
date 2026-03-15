@@ -89,6 +89,14 @@ export default function Layout() {
       <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
         <Outlet />
       </main>
+
+      <footer className="border-t border-gray-200 bg-white mt-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-center space-x-4 text-xs text-gray-400">
+          <Link to="/privacy" className="hover:text-gray-600 underline">Privacy Policy</Link>
+          <span>&middot;</span>
+          <Link to="/terms" className="hover:text-gray-600 underline">Terms and Conditions</Link>
+        </div>
+      </footer>
     </div>
   );
 }

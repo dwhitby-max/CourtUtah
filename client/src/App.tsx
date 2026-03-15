@@ -13,6 +13,9 @@ import ProfilePage from "@/pages/ProfilePage";
 import AdminPage from "@/pages/AdminPage";
 import SearchResultsPage from "@/pages/SearchResultsPage";
 import NotificationSettingsPage from "@/pages/NotificationSettingsPage";
+import PrivacyPolicyPage from "@/pages/PrivacyPolicyPage";
+import TermsPage from "@/pages/TermsPage";
+import AcceptTermsPage from "@/pages/AcceptTermsPage";
 
 export default function App() {
   return (
@@ -22,6 +25,9 @@ export default function App() {
           {/* Public routes */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/login/callback" element={<LoginCallbackPage />} />
+          <Route path="/privacy" element={<PrivacyPolicyPage />} />
+          <Route path="/terms" element={<TermsPage />} />
+          <Route path="/accept-terms" element={<AcceptTermsPage />} />
 
           {/* Protected routes */}
           <Route

@@ -24,7 +24,11 @@ export default function LoginCallbackPage() {
         if (!res.ok) throw new Error("Failed to fetch profile");
         const data = await res.json();
         setUser(data.user);
-        navigate("/", { replace: true });
+        if (!data.user.tosAgreedAt) {
+          navigate("/accept-terms", { replace: true });
+        } else {
+          navigate("/", { replace: true });
+        }
       })
       .catch(() => {
         setError("Failed to complete sign-in. Please try again.");

@@ -150,11 +150,12 @@ router.get("/google/callback", async (req: Request, res: Response) => {
           );
         } else {
           // Create new user
+          const signupIp = req.ip || req.headers["x-forwarded-for"] || null;
           const newUser = await client.query(
-            `INSERT INTO users (email, google_id, email_verified, notification_preferences)
-             VALUES ($1, $2, true, '{"emailEnabled": true, "smsEnabled": false, "inAppEnabled": true, "frequency": "immediate"}')
+            `INSERT INTO users (email, google_id, email_verified, signup_ip, notification_preferences)
+             VALUES ($1, $2, true, $3, '{"emailEnabled": true, "smsEnabled": false, "inAppEnabled": true, "frequency": "immediate"}')
              RETURNING id`,
-            [userinfo.email.toLowerCase(), userinfo.id]
+            [userinfo.email.toLowerCase(), userinfo.id, signupIp]
           );
           userId = newUser.rows[0].id;
         }
@@ -227,7 +228,7 @@ router.get("/me", authenticateToken, async (req: Request, res: Response) => {
   const client = await pool.connect();
   try {
     const result = await client.query(
-      `SELECT id, email, phone, email_verified, google_id, is_admin, notification_preferences, calendar_preferences, created_at
+      `SELECT id, email, phone, email_verified, google_id, is_admin, notification_preferences, calendar_preferences, tos_agreed_at, created_at
        FROM users WHERE id = $1`,
       [req.user.userId]
     );
@@ -248,12 +249,57 @@ router.get("/me", authenticateToken, async (req: Request, res: Response) => {
         isAdmin: user.is_admin || false,
         notificationPreferences: user.notification_preferences,
         calendarPreferences: user.calendar_preferences || {},
+        tosAgreedAt: user.tos_agreed_at || null,
         createdAt: user.created_at,
       },
     });
   } catch (err) {
     console.error("❌ GET /api/auth/me failed:", err);
     res.status(500).json({ error: "Failed to fetch profile" });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/auth/accept-terms — Record terms acceptance (requires JWT)
+router.post("/accept-terms", authenticateToken, async (req: Request, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
+
+  const pool = getPool();
+  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
+
+  const client = await pool.connect();
+  try {
+    const tosIp = req.ip || req.headers["x-forwarded-for"] || null;
+    await client.query(
+      `UPDATE users SET tos_agreed_at = NOW(), tos_agreed_ip = $1, updated_at = NOW() WHERE id = $2`,
+      [tosIp, req.user.userId]
+    );
+
+    const result = await client.query(
+      `SELECT id, email, phone, email_verified, google_id, is_admin, notification_preferences, calendar_preferences, tos_agreed_at, created_at
+       FROM users WHERE id = $1`,
+      [req.user.userId]
+    );
+
+    const user = result.rows[0];
+    res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        phone: user.phone,
+        emailVerified: user.email_verified,
+        googleConnected: !!user.google_id,
+        isAdmin: user.is_admin || false,
+        notificationPreferences: user.notification_preferences,
+        calendarPreferences: user.calendar_preferences || {},
+        tosAgreedAt: user.tos_agreed_at,
+        createdAt: user.created_at,
+      },
+    });
+  } catch (err) {
+    console.error("❌ POST /api/auth/accept-terms failed:", err);
+    res.status(500).json({ error: "Failed to record terms acceptance" });
   } finally {
     client.release();
   }
@@ -295,7 +341,7 @@ router.patch("/profile", authenticateToken, async (req: Request, res: Response) 
     );
 
     const result = await client.query(
-      `SELECT id, email, phone, email_verified, google_id, is_admin, notification_preferences, calendar_preferences, created_at FROM users WHERE id = $1`,
+      `SELECT id, email, phone, email_verified, google_id, is_admin, notification_preferences, calendar_preferences, tos_agreed_at, created_at FROM users WHERE id = $1`,
       [req.user.userId]
     );
 
@@ -315,6 +361,7 @@ router.patch("/profile", authenticateToken, async (req: Request, res: Response) 
         isAdmin: user.is_admin || false,
         notificationPreferences: user.notification_preferences,
         calendarPreferences: user.calendar_preferences || {},
+        tosAgreedAt: user.tos_agreed_at || null,
         createdAt: user.created_at,
       },
     });

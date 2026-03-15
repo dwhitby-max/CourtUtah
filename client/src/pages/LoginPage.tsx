@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 const errorMessages: Record<string, string> = {
   google_denied: "Google sign-in was cancelled.",
@@ -49,6 +49,12 @@ export default function LoginPage() {
           <p className="text-xs text-center text-gray-500">
             Signing in connects your Google Calendar automatically.
           </p>
+        </div>
+
+        <div className="text-center text-xs text-gray-400 space-x-3">
+          <Link to="/privacy" className="hover:text-gray-600 underline">Privacy Policy</Link>
+          <span>&middot;</span>
+          <Link to="/terms" className="hover:text-gray-600 underline">Terms and Conditions</Link>
         </div>
       </div>
     </div>
