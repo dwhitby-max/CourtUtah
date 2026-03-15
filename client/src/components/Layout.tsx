@@ -28,13 +28,13 @@ export default function Layout() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center">
-              <Link to="/" className="flex items-center space-x-2 shrink-0">
+              <Link to="/dashboard" className="flex items-center space-x-2 shrink-0">
                 <img src="/logo.svg" alt="Court Calendar Tracker" className="h-8 w-8" />
                 <span className="text-white font-bold text-lg">Court Calendar Tracker</span>
               </Link>
               {/* Desktop nav */}
               <div className="hidden md:flex ml-10 items-baseline space-x-2">
-                <Link to="/" className={navClass("/")}>Dashboard</Link>
+                <Link to="/" className={navClass("/dashboard")}>Dashboard</Link>
                 <Link to="/search" className={navClass("/search")}>Search</Link>
                 <Link to="/watched-cases" className={navClass("/watched-cases")}>Watched</Link>
                 <Link to="/calendar-settings" className={navClass("/calendar-settings")}>Calendar</Link>
@@ -69,7 +69,7 @@ export default function Layout() {
         {/* Mobile menu */}
         {mobileMenuOpen && (
           <div className="md:hidden px-2 pt-2 pb-3 space-y-1">
-            <Link to="/" className={mobileNavClass("/")} onClick={() => setMobileMenuOpen(false)}>Dashboard</Link>
+            <Link to="/dashboard" className={mobileNavClass("/dashboard")} onClick={() => setMobileMenuOpen(false)}>Dashboard</Link>
             <Link to="/search" className={mobileNavClass("/search")} onClick={() => setMobileMenuOpen(false)}>Search</Link>
             <Link to="/watched-cases" className={mobileNavClass("/watched-cases")} onClick={() => setMobileMenuOpen(false)}>Watched Cases</Link>
             <Link to="/calendar-settings" className={mobileNavClass("/calendar-settings")} onClick={() => setMobileMenuOpen(false)}>Calendar</Link>

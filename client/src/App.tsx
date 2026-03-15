@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/store/authStore";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Layout from "@/components/Layout";
+import HomePage from "@/pages/HomePage";
 import LoginPage from "@/pages/LoginPage";
 import LoginCallbackPage from "@/pages/LoginCallbackPage";
 import DashboardPage from "@/pages/DashboardPage";
@@ -23,6 +24,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           {/* Public routes */}
+          <Route path="/" element={<HomePage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/login/callback" element={<LoginCallbackPage />} />
           <Route path="/privacy" element={<PrivacyPolicyPage />} />
@@ -37,7 +39,7 @@ export default function App() {
               </ProtectedRoute>
             }
           >
-            <Route path="/" element={<DashboardPage />} />
+            <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/search" element={<SearchPage />} />
             <Route path="/search-results" element={<SearchResultsPage />} />
             <Route path="/watched-cases" element={<WatchedCasesPage />} />
