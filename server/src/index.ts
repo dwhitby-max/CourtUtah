@@ -27,14 +27,14 @@ console.log(`   CWD: ${process.cwd()}`);
 const server = createServer(app);
 
 // Socket.io server — shares the same HTTP server (Rule 15: single port)
-const socketCorsOrigin = config.nodeEnv === "production"
-  ? (config.corsOrigin || false)
-  : "*";
 const io = new SocketIOServer<ClientToServerEvents, ServerToClientEvents>(server, {
   path: "/socket.io",
   cors: {
-    origin: socketCorsOrigin,
+    origin: config.nodeEnv === "production"
+      ? (config.corsOrigin || true)
+      : "*",
     methods: ["GET", "POST"],
+    credentials: true,
   },
   transports: ["websocket", "polling"],
 });
@@ -75,9 +75,12 @@ server.listen(config.port, config.host, () => {
     console.error("❌ Database connection error:", err);
   }
 
-  // Start the scheduler for daily court calendar scraping
-  startScheduler();
-  console.log("✅ Scheduler started");
+  try {
+    startScheduler();
+    console.log("✅ Scheduler started");
+  } catch (err) {
+    console.error("Scheduler failed to start:", err);
+  }
 })();
 
 // Graceful shutdown — close Socket.io, HTTP server, and DB pool on SIGTERM/SIGINT

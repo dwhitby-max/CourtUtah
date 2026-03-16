@@ -7,21 +7,25 @@ echo "=== Starting production server ==="
 echo "CWD: $(pwd)"
 echo "Node: $(node --version)"
 
-# Verify build artifacts exist
 if [ ! -f "client/build/index.html" ]; then
-  echo "❌ client/build/index.html not found! Running build..."
+  echo "client/build/index.html not found! Running build..."
   bash build.sh
 fi
 
 if [ ! -f "server/dist/server/src/index.js" ]; then
-  echo "❌ server/dist/server/src/index.js not found! Running build..."
+  echo "server/dist/server/src/index.js not found! Running build..."
   bash build.sh
 fi
 
-echo "✅ Build artifacts verified"
+echo "Build artifacts verified"
 
-# Run migrations (non-fatal — server starts regardless)
-npm run migrate 2>&1 || echo "⚠️  Migration had warnings"
+echo "Environment check:"
+echo "  NODE_ENV: $NODE_ENV"
+echo "  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:+OK}"
+echo "  GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:+OK}"
+echo "  GOOGLE_REDIRECT_URI: $GOOGLE_REDIRECT_URI"
+echo "  DATABASE_URL: ${DATABASE_URL:+OK}"
 
-# Start server
+npm run migrate 2>&1 || echo "Migration had warnings"
+
 exec node server/dist/server/src/index.js
