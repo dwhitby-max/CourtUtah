@@ -67,7 +67,6 @@ export default function SearchPage() {
   const [error, setError] = useState("");
   const [watchSuccess, setWatchSuccess] = useState("");
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [debugInfo, setDebugInfo] = useState("");
   const [savedSearches, setSavedSearches] = useState<SavedSearchRow[]>([]);
   const [loadingSaved, setLoadingSaved] = useState(false);
   const [calSyncingIds, setCalSyncingIds] = useState<Set<number>>(new Set());
@@ -123,11 +122,9 @@ export default function SearchPage() {
     setSearched(true);
     setWatchSuccess("");
     setExpandedId(null);
-    setDebugInfo(`Searching with params: ${JSON.stringify(params)}`);
 
     try {
       const data = await searchCourtEvents(params);
-      setDebugInfo(prev => prev + ` | ${data.resultsCount} results`);
       setResults(data.results);
       setLastSearchParams(params);
       setLastSearchSavedId(data.savedSearchId ?? null);
@@ -138,7 +135,6 @@ export default function SearchPage() {
       fetchSavedSearches();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Search failed";
-      setDebugInfo(prev => prev + ` | ERROR: ${msg}`);
       setError(msg);
       setResults([]);
     } finally {
@@ -204,13 +200,6 @@ export default function SearchPage() {
         return next;
       });
     }
-  }
-
-  async function handleSaveSearch() {
-    if (!lastSearchParams) return;
-    // Re-run the search which will auto-save it server-side
-    await handleSearch(lastSearchParams);
-    setWatchSuccess("Search saved successfully");
   }
 
   async function handleAddAllToCalendar() {
@@ -315,8 +304,6 @@ export default function SearchPage() {
         </div>
       )}
 
-      {debugInfo && <div className="bg-blue-50 text-blue-700 p-3 rounded-md text-xs font-mono">{debugInfo}</div>}
-
       {error && <div className="bg-red-50 text-red-700 p-4 rounded-md text-sm">{error}</div>}
       {watchSuccess && <div className="bg-green-50 text-green-700 p-4 rounded-md text-sm">{watchSuccess}</div>}
 
@@ -348,17 +335,11 @@ export default function SearchPage() {
                       : `Add all ${results.length} to ${calLabel}`}
                 </button>
               )}
-              {lastSearchSavedId ? (
-                <span className="text-sm text-green-600 font-medium">Search saved</span>
-              ) : lastSearchParams ? (
-                <button
-                  onClick={handleSaveSearch}
-                  disabled={loading}
-                  className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-md disabled:opacity-50"
-                >
-                  Save Search
-                </button>
-              ) : null}
+              {lastSearchSavedId && (
+                <span className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-green-700 bg-green-50 rounded-md">
+                  Search saved
+                </span>
+              )}
             </div>
           </div>
 

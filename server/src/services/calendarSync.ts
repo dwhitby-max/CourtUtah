@@ -226,9 +226,16 @@ async function refreshGoogleToken(
       const expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
       await dbClient.query(
         `UPDATE calendar_connections
-         SET access_token_encrypted = $1, token_expires_at = $2, updated_at = NOW()
-         WHERE id = $3`,
-        [encrypt(tokens.access_token), expiresAt, connectionId]
+         SET access_token_encrypted = $1,
+             refresh_token_encrypted = COALESCE($2, refresh_token_encrypted),
+             token_expires_at = $3, updated_at = NOW()
+         WHERE id = $4`,
+        [
+          encrypt(tokens.access_token),
+          tokens.refresh_token ? encrypt(tokens.refresh_token) : null,
+          expiresAt,
+          connectionId,
+        ]
       );
     } finally {
       dbClient.release();

@@ -1,10 +1,10 @@
 import { Navigate } from "react-router-dom";
 import { useAuth } from "@/store/authStore";
-import { clearToken } from "@/api/client";
-import { ReactNode } from "react";
+import { ReactNode, useRef } from "react";
 
 export default function ProtectedRoute({ children }: { children: ReactNode }) {
   const { isLoggedIn, user } = useAuth();
+  const redirected = useRef(false);
 
   if (!isLoggedIn) {
     return <Navigate to="/login" replace />;
@@ -14,11 +14,12 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
     return <Navigate to="/accept-terms" replace />;
   }
 
-  // If user hasn't connected Google (old password-based account), force Google OAuth
-  // This creates the Google link AND calendar connection in one step
-  if (!user.googleConnected) {
-    // Clear old session so the Google OAuth callback sets up everything fresh
-    clearToken();
+  // If user hasn't connected Google (old password-based account), force Google OAuth.
+  // This links the Google account AND creates the calendar connection in one step.
+  // Don't clear the token — the OAuth callback will issue a new JWT anyway.
+  // Use a ref to prevent double-redirect on re-renders.
+  if (!user.googleConnected && !redirected.current) {
+    redirected.current = true;
     window.location.href = "/api/auth/google";
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">

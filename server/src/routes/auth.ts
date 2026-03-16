@@ -97,6 +97,8 @@ router.get("/google/callback", async (req: Request, res: Response) => {
       return;
     }
 
+    console.log(`✅ Google OAuth tokens received: access_token=${!!tokens.access_token}, refresh_token=${!!tokens.refresh_token}, expires_in=${tokens.expires_in}`);
+
     // Fetch user info from Google
     const userinfoResponse = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
       headers: { Authorization: `Bearer ${tokens.access_token}` },
@@ -202,6 +204,7 @@ router.get("/google/callback", async (req: Request, res: Response) => {
       }
 
       await client.query("COMMIT");
+      console.log(`✅ Google OAuth complete: userId=${userId}, email=${userinfo.email}, google_id=${userinfo.id}, calendar_connection=created`);
 
       // Generate JWT and redirect to client callback
       const jwt = generateToken({ userId, email: userinfo.email.toLowerCase() });
