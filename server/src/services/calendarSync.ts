@@ -119,6 +119,11 @@ export async function syncCalendarEntry(
     const judgeName = entryAny.judge_name || null;
     const hearingLocation = entryAny.hearing_location || null;
 
+    const rawDate = entry.event_date as unknown;
+    const startDateStr = rawDate instanceof Date
+      ? rawDate.toISOString().split("T")[0]
+      : typeof rawDate === "string" ? rawDate : String(rawDate);
+
     const eventData: CalendarEventData = {
       title: `${titlePrefix}Court: ${entry.case_number || "Unknown Case"} - ${entry.hearing_type || "Hearing"}`,
       description: [
@@ -133,7 +138,7 @@ export async function syncCalendarEntry(
         "",
         "Managed by Court Utah",
       ].filter(Boolean).join("\n"),
-      startDate: entry.event_date,
+      startDate: startDateStr,
       startTime: entry.event_time,
       location: `${entry.court_name} ${entry.court_room || ""}`.trim(),
       courtName: entry.court_name,
