@@ -154,7 +154,19 @@ async function createCalendarEntriesForWatchedCase(
       try {
         await syncCalendarEntry(insertResult.rows[0].id);
       } catch (syncErr) {
-        console.warn(`  ⚠️ Sync failed for entry ${insertResult.rows[0].id}: ${syncErr instanceof Error ? syncErr.message : syncErr}`);
+        const syncErrMsg = syncErr instanceof Error ? syncErr.message : String(syncErr);
+        console.warn(`  ⚠️ Sync failed for entry ${insertResult.rows[0].id}: ${syncErrMsg}`);
+        await createNotification({
+          userId: wc.user_id,
+          type: "sync_error",
+          title: `Calendar sync failed for "${wc.label}"`,
+          message: `Failed to sync a court event to your calendar: ${syncErrMsg}`,
+          metadata: {
+            calendarEntryId: insertResult.rows[0].id,
+            watchedCaseId: wc.id,
+            error: syncErrMsg,
+          },
+        });
       }
     }
   }
@@ -406,12 +418,24 @@ async function upsertCourtEvent(event: ParsedCourtEvent): Promise<boolean> {
         await processChanges(existingRow.id, changes);
 
         // Re-sync affected calendar entries
-        const calEntries = await client.query(
-          `SELECT id FROM calendar_entries WHERE court_event_id = $1`,
+        const calEntries = await client.query<{ id: number; user_id: number }>(
+          `SELECT id, user_id FROM calendar_entries WHERE court_event_id = $1`,
           [existingRow.id]
         );
         for (const entry of calEntries.rows) {
-          await syncCalendarEntry(entry.id);
+          try {
+            await syncCalendarEntry(entry.id);
+          } catch (syncErr) {
+            const syncErrMsg = syncErr instanceof Error ? syncErr.message : String(syncErr);
+            console.warn(`  ⚠️ Re-sync failed for entry ${entry.id}: ${syncErrMsg}`);
+            await createNotification({
+              userId: entry.user_id,
+              type: "sync_error",
+              title: "Calendar sync failed after schedule change",
+              message: `A court event changed but failed to update in your calendar: ${syncErrMsg}`,
+              metadata: { calendarEntryId: entry.id, courtEventId: existingRow.id, error: syncErrMsg },
+            });
+          }
         }
 
         return true;

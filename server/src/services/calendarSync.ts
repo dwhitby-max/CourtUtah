@@ -6,8 +6,45 @@ import {
   MicrosoftTokenResponse, MicrosoftCalendarEvent,
   CalDAVSyncResult,
 } from "../../../shared/types";
+import { createNotification } from "./notificationService";
 import { config } from "../config/env";
 import crypto from "crypto";
+
+/**
+ * Mark a calendar connection as inactive and notify the user.
+ */
+async function markConnectionInactive(connectionId: number, provider: string, reason: string): Promise<void> {
+  const pool = getPool();
+  if (!pool) return;
+
+  const dbClient = await pool.connect();
+  try {
+    // Mark connection inactive
+    await dbClient.query(
+      `UPDATE calendar_connections SET is_active = false, updated_at = NOW() WHERE id = $1`,
+      [connectionId]
+    );
+
+    // Find the user for this connection
+    const userResult = await dbClient.query<{ user_id: number }>(
+      `SELECT user_id FROM calendar_connections WHERE id = $1`,
+      [connectionId]
+    );
+
+    if (userResult.rows.length > 0) {
+      const userId = userResult.rows[0].user_id;
+      await createNotification({
+        userId,
+        type: "calendar_disconnected",
+        title: `${provider.charAt(0).toUpperCase() + provider.slice(1)} Calendar Disconnected`,
+        message: `Your ${provider} calendar connection was disconnected: ${reason}. Please reconnect in Calendar Settings.`,
+        metadata: { connectionId, provider, reason },
+      });
+    }
+  } finally {
+    dbClient.release();
+  }
+}
 
 const GOOGLE_CALENDAR_API = "https://www.googleapis.com/calendar/v3";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -174,7 +211,12 @@ async function refreshGoogleToken(
   const tokens: GoogleTokenResponse = await response.json();
 
   if (tokens.error) {
-    throw new Error(`Google token refresh failed: ${tokens.error_description || tokens.error}`);
+    const errorDesc = tokens.error_description || tokens.error;
+    // On invalid_grant, the refresh token has been revoked — mark connection inactive
+    if (tokens.error === "invalid_grant") {
+      await markConnectionInactive(connectionId, "google", `Token revoked: ${errorDesc}`);
+    }
+    throw new Error(`Google token refresh failed: ${errorDesc}`);
   }
 
   const pool = getPool();
@@ -206,6 +248,16 @@ async function getGoogleAccessToken(connection: CalendarSyncRow): Promise<string
 
   if (tokenExpired && connection.refresh_token_encrypted) {
     return refreshGoogleToken(connection.calendar_connection_id, connection.refresh_token_encrypted);
+  }
+
+  if (tokenExpired && !connection.refresh_token_encrypted) {
+    // No refresh token available — cannot renew. Mark connection inactive.
+    await markConnectionInactive(
+      connection.calendar_connection_id,
+      "google",
+      "Token expired and no refresh token available"
+    );
+    throw new Error("Google token expired and no refresh token available — connection marked inactive");
   }
 
   return decrypt(connection.access_token_encrypted);
@@ -279,6 +331,9 @@ async function syncGoogleCalendarEvent(
 
     if (!response.ok) {
       const errBody = await response.text();
+      if (response.status === 401) {
+        await markConnectionInactive(connection.calendar_connection_id, "google", "API returned 401 Unauthorized");
+      }
       throw new Error(`Google Calendar PATCH failed (${response.status}): ${errBody}`);
     }
 
@@ -300,6 +355,9 @@ async function syncGoogleCalendarEvent(
 
   if (!response.ok) {
     const errBody = await response.text();
+    if (response.status === 401) {
+      await markConnectionInactive(connection.calendar_connection_id, "google", "API returned 401 Unauthorized");
+    }
     throw new Error(`Google Calendar POST failed (${response.status}): ${errBody}`);
   }
 

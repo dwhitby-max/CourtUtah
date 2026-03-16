@@ -75,6 +75,8 @@ export default function SearchPage() {
   const [lastSearchParams, setLastSearchParams] = useState<Record<string, string> | null>(null);
   const [lastSearchSavedId, setLastSearchSavedId] = useState<number | null>(null);
   const [calendarProvider, setCalendarProvider] = useState<string | null>(null);
+  const [addingAll, setAddingAll] = useState(false);
+  const [addedAll, setAddedAll] = useState(false);
 
   // Load saved searches and calendar provider on mount
   useEffect(() => {
@@ -124,6 +126,7 @@ export default function SearchPage() {
       setLastSearchSavedId(data.savedSearchId ?? null);
       setCalSyncingIds(new Set());
       setCalSyncedIds(new Set());
+      setAddedAll(false);
       // Refresh saved searches list after search (it may have been auto-saved)
       fetchSavedSearches();
     } catch (err) {
@@ -193,6 +196,31 @@ export default function SearchPage() {
     // Re-run the search which will auto-save it server-side
     await handleSearch(lastSearchParams);
     setWatchSuccess("Search saved successfully");
+  }
+
+  async function handleAddAllToCalendar() {
+    if (results.length === 0) return;
+    setAddingAll(true);
+    setError("");
+    let added = 0;
+    let failed = 0;
+    for (const event of results) {
+      if (calSyncedIds.has(event.id)) continue;
+      try {
+        await addEventToCalendar(event.id);
+        setCalSyncedIds((prev) => new Set(prev).add(event.id));
+        added++;
+      } catch {
+        failed++;
+      }
+    }
+    setAddingAll(false);
+    setAddedAll(true);
+    if (failed > 0) {
+      setWatchSuccess(`Added ${added} event${added !== 1 ? "s" : ""} to ${calLabel}. ${failed} failed.`);
+    } else {
+      setWatchSuccess(`Added all ${added} event${added !== 1 ? "s" : ""} to ${calLabel}`);
+    }
   }
 
   function toggleExpand(id: number) {
@@ -276,17 +304,32 @@ export default function SearchPage() {
             <h2 className="text-lg font-semibold text-gray-900">
               {results.length} Result{results.length !== 1 ? "s" : ""} Found
             </h2>
-            {lastSearchSavedId ? (
-              <span className="text-sm text-green-600 font-medium">Search saved</span>
-            ) : lastSearchParams ? (
-              <button
-                onClick={handleSaveSearch}
-                disabled={loading}
-                className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-md disabled:opacity-50"
-              >
-                Save Search
-              </button>
-            ) : null}
+            <div className="flex items-center gap-3">
+              {results.length > 0 && (
+                <button
+                  onClick={handleAddAllToCalendar}
+                  disabled={addingAll || addedAll}
+                  className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-amber-700 hover:bg-amber-800 rounded-md disabled:opacity-50"
+                >
+                  {addingAll
+                    ? `Adding ${results.length} to ${calLabel}...`
+                    : addedAll
+                      ? `All added to ${calLabel}`
+                      : `Add all ${results.length} to ${calLabel}`}
+                </button>
+              )}
+              {lastSearchSavedId ? (
+                <span className="text-sm text-green-600 font-medium">Search saved</span>
+              ) : lastSearchParams ? (
+                <button
+                  onClick={handleSaveSearch}
+                  disabled={loading}
+                  className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-md disabled:opacity-50"
+                >
+                  Save Search
+                </button>
+              ) : null}
+            </div>
           </div>
 
           {results.length === 0 ? (

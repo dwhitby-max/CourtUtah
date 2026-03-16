@@ -161,7 +161,7 @@ export interface CalendarEntry {
 
 // --- Notifications ---
 
-export type NotificationType = "schedule_change" | "new_event" | "new_match" | "sync_error" | "system";
+export type NotificationType = "schedule_change" | "new_event" | "new_match" | "sync_error" | "calendar_disconnected" | "system";
 
 export interface Notification {
   id: number;
