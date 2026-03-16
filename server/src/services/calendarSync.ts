@@ -124,8 +124,14 @@ export async function syncCalendarEntry(
       ? rawDate.toISOString().split("T")[0]
       : typeof rawDate === "string" ? rawDate : String(rawDate);
 
+    const defendantLast = entry.defendant_name
+      ? entry.defendant_name.split(",")[0].trim()
+      : "Unknown";
+    const hearingTypeStr = entry.hearing_type || "Hearing";
+    const judgeStr = judgeName ? ` - Judge ${judgeName}` : "";
+
     const eventData: CalendarEventData = {
-      title: `${titlePrefix}Court: ${entry.case_number || "Unknown Case"} - ${entry.hearing_type || "Hearing"}`,
+      title: `${titlePrefix}${defendantLast} - ${hearingTypeStr}${judgeStr}`,
       description: [
         `Court: ${entry.court_name}`,
         `Room: ${entry.court_room || "TBD"}`,
