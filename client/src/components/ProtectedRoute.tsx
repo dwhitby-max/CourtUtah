@@ -27,17 +27,8 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (calendarChecked && !hasCalendar && !redirecting) {
       setRedirecting(true);
-      apiFetch("/calendar/google/auth")
-        .then(async (res) => {
-          if (res.ok) {
-            const data = await res.json();
-            window.location.href = data.authUrl;
-          } else {
-            // Can't connect — let them through anyway
-            setHasCalendar(true);
-          }
-        })
-        .catch(() => setHasCalendar(true));
+      // Use the auth Google flow which creates both user link AND calendar connection
+      window.location.href = "/api/auth/google";
     }
   }, [calendarChecked, hasCalendar, redirecting]);
 

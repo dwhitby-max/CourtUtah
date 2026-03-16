@@ -133,7 +133,7 @@ router.get("/google/callback", async (req: Request, res: Response) => {
       client.release();
     }
 
-    res.redirect("/calendar-settings?connected=google");
+    res.redirect("/dashboard?connected=google");
   } catch (err) {
     console.error("❌ Google Calendar OAuth callback failed:", err);
     res.redirect("/calendar-settings?error=google_failed");
