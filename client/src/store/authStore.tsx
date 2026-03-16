@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { createContext, useContext, useState, ReactNode } from "react";
 import { UserPublic } from "@shared/types";
 import { isAuthenticated, clearToken } from "@/api/client";
 
@@ -17,7 +17,7 @@ const AuthContext = createContext<AuthState>({
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<UserPublic | null>(() => {
+  const [user, setUserState] = useState<UserPublic | null>(() => {
     const stored = localStorage.getItem("auth_user");
     if (stored) {
       try { return JSON.parse(stored); } catch { return null; }
@@ -27,13 +27,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const isLoggedIn = isAuthenticated() && user !== null;
 
-  useEffect(() => {
-    if (user) {
-      localStorage.setItem("auth_user", JSON.stringify(user));
+  // Write to localStorage synchronously so navigations don't lose state
+  function setUser(newUser: UserPublic | null) {
+    if (newUser) {
+      localStorage.setItem("auth_user", JSON.stringify(newUser));
     } else {
       localStorage.removeItem("auth_user");
     }
-  }, [user]);
+    setUserState(newUser);
+  }
 
   function logout() {
     clearToken();

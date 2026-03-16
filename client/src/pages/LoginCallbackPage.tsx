@@ -24,6 +24,8 @@ export default function LoginCallbackPage() {
         if (!res.ok) throw new Error("Failed to fetch profile");
         const data = await res.json();
         setUser(data.user);
+        // Clear the Google connect attempt flag — successful login means it worked
+        sessionStorage.removeItem("google_connect_attempted");
         if (!data.user.tosAgreedAt) {
           navigate("/accept-terms", { replace: true });
         } else {

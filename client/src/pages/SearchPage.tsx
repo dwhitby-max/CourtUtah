@@ -276,13 +276,17 @@ export default function SearchPage() {
           <div className="space-y-3">
             {savedSearches.map((saved) => (
               <div key={saved.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 p-3 bg-gray-50 rounded-md">
-                <div className="flex-1 min-w-0">
+                <button
+                  className="flex-1 min-w-0 text-left hover:bg-gray-100 rounded p-1 -m-1 transition-colors"
+                  onClick={() => handleRunSavedSearch(saved)}
+                  disabled={loading}
+                >
                   <div className="font-medium text-gray-900 truncate">{saved.label}</div>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400 mt-1">
                     <span>{saved.results_count} result{saved.results_count !== 1 ? "s" : ""}</span>
                     <span>Last run {timeAgo(saved.last_run_at)}</span>
                   </div>
-                </div>
+                </button>
                 <div className="flex items-center gap-3 shrink-0">
                   <button
                     onClick={() => handleRunSavedSearch(saved)}
