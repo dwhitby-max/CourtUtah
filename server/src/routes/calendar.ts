@@ -214,7 +214,8 @@ router.post("/events", authenticateToken, heavyLimiter, async (req: Request, res
         );
         connResult = { rows: [{ id: inactiveConn.rows[0].id }] } as typeof connResult;
       } else {
-        res.status(400).json({ error: "No calendar connected. Please log out and log back in to reconnect your Google Calendar." });
+        console.warn(`⚠️  No calendar connection found for user ${currentUser.userId}`);
+        res.status(400).json({ error: "No calendar connected. Please log out and log back in with Google to connect your calendar." });
         return;
       }
     }
