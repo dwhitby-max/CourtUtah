@@ -93,7 +93,12 @@ export default function SearchResultsPage() {
       setWatchSuccess(data.message);
       setWatchError("");
     } catch (err) {
-      setWatchError(err instanceof Error ? err.message : "Failed to add to calendar");
+      const msg = err instanceof Error ? err.message : "Failed to add to calendar";
+      if (msg.toLowerCase().includes("no calendar connected")) {
+        window.location.href = "/api/auth/google";
+        return;
+      }
+      setWatchError(msg);
       setWatchSuccess("");
     } finally {
       setCalSyncingIds((prev) => {
