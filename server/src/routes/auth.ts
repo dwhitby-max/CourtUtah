@@ -75,6 +75,7 @@ router.get("/google/callback", async (req: Request, res: Response) => {
   }
 
   if (!code || !state || typeof state !== "string") {
+    console.error(`❌ Google OAuth callback missing params: code=${!!code}, state=${!!state}, query=${JSON.stringify(req.query)}, url=${req.originalUrl}`);
     res.redirect("/login?error=missing_params");
     return;
   }
