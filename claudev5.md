@@ -356,13 +356,14 @@ Single source of truth in `shared/types.ts`.
 ### Rule 10.2: Strict Typing Requirements
 
 - Use explicit types everywhere
-- NO `any`, `as`, `as const`, inline ad-hoc types, or casts
+- NO `any` or inline ad-hoc types
+- `as` casts are allowed ONLY for: database row typing (`row as MyType`), `Record<string, unknown>` narrowing, and `unknown` → concrete type after validation. Never use `as` to silence type errors on mismatched interfaces.
 - Every object and variable must be typed
 - Construct full objects satisfying existing interfaces
 - Compose complex objects from smaller typed components
 - Never rely on defaults, fallbacks, or backfilling
 - Use type guards to prove and narrow types for the compiler when required
-- **Exceptions:** Database clients (Drizzle, etc.), intentionally malformed test objects
+- **Exceptions:** Database clients (Drizzle, pg, etc.), intentionally malformed test objects
 
 **Import Rules:**
 - Never import entire libraries with `*`
@@ -797,16 +798,47 @@ Adjust start scripts accordingly:
 "start": "node dist/server/src/index.js"
 ```
 
-### Rule 17.7: Never Use __dirname for Cross-Package Paths
+### Rule 17.7: Cross-Package Path Resolution — Multi-Strategy (CRITICAL)
 
-With `rootDir: ".."`, `__dirname` at runtime resolves to `.../server/dist/server/src/`. Use `process.cwd()` instead — it is always the monorepo root on Replit.
+**`process.cwd()` is NOT always the monorepo root.** Replit deployments, manual starts from subdirectories, and some CI environments change the working directory. Relying solely on `process.cwd()` causes 500 errors in production.
+
+**Required pattern:** Try multiple candidate paths and use whichever exists:
 
 ```typescript
-// ❌ Unreliable with rootDir: ".."
-path.join(__dirname, '../../client/build')
+import fs from 'fs';
+import path from 'path';
 
-// ✅ Always the monorepo root on Replit
-path.join(process.cwd(), 'client', 'build')
+function resolveClientBuild(): string {
+  const candidates = [
+    path.join(process.cwd(), 'client', 'build'),
+    path.resolve(__dirname, '..', '..', '..', '..', 'client', 'build'),
+    path.resolve(__dirname, '..', '..', '..', 'client', 'build'),
+  ];
+  for (const dir of candidates) {
+    if (fs.existsSync(path.join(dir, 'index.html'))) {
+      console.log(`📁 Client build found at: ${dir}`);
+      return dir;
+    }
+  }
+  console.warn('⚠️  Client build not found in any candidate path');
+  return candidates[0]; // fallback
+}
+
+const CLIENT_BUILD = resolveClientBuild();
+app.use(express.static(CLIENT_BUILD));
+```
+
+**SPA fallback MUST include an error callback** to prevent 500 when index.html is missing:
+
+```typescript
+app.get('*', (_req, res) => {
+  res.sendFile(path.join(CLIENT_BUILD, 'index.html'), (err) => {
+    if (err) {
+      console.error('❌ Failed to serve index.html:', err.message);
+      res.status(500).send('Application is starting up. Please refresh.');
+    }
+  });
+});
 ```
 
 ### Rule 17.8: req.user TypeScript Narrowing
@@ -897,6 +929,150 @@ res.status(500).json({ detail: 'An unexpected error occurred', correlationId });
 ```
 
 In production (`NODE_ENV === 'production'`), ALL 5xx responses must return a fixed generic message. The correlation ID lets you trace the real error in logs.
+
+### Rule 17.14: Global Error Handlers (REQUIRED)
+
+Unhandled exceptions and promise rejections crash Node silently. Always register global handlers:
+
+```typescript
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('❌ Unhandled Rejection:', reason);
+});
+```
+
+### Rule 17.15: Startup Environment Validation (REQUIRED)
+
+Log all required environment variables at startup so deployment issues are immediately visible in logs:
+
+```typescript
+console.log('🔧 Environment check:');
+console.log(`   NODE_ENV: ${process.env.NODE_ENV}`);
+console.log(`   DATABASE_URL: ${process.env.DATABASE_URL ? 'OK' : 'MISSING'}`);
+console.log(`   JWT_SECRET: ${process.env.JWT_SECRET ? 'OK' : 'MISSING'}`);
+console.log(`   CWD: ${process.cwd()}`);
+```
+
+---
+
+## 17B. OAUTH & AUTHENTICATION LIFECYCLE
+
+### Rule 17B.1: OAuth Must Create All Required Records in One Transaction
+
+When a user signs in via Google OAuth, the callback MUST create/update both the user record AND the calendar connection in a single database transaction. Never assume a separate flow will create the calendar connection later.
+
+```typescript
+await client.query('BEGIN');
+// 1. Create or link user (set google_id)
+// 2. Upsert calendar_connections (store tokens)
+await client.query('COMMIT');
+```
+
+### Rule 17B.2: Refresh Token Storage — Always Use COALESCE
+
+Google only sends `refresh_token` on first consent. On subsequent logins or token refreshes, it may be omitted. Always use COALESCE to preserve the existing refresh token:
+
+```sql
+-- ✅ Keeps existing refresh token if new one is NULL
+UPDATE calendar_connections
+SET access_token_encrypted = $1,
+    refresh_token_encrypted = COALESCE($2, refresh_token_encrypted),
+    token_expires_at = $3
+WHERE id = $4
+```
+
+This applies to BOTH the OAuth callback AND the token refresh function.
+
+### Rule 17B.3: Token Refresh Must Persist Rotated Tokens
+
+Google and Microsoft can both rotate refresh tokens during a refresh. The refresh function must save the new refresh token if one is returned:
+
+```typescript
+const tokens = await refreshFromProvider();
+// Save BOTH access and refresh tokens
+await db.query(
+  `UPDATE calendar_connections
+   SET access_token_encrypted = $1,
+       refresh_token_encrypted = COALESCE($2, refresh_token_encrypted),
+       token_expires_at = $3
+   WHERE id = $4`,
+  [encrypt(tokens.access_token),
+   tokens.refresh_token ? encrypt(tokens.refresh_token) : null,
+   expiresAt, connectionId]
+);
+```
+
+### Rule 17B.4: Prevent OAuth Redirect Loops in SPAs
+
+When a ProtectedRoute redirects to OAuth, use a `sessionStorage` flag to prevent infinite loops:
+
+```typescript
+if (!user.googleConnected) {
+  const attempted = sessionStorage.getItem('google_connect_attempted');
+  if (!attempted) {
+    sessionStorage.setItem('google_connect_attempted', '1');
+    window.location.href = '/api/auth/google';
+    return <LoadingSpinner />;
+  }
+  // Already attempted — let them through
+}
+```
+
+Clear the flag after successful login in the callback page:
+```typescript
+sessionStorage.removeItem('google_connect_attempted');
+```
+
+### Rule 17B.5: Write Auth State to localStorage Synchronously
+
+React `useEffect` is async — if `setUser()` stores via `useEffect` and the component navigates immediately, localStorage may not be updated. Always write synchronously:
+
+```typescript
+// ❌ WRONG — useEffect may not run before navigation
+function setUser(user) {
+  setUserState(user); // triggers useEffect to write localStorage
+}
+
+// ✅ CORRECT — write FIRST, then update state
+function setUser(user) {
+  if (user) {
+    localStorage.setItem('auth_user', JSON.stringify(user));
+  } else {
+    localStorage.removeItem('auth_user');
+  }
+  setUserState(user);
+}
+```
+
+### Rule 17B.6: Never Re-Check Auth Inside Protected Pages
+
+If a page is rendered inside a `ProtectedRoute` wrapper, the user is guaranteed to be authenticated. Do NOT add `isLoggedIn` guards to buttons or UI elements inside these pages — it hides functionality.
+
+```typescript
+// ❌ WRONG — button hidden even though user IS logged in
+{isLoggedIn && <Button>Add to Calendar</Button>}
+
+// ✅ CORRECT — ProtectedRoute guarantees auth, always show
+<Button>Add to Calendar</Button>
+```
+
+### Rule 17B.7: Handle "No Calendar Connected" Errors at Point of Use
+
+When an API call fails with "No calendar connected", redirect to OAuth instead of showing an error:
+
+```typescript
+try {
+  await addEventToCalendar(eventId);
+} catch (err) {
+  if (err.message.includes('No calendar connected')) {
+    window.location.href = '/api/auth/google';
+    return;
+  }
+  setError(err.message);
+}
+```
 
 ---
 
@@ -1029,6 +1205,43 @@ async function cachedFetch<T>(key: string, ttlMs: number, fn: () => Promise<T>):
   cache.set(key, { value, expiresAt: Date.now() + ttlMs });
   return value;
 }
+```
+
+### Rule 18.10: Verify Deployment Locally Before Committing (CRITICAL)
+
+Always simulate the full deployment locally before committing:
+
+```bash
+# 1. Run the exact build script deployment uses
+bash build.sh
+
+# 2. Start in production mode
+NODE_ENV=production bash start-production.sh
+
+# 3. Test from a DIFFERENT working directory to catch path issues
+cd / && node /path/to/project/server/dist/server/src/index.js
+
+# 4. Verify all endpoints return 200
+curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/
+curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/api/health
+curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/search
+```
+
+If any return 500, fix BEFORE committing. Common causes:
+- `process.cwd()` differs between dev and deployment (see Rule 17.7)
+- Missing build artifacts (client/build/ or server/dist/)
+- Missing environment variables
+- Database migration not run
+
+### Rule 18.11: Production Start Script Must Verify Build Artifacts
+
+`start-production.sh` must check that build outputs exist before starting the server:
+
+```bash
+if [ ! -f "client/build/index.html" ]; then
+  echo "❌ Client build missing — running build..."
+  bash build.sh
+fi
 ```
 
 ---
