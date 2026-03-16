@@ -45,6 +45,7 @@ router.get("/google", heavyLimiter, (_req: Request, res: Response) => {
     scope: scopes.join(" "),
     access_type: "offline",
     prompt: "consent",
+    include_granted_scopes: "true",
     state,
   });
 

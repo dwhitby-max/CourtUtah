@@ -192,16 +192,31 @@ router.post("/events", authenticateToken, heavyLimiter, async (req: Request, res
       return;
     }
 
-    // Get the user's active calendar connection
-    const connResult = await client.query(
+    let connResult = await client.query(
       `SELECT id FROM calendar_connections
        WHERE user_id = $1 AND is_active = true
        ORDER BY created_at ASC LIMIT 1`,
       [currentUser.userId]
     );
+
     if (connResult.rows.length === 0) {
-      res.status(400).json({ error: "No calendar connected. Go to Calendar Settings to connect one." });
-      return;
+      const inactiveConn = await client.query(
+        `SELECT id, refresh_token_encrypted FROM calendar_connections
+         WHERE user_id = $1
+         ORDER BY updated_at DESC LIMIT 1`,
+        [currentUser.userId]
+      );
+
+      if (inactiveConn.rows.length > 0 && inactiveConn.rows[0].refresh_token_encrypted) {
+        await client.query(
+          `UPDATE calendar_connections SET is_active = true, updated_at = NOW() WHERE id = $1`,
+          [inactiveConn.rows[0].id]
+        );
+        connResult = { rows: [{ id: inactiveConn.rows[0].id }] } as typeof connResult;
+      } else {
+        res.status(400).json({ error: "No calendar connected. Please log out and log back in to reconnect your Google Calendar." });
+        return;
+      }
     }
 
     const connectionId = connResult.rows[0].id;

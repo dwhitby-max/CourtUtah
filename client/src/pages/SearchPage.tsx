@@ -185,13 +185,6 @@ export default function SearchPage() {
       setError("");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to add to calendar";
-      // If no calendar connected, redirect to Google OAuth to connect
-      if (msg.toLowerCase().includes("no calendar connected") || msg.toLowerCase().includes("calendar")) {
-        setError("");
-        setHasCalendarConnection(false);
-        connectGoogleCalendar();
-        return;
-      }
       setError(msg);
     } finally {
       setCalSyncingIds((prev) => {
@@ -214,14 +207,7 @@ export default function SearchPage() {
         await addEventToCalendar(event.id);
         setCalSyncedIds((prev) => new Set(prev).add(event.id));
         added++;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "";
-        if (msg.toLowerCase().includes("no calendar connected")) {
-          setAddingAll(false);
-          setHasCalendarConnection(false);
-          connectGoogleCalendar();
-          return;
-        }
+      } catch {
         failed++;
       }
     }
