@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import path from "path";
+import fs from "fs";
 import healthRouter from "./routes/health";
 import apiRouter from "./routes/index";
 import { globalLimiter } from "./middleware/rateLimiter";
@@ -13,6 +14,27 @@ import { config } from "./config/env";
 const app = express();
 
 app.set("trust proxy", 1);
+
+// Resolve client build directory — try multiple strategies:
+// 1. Relative to project root (process.cwd()) — works when started from project root
+// 2. Relative to compiled JS location (__dirname → server/dist/server/src → ../../..)
+function resolveClientBuild(): string {
+  const candidates = [
+    path.join(process.cwd(), "client", "build"),
+    path.resolve(__dirname, "..", "..", "..", "..", "client", "build"),
+    path.resolve(__dirname, "..", "..", "..", "client", "build"),
+  ];
+  for (const dir of candidates) {
+    if (fs.existsSync(path.join(dir, "index.html"))) {
+      console.log(`📁 Client build found at: ${dir}`);
+      return dir;
+    }
+  }
+  console.warn(`⚠️  Client build not found in any candidate path. Tried: ${candidates.join(", ")}`);
+  return candidates[0]; // fallback
+}
+
+const CLIENT_BUILD = resolveClientBuild();
 
 // 1. Health checks FIRST (before ALL middleware) — must respond within 5s for Replit autoscale
 app.use("/health", healthRouter);
@@ -39,18 +61,24 @@ app.use(express.urlencoded({ extended: true }));
 // 5. Rate limiting
 app.use(globalLimiter);
 
-// 6. API routes (BEFORE static files) — Rule 17.2
+// 6. API routes (BEFORE static files)
 app.use("/api", apiRouter);
 
-// 7. Static files (client build) — Rule 17.7 use process.cwd()
-app.use(express.static(path.join(process.cwd(), "client", "build")));
+// 7. Static files (client build)
+app.use(express.static(CLIENT_BUILD));
 
-// 8. SPA fallback (LAST) — Rule 17.2
+// 8. SPA fallback (LAST)
+const indexHtml = path.join(CLIENT_BUILD, "index.html");
 app.get("*", (_req, res) => {
   res.set("Cache-Control", "no-cache, no-store, must-revalidate");
   res.set("Pragma", "no-cache");
   res.set("Expires", "0");
-  res.sendFile(path.join(process.cwd(), "client", "build", "index.html"));
+  res.sendFile(indexHtml, (err) => {
+    if (err) {
+      console.error("❌ Failed to serve index.html:", err.message);
+      res.status(500).send("Application is starting up. Please refresh in a moment.");
+    }
+  });
 });
 
 // 9. Error handler

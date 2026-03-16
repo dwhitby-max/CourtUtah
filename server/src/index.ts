@@ -12,6 +12,18 @@ import type { ServerToClientEvents, ClientToServerEvents } from "../../shared/ty
 // Initialize Sentry early (lazy — noop if SENTRY_DSN not set, Rule 17.5)
 initSentry();
 
+// Startup environment validation
+console.log("🔧 Environment check:");
+console.log(`   NODE_ENV: ${config.nodeEnv}`);
+console.log(`   PORT: ${config.port}`);
+console.log(`   DATABASE_URL: ${process.env.DATABASE_URL ? "OK" : "MISSING"}`);
+console.log(`   JWT_SECRET: ${config.jwtSecret ? "OK" : "MISSING"}`);
+console.log(`   ENCRYPTION_KEY: ${process.env.ENCRYPTION_KEY ? "OK" : "MISSING"}`);
+console.log(`   GOOGLE_CLIENT_ID: ${config.google.clientId ? "OK" : "MISSING"}`);
+console.log(`   GOOGLE_CLIENT_SECRET: ${config.google.clientSecret ? "OK" : "MISSING"}`);
+console.log(`   GOOGLE_REDIRECT_URI: ${config.google.redirectUri || "MISSING"}`);
+console.log(`   CWD: ${process.cwd()}`);
+
 const server = createServer(app);
 
 // Socket.io server — shares the same HTTP server (Rule 15: single port)
@@ -95,5 +107,13 @@ function gracefulShutdown(signal: string): void {
 
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+
+// Global error handlers — prevent silent crashes
+process.on("uncaughtException", (err) => {
+  console.error("❌ Uncaught Exception:", err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("❌ Unhandled Rejection:", reason);
+});
 
 export default server;
