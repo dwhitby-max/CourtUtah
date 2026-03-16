@@ -417,25 +417,24 @@ async function upsertCourtEvent(event: ParsedCourtEvent): Promise<boolean> {
 
         await processChanges(existingRow.id, changes);
 
-        // Re-sync affected calendar entries
+        // Mark affected calendar entries as pending_update (requires user confirmation)
         const calEntries = await client.query<{ id: number; user_id: number }>(
           `SELECT id, user_id FROM calendar_entries WHERE court_event_id = $1`,
           [existingRow.id]
         );
         for (const entry of calEntries.rows) {
-          try {
-            await syncCalendarEntry(entry.id);
-          } catch (syncErr) {
-            const syncErrMsg = syncErr instanceof Error ? syncErr.message : String(syncErr);
-            console.warn(`  ⚠️ Re-sync failed for entry ${entry.id}: ${syncErrMsg}`);
-            await createNotification({
-              userId: entry.user_id,
-              type: "sync_error",
-              title: "Calendar sync failed after schedule change",
-              message: `A court event changed but failed to update in your calendar: ${syncErrMsg}`,
-              metadata: { calendarEntryId: entry.id, courtEventId: existingRow.id, error: syncErrMsg },
-            });
-          }
+          await client.query(
+            `UPDATE calendar_entries SET sync_status = 'pending_update', updated_at = NOW() WHERE id = $1`,
+            [entry.id]
+          );
+          const changeDescription = changes.map(c => `${c.field}: "${c.oldValue}" → "${c.newValue}"`).join(", ");
+          await createNotification({
+            userId: entry.user_id,
+            type: "schedule_change",
+            title: "Court schedule changed — review required",
+            message: `Changes detected: ${changeDescription}. Go to Watched Cases to review and confirm the update to your calendar.`,
+            metadata: { calendarEntryId: entry.id, courtEventId: existingRow.id, changes },
+          });
         }
 
         return true;

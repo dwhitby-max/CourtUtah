@@ -153,7 +153,7 @@ export interface CalendarEntry {
   externalEventId: string | null;
   externalCalendarId: string | null;
   lastSyncedContentHash: string | null;
-  syncStatus: "pending" | "synced" | "error";
+  syncStatus: "pending" | "synced" | "error" | "pending_update";
   syncError: string | null;
   createdAt: string;
   updatedAt: string;
