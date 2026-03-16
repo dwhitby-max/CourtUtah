@@ -651,6 +651,96 @@ async function syncCaldavCalendarEvent(
 }
 
 /**
+ * Delete a calendar entry from the provider and remove the DB row.
+ * Only deletes events the app created (tracked in calendar_entries).
+ */
+export async function deleteCalendarEntry(
+  calendarEntryId: number,
+  userId: number
+): Promise<boolean> {
+  const pool = getPool();
+  if (!pool) return false;
+
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      `SELECT ce.id, ce.external_event_id, ce.court_event_id,
+              cc.id AS calendar_connection_id, cc.provider,
+              cc.access_token_encrypted, cc.refresh_token_encrypted,
+              cc.token_expires_at, cc.calendar_id, cc.caldav_url
+       FROM calendar_entries ce
+       JOIN calendar_connections cc ON cc.id = ce.calendar_connection_id
+       WHERE ce.id = $1 AND ce.user_id = $2`,
+      [calendarEntryId, userId]
+    );
+
+    if (result.rows.length === 0) return false;
+
+    const entry = result.rows[0];
+
+    // Delete from provider if we have an external event ID
+    if (entry.external_event_id) {
+      try {
+        switch (entry.provider) {
+          case "google": {
+            const accessToken = await getGoogleAccessToken(entry as CalendarSyncRow);
+            const calendarId = entry.calendar_id || "primary";
+            const url = `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(entry.external_event_id)}`;
+            const response = await fetch(url, {
+              method: "DELETE",
+              headers: { Authorization: `Bearer ${accessToken}` },
+            });
+            if (!response.ok && response.status !== 404 && response.status !== 410) {
+              console.error(`❌ Google Calendar DELETE failed (${response.status})`);
+            }
+            break;
+          }
+          case "microsoft": {
+            const msToken = await getMicrosoftAccessToken(entry as CalendarSyncRow);
+            const url = `${MICROSOFT_GRAPH_API}/me/events/${encodeURIComponent(entry.external_event_id)}`;
+            const response = await fetch(url, {
+              method: "DELETE",
+              headers: { Authorization: `Bearer ${msToken}` },
+            });
+            if (!response.ok && response.status !== 404 && response.status !== 410) {
+              console.error(`❌ Microsoft Calendar DELETE failed (${response.status})`);
+            }
+            break;
+          }
+          case "apple":
+          case "caldav": {
+            const username = decrypt(entry.access_token_encrypted);
+            const password = decrypt(entry.refresh_token_encrypted);
+            const baseUrl = entry.caldav_url || "https://caldav.icloud.com";
+            const url = `${baseUrl}/${encodeURIComponent(entry.external_event_id)}.ics`;
+            const response = await fetch(url, {
+              method: "DELETE",
+              headers: {
+                Authorization: "Basic " + Buffer.from(`${username}:${password}`).toString("base64"),
+              },
+            });
+            if (!response.ok && response.status !== 404 && response.status !== 410) {
+              console.error(`❌ CalDAV DELETE failed (${response.status})`);
+            }
+            break;
+          }
+        }
+      } catch (err) {
+        // Log but don't fail — still remove the DB row
+        console.error(`⚠️  Failed to delete event from provider:`, err);
+      }
+    }
+
+    // Remove the calendar entry row
+    await client.query("DELETE FROM calendar_entries WHERE id = $1 AND user_id = $2", [calendarEntryId, userId]);
+
+    return true;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Sync all pending or outdated calendar entries for a user.
  */
 export async function syncAllForUser(userId: number): Promise<{ synced: number; errors: number }> {

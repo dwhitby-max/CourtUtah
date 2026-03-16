@@ -4,7 +4,7 @@ import { getPool } from "../db/pool";
 import { config } from "../config/env";
 import { encrypt } from "../services/encryptionService";
 import { heavyLimiter } from "../middleware/rateLimiter";
-import { syncCalendarEntry } from "../services/calendarSync";
+import { syncCalendarEntry, deleteCalendarEntry } from "../services/calendarSync";
 
 const router = Router();
 
@@ -273,6 +273,55 @@ router.post("/events", authenticateToken, heavyLimiter, async (req: Request, res
     res.status(500).json({ error: "Failed to add event to calendar" });
   } finally {
     client.release();
+  }
+});
+
+// GET /api/calendar/events/synced - Get court_event_ids the user has synced
+router.get("/events/synced", authenticateToken, async (req: Request, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const currentUser = req.user;
+  const pool = getPool();
+  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
+
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      `SELECT ce.id AS calendar_entry_id, ce.court_event_id, ce.sync_status
+       FROM calendar_entries ce
+       WHERE ce.user_id = $1 AND ce.sync_status = 'synced'`,
+      [currentUser.userId]
+    );
+    // Map: courtEventId -> calendarEntryId
+    const synced: Record<number, number> = {};
+    for (const row of result.rows) {
+      synced[row.court_event_id] = row.calendar_entry_id;
+    }
+    res.json({ synced });
+  } catch (err) {
+    console.error("❌ GET /api/calendar/events/synced failed:", err);
+    res.status(500).json({ error: "Failed to fetch synced events" });
+  } finally {
+    client.release();
+  }
+});
+
+// DELETE /api/calendar/events/:id - Remove a calendar entry from provider and DB
+router.delete("/events/:id", authenticateToken, heavyLimiter, async (req: Request, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const currentUser = req.user;
+  const entryId = parseInt(req.params.id, 10);
+  if (isNaN(entryId)) { res.status(400).json({ error: "Invalid entry ID" }); return; }
+
+  try {
+    const success = await deleteCalendarEntry(entryId, currentUser.userId);
+    if (success) {
+      res.json({ message: "Calendar event removed" });
+    } else {
+      res.status(404).json({ error: "Calendar entry not found" });
+    }
+  } catch (err) {
+    console.error("❌ DELETE /api/calendar/events/:id failed:", err);
+    res.status(500).json({ error: "Failed to remove calendar event" });
   }
 });
 

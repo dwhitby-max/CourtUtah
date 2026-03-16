@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useSearch } from "@/hooks/useSearch";
 import { useAuth } from "@/store/authStore";
 import { apiFetch } from "@/api/client";
-import { addEventToCalendar, getCalendarConnections } from "@/api/calendar";
+import { addEventToCalendar, getCalendarConnections, getSyncedEvents, removeEventFromCalendar } from "@/api/calendar";
 import { CourtEvent } from "@shared/types";
 
 const providerLabels: Record<string, string> = {
@@ -24,6 +24,8 @@ export default function SearchResultsPage() {
   const [watchingIds, setWatchingIds] = useState<Set<number>>(new Set());
   const [calSyncingIds, setCalSyncingIds] = useState<Set<number>>(new Set());
   const [calSyncedIds, setCalSyncedIds] = useState<Set<number>>(new Set());
+  const [calEntryMap, setCalEntryMap] = useState<Record<number, number>>({});
+  const [calRemovingIds, setCalRemovingIds] = useState<Set<number>>(new Set());
   const [calendarProvider, setCalendarProvider] = useState<string | null>(null);
 
   useEffect(() => {
@@ -44,6 +46,12 @@ export default function SearchResultsPage() {
           const active = (data.connections as Array<{ provider: string; is_active: boolean }>)
             .find(c => c.is_active);
           setCalendarProvider(active?.provider ?? null);
+        })
+        .catch(() => {});
+      getSyncedEvents()
+        .then(synced => {
+          setCalEntryMap(synced);
+          setCalSyncedIds(new Set(Object.keys(synced).map(Number)));
         })
         .catch(() => {});
     }
@@ -90,6 +98,7 @@ export default function SearchResultsPage() {
     try {
       const data = await addEventToCalendar(event.id);
       setCalSyncedIds((prev) => new Set(prev).add(event.id));
+      setCalEntryMap((prev) => ({ ...prev, [event.id]: data.calendarEntryId }));
       setWatchSuccess(data.message);
       setWatchError("");
     } catch (err) {
@@ -98,6 +107,38 @@ export default function SearchResultsPage() {
       setWatchSuccess("");
     } finally {
       setCalSyncingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(event.id);
+        return next;
+      });
+    }
+  }
+
+  async function handleRemoveFromCalendar(event: CourtEvent) {
+    const entryId = calEntryMap[event.id];
+    if (!entryId) return;
+
+    setCalRemovingIds((prev) => new Set(prev).add(event.id));
+    try {
+      await removeEventFromCalendar(entryId);
+      setCalSyncedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(event.id);
+        return next;
+      });
+      setCalEntryMap((prev) => {
+        const next = { ...prev };
+        delete next[event.id];
+        return next;
+      });
+      setWatchSuccess("Event removed from calendar");
+      setWatchError("");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to remove from calendar";
+      setWatchError(msg);
+      setWatchSuccess("");
+    } finally {
+      setCalRemovingIds((prev) => {
         const next = new Set(prev);
         next.delete(event.id);
         return next;
@@ -218,17 +259,37 @@ export default function SearchResultsPage() {
                         <td className="px-4 py-3 text-sm space-y-1">
                           {isLoggedIn && (
                             <>
-                              <button
-                                onClick={() => handleAddToCalendar(event)}
-                                disabled={calSyncingIds.has(event.id) || calSyncedIds.has(event.id)}
-                                className="text-amber-700 hover:text-slate-800 text-sm font-medium block disabled:opacity-50"
-                              >
-                                {calSyncingIds.has(event.id)
-                                  ? "Adding..."
-                                  : calSyncedIds.has(event.id)
-                                    ? `Added to ${calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar"}`
+                              {calSyncedIds.has(event.id) ? (
+                                <button
+                                  onClick={() => handleRemoveFromCalendar(event)}
+                                  disabled={calRemovingIds.has(event.id)}
+                                  className="text-green-700 hover:text-red-600 text-sm font-medium block disabled:opacity-50 group"
+                                  title="Click to remove from calendar"
+                                >
+                                  {calRemovingIds.has(event.id) ? (
+                                    "Removing..."
+                                  ) : (
+                                    <>
+                                      <span className="group-hover:hidden">
+                                        &#10003; Added to {calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar"}
+                                      </span>
+                                      <span className="hidden group-hover:inline">
+                                        Remove from {calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar"}
+                                      </span>
+                                    </>
+                                  )}
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => handleAddToCalendar(event)}
+                                  disabled={calSyncingIds.has(event.id)}
+                                  className="text-amber-700 hover:text-slate-800 text-sm font-medium block disabled:opacity-50"
+                                >
+                                  {calSyncingIds.has(event.id)
+                                    ? "Adding..."
                                     : `Add to ${calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar"}`}
-                              </button>
+                                </button>
+                              )}
                               <button
                                 onClick={() => handleWatchAndSync(event)}
                                 disabled={watchingIds.has(event.id)}

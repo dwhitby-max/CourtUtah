@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import SearchForm from "@/components/SearchForm";
 import { searchCourtEvents } from "@/api/search";
-import { addEventToCalendar, getCalendarConnections } from "@/api/calendar";
+import { addEventToCalendar, getCalendarConnections, getSyncedEvents, removeEventFromCalendar } from "@/api/calendar";
 import { apiFetch } from "@/api/client";
 import { CourtEvent } from "@shared/types";
 
@@ -71,6 +71,8 @@ export default function SearchPage() {
   const [loadingSaved, setLoadingSaved] = useState(false);
   const [calSyncingIds, setCalSyncingIds] = useState<Set<number>>(new Set());
   const [calSyncedIds, setCalSyncedIds] = useState<Set<number>>(new Set());
+  const [calEntryMap, setCalEntryMap] = useState<Record<number, number>>({});
+  const [calRemovingIds, setCalRemovingIds] = useState<Set<number>>(new Set());
   const [lastSearchParams, setLastSearchParams] = useState<Record<string, string> | null>(null);
   const [lastSearchSavedId, setLastSearchSavedId] = useState<number | null>(null);
   const [calendarProvider, setCalendarProvider] = useState<string | null>(null);
@@ -93,6 +95,13 @@ export default function SearchPage() {
       setHasCalendarConnection(!!active);
     } catch {
       setHasCalendarConnection(false);
+    }
+    try {
+      const synced = await getSyncedEvents();
+      setCalEntryMap(synced);
+      setCalSyncedIds(new Set(Object.keys(synced).map(Number)));
+    } catch {
+      // non-fatal
     }
   }
 
@@ -181,6 +190,7 @@ export default function SearchPage() {
     try {
       const data = await addEventToCalendar(event.id);
       setCalSyncedIds((prev) => new Set(prev).add(event.id));
+      setCalEntryMap((prev) => ({ ...prev, [event.id]: data.calendarEntryId }));
       setWatchSuccess(data.message);
       setError("");
     } catch (err) {
@@ -188,6 +198,37 @@ export default function SearchPage() {
       setError(msg);
     } finally {
       setCalSyncingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(event.id);
+        return next;
+      });
+    }
+  }
+
+  async function handleRemoveFromCalendar(event: CourtEvent) {
+    const entryId = calEntryMap[event.id];
+    if (!entryId) return;
+
+    setCalRemovingIds((prev) => new Set(prev).add(event.id));
+    try {
+      await removeEventFromCalendar(entryId);
+      setCalSyncedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(event.id);
+        return next;
+      });
+      setCalEntryMap((prev) => {
+        const next = { ...prev };
+        delete next[event.id];
+        return next;
+      });
+      setWatchSuccess("Event removed from calendar");
+      setError("");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to remove from calendar";
+      setError(msg);
+    } finally {
+      setCalRemovingIds((prev) => {
         const next = new Set(prev);
         next.delete(event.id);
         return next;
@@ -391,17 +432,35 @@ export default function SearchPage() {
                         <td className="px-4 py-3 text-sm">{event.hearingType || "N/A"}</td>
                         <td className="px-4 py-3 text-sm space-y-1">
                           {hasCalendarConnection ? (
-                            <button
-                              onClick={() => handleAddToCalendar(event)}
-                              disabled={calSyncingIds.has(event.id) || calSyncedIds.has(event.id)}
-                              className="text-amber-700 hover:text-slate-800 text-sm font-medium block disabled:opacity-50"
-                            >
-                              {calSyncingIds.has(event.id)
-                                ? "Adding..."
-                                : calSyncedIds.has(event.id)
-                                  ? `Added to ${calLabel}`
-                                  : `Add to ${calLabel}`}
-                            </button>
+                            calSyncedIds.has(event.id) ? (
+                              <button
+                                onClick={() => handleRemoveFromCalendar(event)}
+                                disabled={calRemovingIds.has(event.id)}
+                                className="text-green-700 hover:text-red-600 text-sm font-medium block disabled:opacity-50 group"
+                                title="Click to remove from calendar"
+                              >
+                                {calRemovingIds.has(event.id) ? (
+                                  "Removing..."
+                                ) : (
+                                  <>
+                                    <span className="group-hover:hidden">
+                                      &#10003; Added to {calLabel}
+                                    </span>
+                                    <span className="hidden group-hover:inline">
+                                      Remove from {calLabel}
+                                    </span>
+                                  </>
+                                )}
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleAddToCalendar(event)}
+                                disabled={calSyncingIds.has(event.id)}
+                                className="text-amber-700 hover:text-slate-800 text-sm font-medium block disabled:opacity-50"
+                              >
+                                {calSyncingIds.has(event.id) ? "Adding..." : `Add to ${calLabel}`}
+                              </button>
+                            )
                           ) : (
                             <button
                               onClick={connectGoogleCalendar}

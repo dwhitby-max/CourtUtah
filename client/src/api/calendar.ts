@@ -51,6 +51,20 @@ export async function addEventToCalendar(courtEventId: number): Promise<{ messag
   return data;
 }
 
+export async function getSyncedEvents(): Promise<Record<number, number>> {
+  const res = await apiFetch("/calendar/events/synced");
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Failed to fetch synced events");
+  return data.synced;
+}
+
+export async function removeEventFromCalendar(calendarEntryId: number): Promise<{ message: string }> {
+  const res = await apiFetch(`/calendar/events/${calendarEntryId}`, { method: "DELETE" });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Failed to remove calendar event");
+  return data;
+}
+
 export async function removeConnection(id: number): Promise<void> {
   const res = await apiFetch(`/calendar/connections/${id}`, { method: "DELETE" });
   if (!res.ok) {
