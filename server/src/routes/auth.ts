@@ -20,8 +20,17 @@ setInterval(() => {
   }
 }, 60 * 1000).unref();
 
+function resolveRedirectUri(req: Request): string {
+  const forwardedHost = req.get("x-forwarded-host") || req.get("host") || "";
+  const proto = req.get("x-forwarded-proto") || req.protocol || "https";
+  if (forwardedHost && forwardedHost !== "localhost" && !forwardedHost.startsWith("localhost:")) {
+    return `${proto}://${forwardedHost}/api/auth/google/callback`;
+  }
+  return config.google.redirectUri;
+}
+
 // GET /api/auth/google — Initiate Google OAuth (public, no JWT required)
-router.get("/google", heavyLimiter, (_req: Request, res: Response) => {
+router.get("/google", heavyLimiter, (req: Request, res: Response) => {
   if (!config.google.clientId || !config.google.clientSecret) {
     res.status(503).json({ error: "Google OAuth not configured — add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET" });
     return;
@@ -29,6 +38,9 @@ router.get("/google", heavyLimiter, (_req: Request, res: Response) => {
 
   const state = crypto.randomBytes(32).toString("hex");
   oauthStates.set(state, { createdAt: Date.now() });
+
+  const redirectUri = resolveRedirectUri(req);
+  console.log(`🔑 Google OAuth initiated, redirect_uri=${redirectUri}`);
 
   const scopes = [
     "openid",
@@ -40,7 +52,7 @@ router.get("/google", heavyLimiter, (_req: Request, res: Response) => {
 
   const params = new URLSearchParams({
     client_id: config.google.clientId,
-    redirect_uri: config.google.redirectUri,
+    redirect_uri: redirectUri,
     response_type: "code",
     scope: scopes.join(" "),
     access_type: "offline",
@@ -77,6 +89,9 @@ router.get("/google/callback", async (req: Request, res: Response) => {
   oauthStates.delete(state); // One-time use
 
   try {
+    const redirectUri = resolveRedirectUri(req);
+    console.log(`🔑 Google OAuth callback, redirect_uri=${redirectUri}`);
+
     // Exchange authorization code for tokens
     const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
@@ -85,7 +100,7 @@ router.get("/google/callback", async (req: Request, res: Response) => {
         code: String(code),
         client_id: config.google.clientId,
         client_secret: config.google.clientSecret,
-        redirect_uri: config.google.redirectUri,
+        redirect_uri: redirectUri,
         grant_type: "authorization_code",
       }),
     });
