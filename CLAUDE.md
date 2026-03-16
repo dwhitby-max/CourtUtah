@@ -7,6 +7,35 @@
 
 ---
 
+## DEVELOPMENT RULES (MUST FOLLOW)
+
+### Deployment & File Paths
+- **NEVER use `process.cwd()` for resolving file paths.** Replit deployments may run from a different working directory. Always use `__dirname` or resolve relative to the compiled JS location.
+- **After any code change, both client AND server must be rebuilt** (`npm --prefix client run build && npm --prefix server run build`) before restarting. Stale builds are the #1 cause of "my change didn't work."
+- **`start-production.sh` must verify build artifacts exist** before starting the server. If `client/build/index.html` or `server/dist/server/src/index.js` is missing, rebuild.
+
+### Authentication & OAuth
+- **Google OAuth is the ONLY login method.** There is no email/password login. Every user goes through `/api/auth/google` which creates the user AND the calendar connection in one transaction.
+- **The auth callback MUST create the `calendar_connections` row.** Never assume the calendar connection exists separately from account creation.
+- **Write to localStorage synchronously in `setUser()`**, not via `useEffect`. React navigations can happen before async effects run, causing stale state. This was the root cause of the OAuth redirect loop.
+- **Never use `clearToken()` in ProtectedRoute.** Clearing the JWT before an OAuth redirect creates a logged-out flash and can cause loops. Just redirect — the OAuth callback issues a new JWT.
+- **Use `sessionStorage` flags to prevent redirect loops.** If ProtectedRoute redirects to OAuth, set a flag so it only attempts once per browser session.
+
+### Frontend Guards
+- **Pages behind `ProtectedRoute` should NOT re-check `isLoggedIn`.** The route wrapper guarantees auth. Adding `isLoggedIn` guards to buttons/UI inside protected pages hides functionality and creates confusion.
+- **If an API call fails with "no calendar connected", redirect to `/api/auth/google`** instead of showing an error. This forces the OAuth flow which creates the connection.
+
+### Token Lifecycle
+- **Google refresh tokens must be stored with `COALESCE`** so existing tokens aren't overwritten with NULL when Google doesn't return a new one.
+- **Token refresh must persist rotated refresh tokens** — Google and Microsoft can both rotate refresh tokens during a refresh. Always save if present.
+- **Calendar changes require user confirmation** before syncing to calendar. Set `sync_status = 'pending_update'` and notify the user, don't auto-sync.
+
+### Testing Changes
+- **Simulate deployment locally** before committing: run `bash build.sh && bash start-production.sh` and test. Also test from a different CWD (`cd / && node /path/to/index.js`).
+- **Check the actual database** after OAuth flows to verify rows were created: `SELECT * FROM calendar_connections` and `SELECT google_id FROM users`.
+
+---
+
 ## PROJECT OVERVIEW
 
 A full-stack application that:
