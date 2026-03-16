@@ -75,6 +75,7 @@ export default function SearchPage() {
   const [lastSearchParams, setLastSearchParams] = useState<Record<string, string> | null>(null);
   const [lastSearchSavedId, setLastSearchSavedId] = useState<number | null>(null);
   const [calendarProvider, setCalendarProvider] = useState<string | null>(null);
+  const [hasCalendarConnection, setHasCalendarConnection] = useState(true);
   const [addingAll, setAddingAll] = useState(false);
   const [addedAll, setAddedAll] = useState(false);
 
@@ -90,9 +91,15 @@ export default function SearchPage() {
       const active = (data.connections as Array<{ provider: string; is_active: boolean }>)
         .find(c => c.is_active);
       setCalendarProvider(active?.provider ?? null);
+      setHasCalendarConnection(!!active);
     } catch {
-      // non-fatal
+      setHasCalendarConnection(false);
     }
+  }
+
+  function connectGoogleCalendar() {
+    // Redirect through Google auth flow which creates both account link + calendar connection
+    window.location.href = "/api/auth/google";
   }
 
   async function fetchSavedSearches() {
@@ -305,7 +312,15 @@ export default function SearchPage() {
               {results.length} Result{results.length !== 1 ? "s" : ""} Found
             </h2>
             <div className="flex items-center gap-3">
-              {results.length > 0 && (
+              {results.length > 0 && !hasCalendarConnection && (
+                <button
+                  onClick={connectGoogleCalendar}
+                  className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md"
+                >
+                  Connect Google Calendar
+                </button>
+              )}
+              {results.length > 0 && hasCalendarConnection && (
                 <button
                   onClick={handleAddAllToCalendar}
                   disabled={addingAll || addedAll}
@@ -389,17 +404,26 @@ export default function SearchPage() {
                         </td>
                         <td className="px-4 py-3 text-sm">{event.hearingType || "N/A"}</td>
                         <td className="px-4 py-3 text-sm space-y-1">
-                          <button
-                            onClick={() => handleAddToCalendar(event)}
-                            disabled={calSyncingIds.has(event.id) || calSyncedIds.has(event.id)}
-                            className="text-amber-700 hover:text-slate-800 text-sm font-medium block disabled:opacity-50"
-                          >
-                            {calSyncingIds.has(event.id)
-                              ? "Adding..."
-                              : calSyncedIds.has(event.id)
-                                ? `Added to ${calLabel}`
-                                : `Add to ${calLabel}`}
-                          </button>
+                          {hasCalendarConnection ? (
+                            <button
+                              onClick={() => handleAddToCalendar(event)}
+                              disabled={calSyncingIds.has(event.id) || calSyncedIds.has(event.id)}
+                              className="text-amber-700 hover:text-slate-800 text-sm font-medium block disabled:opacity-50"
+                            >
+                              {calSyncingIds.has(event.id)
+                                ? "Adding..."
+                                : calSyncedIds.has(event.id)
+                                  ? `Added to ${calLabel}`
+                                  : `Add to ${calLabel}`}
+                            </button>
+                          ) : (
+                            <button
+                              onClick={connectGoogleCalendar}
+                              className="text-blue-600 hover:text-blue-800 text-sm font-medium block"
+                            >
+                              Connect Calendar
+                            </button>
+                          )}
                           <button
                             onClick={() => handleWatch(event)}
                             className="text-gray-500 hover:text-gray-700 text-xs block"
