@@ -6,7 +6,9 @@
       "Bash(cd:*)",
       "Bash(npx tsc:*)",
       "Bash(npx vitest:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(npm:*)",
+      "WebFetch(domain:utah-courts.replit.app)"
     ]
   }
 }
