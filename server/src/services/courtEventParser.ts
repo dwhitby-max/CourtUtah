@@ -181,7 +181,15 @@ function parseEventBlock(
       .trim();
   }
 
-  // 5. Extract defendant name from the col-sm-4 div (parties section)
+  // 5. Extract attorney name if present (shown in attorney-type searches)
+  let attorney: string | null = null;
+  const attorneyMatch = boxHtml.match(/Attorney:\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i);
+  if (attorneyMatch) {
+    attorney = cleanName(stripTags(attorneyMatch[1]));
+    if (attorney.length < 2) attorney = null;
+  }
+
+  // 6. Extract defendant name from the col-sm-4 div (parties section)
   let defendantName: string | null = null;
   const partiesDivMatch = boxHtml.match(
     /col-(?:xs-12\s+)?col-sm-4[^"]*"[^>]*>([\s\S]*?)(?=<div[^>]*col-(?:xs-12\s+)?col-sm-8)/i
@@ -211,7 +219,7 @@ function parseEventBlock(
     }
   }
 
-  // 6. Extract judge name, courtroom, and hearing type from col-sm-6 inside col-sm-8
+  // 7. Extract judge name, courtroom, and hearing type from col-sm-6 inside col-sm-8
   let judgeName: string | null = null;
   let courtRoom: string | null = null;
   let hearingType: string | null = null;
@@ -252,7 +260,7 @@ function parseEventBlock(
     }
   }
 
-  // 7. Extract case number and case type from div.case
+  // 8. Extract case number and case type from div.case
   let caseNumber: string | null = null;
   let caseType: string | null = null;
 
@@ -301,7 +309,7 @@ function parseEventBlock(
     defendantOtn: null,
     defendantDob: null,
     prosecutingAttorney: null,
-    defenseAttorney: null,
+    defenseAttorney: attorney,
     citationNumber: null,
     sheriffNumber: null,
     leaNumber: null,
