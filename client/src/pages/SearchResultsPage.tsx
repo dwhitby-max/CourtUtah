@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useSearch } from "@/hooks/useSearch";
 import { useAuth } from "@/store/authStore";
 import { apiFetch } from "@/api/client";
-import { addEventToCalendar, getCalendarConnections, getSyncedEvents, removeEventFromCalendar } from "@/api/calendar";
+import { addEventToCalendar, addAllEventsToCalendar, getCalendarConnections, getSyncedEvents, removeEventFromCalendar } from "@/api/calendar";
 import { CourtEvent } from "@shared/types";
 
 const providerLabels: Record<string, string> = {
@@ -12,6 +12,16 @@ const providerLabels: Record<string, string> = {
   apple: "iCloud",
   caldav: "CalDAV",
 };
+
+interface ChangeRecord {
+  courtEventId: number;
+  caseNumber: string | null;
+  defendantName: string | null;
+  fieldChanged: string;
+  oldValue: string | null;
+  newValue: string | null;
+  detectedAt: string;
+}
 
 export default function SearchResultsPage() {
   const location = useLocation();
@@ -27,6 +37,18 @@ export default function SearchResultsPage() {
   const [calEntryMap, setCalEntryMap] = useState<Record<number, number>>({});
   const [calRemovingIds, setCalRemovingIds] = useState<Set<number>>(new Set());
   const [calendarProvider, setCalendarProvider] = useState<string | null>(null);
+
+  // Batch add state
+  const [batchAdding, setBatchAdding] = useState(false);
+  const [batchProgress, setBatchProgress] = useState("");
+
+  // Monitor modal state
+  const [showMonitorModal, setShowMonitorModal] = useState(false);
+  const [monitoringInProgress, setMonitoringInProgress] = useState(false);
+
+  // Updates section state
+  const [updates, setUpdates] = useState<ChangeRecord[]>([]);
+  const [updatesLoading, setUpdatesLoading] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -57,41 +79,40 @@ export default function SearchResultsPage() {
     }
   }, [isLoggedIn]);
 
-  async function handleWatchAndSync(event: CourtEvent) {
-    const searchType = event.caseNumber ? "case_number" : "defendant_name";
-    const searchValue = event.caseNumber || event.defendantName || "Unknown";
-    const label = `${event.caseNumber || "Unknown Case"} - ${event.defendantName || "Unknown"} (${event.courtName})`;
-
-    setWatchingIds((prev) => new Set(prev).add(event.id));
-
+  // Fetch updates (changes detected for events in current results)
+  const fetchUpdates = useCallback(async () => {
+    if (!isLoggedIn || results.length === 0) return;
+    setUpdatesLoading(true);
     try {
-      const res = await apiFetch("/watched-cases", {
-        method: "POST",
-        body: JSON.stringify({ searchType, searchValue, label }),
-      });
+      const res = await apiFetch("/watched-cases/pending-updates");
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-
-      const { initialSearch } = data;
-      if (initialSearch && initialSearch.newEntries > 0) {
-        setWatchSuccess(`Added "${label}" to watched cases and synced ${initialSearch.newEntries} event(s) to your calendar.`);
-      } else if (initialSearch && initialSearch.eventsFound > 0) {
-        setWatchSuccess(`Added "${label}" to watched cases. ${initialSearch.eventsFound} event(s) found — connect a calendar in Calendar Settings to sync.`);
-      } else {
-        setWatchSuccess(`Added "${label}" to watched cases. Future events will be tracked automatically.`);
+      if (res.ok && data.pendingUpdates) {
+        const resultEventIds = new Set(results.map(r => r.id));
+        const relevant = data.pendingUpdates
+          .filter((u: { court_event_id: number }) => resultEventIds.has(u.court_event_id))
+          .map((u: { court_event_id: number; case_number: string | null; defendant_name: string | null; field_changed: string; old_value: string | null; new_value: string | null; detected_at: string }) => ({
+            courtEventId: u.court_event_id,
+            caseNumber: u.case_number,
+            defendantName: u.defendant_name,
+            fieldChanged: u.field_changed,
+            oldValue: u.old_value,
+            newValue: u.new_value,
+            detectedAt: u.detected_at,
+          }));
+        setUpdates(relevant);
       }
-      setWatchError("");
-    } catch (err) {
-      setWatchError(err instanceof Error ? err.message : "Failed to add watched case");
-      setWatchSuccess("");
+    } catch {
+      // Non-critical - silently ignore
     } finally {
-      setWatchingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(event.id);
-        return next;
-      });
+      setUpdatesLoading(false);
     }
-  }
+  }, [isLoggedIn, results]);
+
+  useEffect(() => {
+    if (searched && !loading && results.length > 0) {
+      fetchUpdates();
+    }
+  }, [searched, loading, results, fetchUpdates]);
 
   async function handleAddToCalendar(event: CourtEvent) {
     setCalSyncingIds((prev) => new Set(prev).add(event.id));
@@ -146,6 +167,137 @@ export default function SearchResultsPage() {
     }
   }
 
+  async function handleAddAllToCalendar() {
+    const unsyncedIds = results
+      .filter(e => !calSyncedIds.has(e.id))
+      .map(e => e.id);
+
+    if (unsyncedIds.length === 0) {
+      setWatchSuccess("All events are already on your calendar.");
+      return;
+    }
+
+    setBatchAdding(true);
+    setBatchProgress(`Adding ${unsyncedIds.length} events...`);
+    setWatchError("");
+    setWatchSuccess("");
+
+    try {
+      const data = await addAllEventsToCalendar(unsyncedIds);
+      const newSyncedIds = new Set(calSyncedIds);
+      const newEntryMap = { ...calEntryMap };
+
+      for (const r of data.results) {
+        if (r.synced) {
+          newSyncedIds.add(r.courtEventId);
+          newEntryMap[r.courtEventId] = r.calendarEntryId;
+        }
+      }
+
+      setCalSyncedIds(newSyncedIds);
+      setCalEntryMap(newEntryMap);
+      setWatchSuccess(data.message);
+      setBatchProgress("");
+
+      // Show monitor modal after successful batch add
+      setShowMonitorModal(true);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to add events to calendar";
+      setWatchError(msg);
+      setBatchProgress("");
+    } finally {
+      setBatchAdding(false);
+    }
+  }
+
+  async function handleMonitorConfirm() {
+    setMonitoringInProgress(true);
+
+    // Create watched cases for unique defendants and case numbers in results
+    const seen = new Set<string>();
+    const watchRequests: Array<{ searchType: string; searchValue: string; label: string }> = [];
+
+    for (const event of results) {
+      if (event.caseNumber) {
+        const key = `case_number:${event.caseNumber}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          watchRequests.push({
+            searchType: "case_number",
+            searchValue: event.caseNumber,
+            label: `${event.caseNumber} - ${event.defendantName || "Unknown"} (${event.courtName})`,
+          });
+        }
+      } else if (event.defendantName) {
+        const key = `defendant_name:${event.defendantName}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          watchRequests.push({
+            searchType: "defendant_name",
+            searchValue: event.defendantName,
+            label: `${event.defendantName} (${event.courtName})`,
+          });
+        }
+      }
+    }
+
+    let successCount = 0;
+    for (const req of watchRequests) {
+      try {
+        const res = await apiFetch("/watched-cases", {
+          method: "POST",
+          body: JSON.stringify(req),
+        });
+        if (res.ok) successCount++;
+      } catch {
+        // Continue with remaining watches
+      }
+    }
+
+    setMonitoringInProgress(false);
+    setShowMonitorModal(false);
+
+    if (successCount > 0) {
+      setWatchSuccess(`Monitoring ${successCount} case${successCount !== 1 ? "s" : ""} for updates. You'll be notified by email of any changes.`);
+    } else if (watchRequests.length === 0) {
+      setWatchSuccess("No cases to monitor from these results.");
+    } else {
+      setWatchError("Failed to set up monitoring. Please try again.");
+    }
+
+    // Re-fetch updates now that we have watched cases
+    fetchUpdates();
+  }
+
+  async function handleConfirmUpdate(courtEventId: number) {
+    const entryId = calEntryMap[courtEventId];
+    if (!entryId) return;
+
+    try {
+      const res = await apiFetch(`/watched-cases/confirm-update/${entryId}`, { method: "POST" });
+      if (res.ok) {
+        setUpdates(prev => prev.filter(u => u.courtEventId !== courtEventId));
+        setWatchSuccess("Calendar updated with latest changes.");
+      }
+    } catch {
+      setWatchError("Failed to confirm update.");
+    }
+  }
+
+  async function handleDismissUpdate(courtEventId: number) {
+    const entryId = calEntryMap[courtEventId];
+    if (!entryId) return;
+
+    try {
+      const res = await apiFetch(`/watched-cases/dismiss-update/${entryId}`, { method: "POST" });
+      if (res.ok) {
+        setUpdates(prev => prev.filter(u => u.courtEventId !== courtEventId));
+      }
+    } catch {
+      setWatchError("Failed to dismiss update.");
+    }
+  }
+
   function toggleExpand(id: number) {
     setExpandedId(expandedId === id ? null : id);
   }
@@ -165,7 +317,6 @@ export default function SearchResultsPage() {
 
   function formatDate(dateStr: string): string {
     if (!dateStr) return "N/A";
-    // Already YYYY-MM-DD from parser or DB
     const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
     if (match) {
       const [, y, m, d] = match;
@@ -173,6 +324,12 @@ export default function SearchResultsPage() {
     }
     return dateStr;
   }
+
+  function formatFieldName(field: string): string {
+    return field.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+  }
+
+  const allSynced = results.length > 0 && results.every(e => calSyncedIds.has(e.id));
 
   return (
     <div className="space-y-6">
@@ -192,12 +349,74 @@ export default function SearchResultsPage() {
 
       {loading && <div className="text-gray-500">Searching...</div>}
 
+      {/* Updates Section */}
+      {updates.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg overflow-hidden">
+          <div className="px-6 py-4 border-b border-amber-200 flex items-center gap-2">
+            <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <h2 className="text-lg font-semibold text-amber-800">
+              Updated ({updates.length})
+            </h2>
+          </div>
+          <div className="divide-y divide-amber-100">
+            {updates.map((update, idx) => (
+              <div key={idx} className="px-6 py-3 flex items-center justify-between">
+                <div>
+                  <div className="font-medium text-gray-900">
+                    {update.caseNumber || "Unknown Case"} - {update.defendantName || "Unknown"}
+                  </div>
+                  <div className="text-sm text-amber-700 mt-1">
+                    <span className="font-medium">{formatFieldName(update.fieldChanged)}:</span>{" "}
+                    <span className="line-through text-gray-400">{update.oldValue || "N/A"}</span>
+                    {" → "}
+                    <span className="font-medium text-amber-900">{update.newValue || "N/A"}</span>
+                  </div>
+                </div>
+                <div className="flex gap-2 ml-4 shrink-0">
+                  <button
+                    onClick={() => handleConfirmUpdate(update.courtEventId)}
+                    className="px-3 py-1.5 text-xs font-medium bg-amber-600 text-white rounded hover:bg-amber-700"
+                  >
+                    Update Calendar
+                  </button>
+                  <button
+                    onClick={() => handleDismissUpdate(update.courtEventId)}
+                    className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-300 rounded hover:bg-gray-50"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {searched && !loading && (
         <div className="bg-white shadow rounded-lg overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200">
+          <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-gray-900">
               {results.length} Result{results.length !== 1 ? "s" : ""} Found
             </h2>
+            {isLoggedIn && results.length > 0 && calendarProvider && (
+              <button
+                onClick={handleAddAllToCalendar}
+                disabled={batchAdding || allSynced}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed bg-amber-600 text-white hover:bg-amber-700 transition-colors"
+                title={allSynced ? "All events already added" : `Add all ${results.length} events to ${providerLabels[calendarProvider] || "Calendar"}`}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                {batchAdding
+                  ? batchProgress
+                  : allSynced
+                    ? "All Added"
+                    : `Add All to ${providerLabels[calendarProvider] || "Calendar"}`}
+              </button>
+            )}
           </div>
 
           {results.length === 0 ? (
@@ -256,65 +475,86 @@ export default function SearchResultsPage() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-sm">{event.hearingType || "N/A"}</td>
-                        <td className="px-4 py-3 text-sm space-y-1">
-                          {isLoggedIn && (
-                            <>
-                              {calSyncedIds.has(event.id) ? (
-                                <button
-                                  onClick={() => handleRemoveFromCalendar(event)}
-                                  disabled={calRemovingIds.has(event.id)}
-                                  className="text-green-700 hover:text-red-600 text-sm font-medium block disabled:opacity-50 group"
-                                  title="Click to remove from calendar"
-                                >
-                                  {calRemovingIds.has(event.id) ? (
-                                    "Removing..."
-                                  ) : (
-                                    <>
-                                      <span className="group-hover:hidden">
-                                        &#10003; Added to {calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar"}
-                                      </span>
-                                      <span className="hidden group-hover:inline">
-                                        Remove from {calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar"}
-                                      </span>
-                                    </>
-                                  )}
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() => handleAddToCalendar(event)}
-                                  disabled={calSyncingIds.has(event.id)}
-                                  className="text-amber-700 hover:text-slate-800 text-sm font-medium block disabled:opacity-50"
-                                >
-                                  {calSyncingIds.has(event.id)
-                                    ? "Adding..."
-                                    : `Add to ${calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar"}`}
-                                </button>
-                              )}
+                        <td className="px-4 py-3 text-sm">
+                          <div className="flex items-center gap-2">
+                            {isLoggedIn && calendarProvider && (
+                              <>
+                                {calSyncedIds.has(event.id) ? (
+                                  <button
+                                    onClick={() => handleRemoveFromCalendar(event)}
+                                    disabled={calRemovingIds.has(event.id)}
+                                    className="p-1.5 rounded-md text-green-600 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors group"
+                                    title={calRemovingIds.has(event.id) ? "Removing..." : `Remove from ${providerLabels[calendarProvider] || "Calendar"}`}
+                                  >
+                                    {calRemovingIds.has(event.id) ? (
+                                      <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                                      </svg>
+                                    ) : (
+                                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                      </svg>
+                                    )}
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => handleAddToCalendar(event)}
+                                    disabled={calSyncingIds.has(event.id)}
+                                    className="p-1.5 rounded-md text-gray-400 hover:text-amber-600 hover:bg-amber-50 disabled:opacity-50 transition-colors"
+                                    title={calSyncingIds.has(event.id) ? "Adding..." : `Add to ${providerLabels[calendarProvider] || "Calendar"}`}
+                                  >
+                                    {calSyncingIds.has(event.id) ? (
+                                      <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                                      </svg>
+                                    ) : (
+                                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                      </svg>
+                                    )}
+                                  </button>
+                                )}
+                              </>
+                            )}
+                            {isLoggedIn && !calendarProvider && (
                               <button
-                                onClick={() => handleWatchAndSync(event)}
-                                disabled={watchingIds.has(event.id)}
-                                className="text-gray-500 hover:text-gray-700 text-xs block disabled:opacity-50"
+                                onClick={() => navigate("/calendar-settings")}
+                                className="p-1.5 rounded-md text-gray-300 hover:text-amber-600 hover:bg-amber-50 transition-colors"
+                                title="Connect a calendar first"
                               >
-                                {watchingIds.has(event.id) ? "Syncing..." : "Watch & Auto-Sync"}
+                                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                </svg>
                               </button>
-                            </>
-                          )}
-                          {!isLoggedIn && (
-                            <button
-                              onClick={() => navigate("/login")}
-                              className="text-amber-700 hover:text-slate-800 text-sm font-medium block"
-                            >
-                              Log in to track
-                            </button>
-                          )}
-                          {hasDetails(event) && (
-                            <button
-                              onClick={() => toggleExpand(event.id)}
-                              className="text-gray-500 hover:text-gray-700 text-xs block"
-                            >
-                              {expandedId === event.id ? "Hide details" : "Details"}
-                            </button>
-                          )}
+                            )}
+                            {!isLoggedIn && (
+                              <button
+                                onClick={() => navigate("/login")}
+                                className="text-amber-700 hover:text-slate-800 text-xs font-medium"
+                              >
+                                Log in to track
+                              </button>
+                            )}
+                            {hasDetails(event) && (
+                              <button
+                                onClick={() => toggleExpand(event.id)}
+                                className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                                title={expandedId === event.id ? "Hide details" : "Show details"}
+                              >
+                                <svg
+                                  className={`w-4 h-4 transition-transform ${expandedId === event.id ? "rotate-180" : ""}`}
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  stroke="currentColor"
+                                  strokeWidth={2}
+                                >
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                       {expandedId === event.id && (
@@ -383,6 +623,43 @@ export default function SearchResultsPage() {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Monitor Hearings Modal */}
+      {showMonitorModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/50" onClick={() => setShowMonitorModal(false)} />
+          <div className="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
+                <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">Monitor These Hearings?</h3>
+            </div>
+            <p className="text-gray-600 text-sm mb-6">
+              Would you like to automatically monitor these hearings for schedule changes?
+              If anything changes (date, time, courtroom, judge, etc.), we'll update your calendar
+              and notify you by email.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setShowMonitorModal(false)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                No Thanks
+              </button>
+              <button
+                onClick={handleMonitorConfirm}
+                disabled={monitoringInProgress}
+                className="px-4 py-2 text-sm font-medium text-white bg-amber-600 rounded-md hover:bg-amber-700 disabled:opacity-50"
+              >
+                {monitoringInProgress ? "Setting Up..." : "Yes, Monitor"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

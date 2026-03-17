@@ -276,6 +276,115 @@ router.post("/events", authenticateToken, heavyLimiter, async (req: Request, res
   }
 });
 
+// POST /api/calendar/events/batch - Add multiple court events to calendar at once
+router.post("/events/batch", authenticateToken, heavyLimiter, async (req: Request, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const currentUser = req.user;
+
+  const { courtEventIds } = req.body;
+  if (!Array.isArray(courtEventIds) || courtEventIds.length === 0) {
+    res.status(400).json({ error: "courtEventIds must be a non-empty array" });
+    return;
+  }
+
+  if (courtEventIds.length > 200) {
+    res.status(400).json({ error: "Cannot add more than 200 events at once" });
+    return;
+  }
+
+  const pool = getPool();
+  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
+
+  const client = await pool.connect();
+  try {
+    // Verify user has an active calendar connection
+    let connResult = await client.query(
+      `SELECT id FROM calendar_connections
+       WHERE user_id = $1 AND is_active = true
+       ORDER BY created_at ASC LIMIT 1`,
+      [currentUser.userId]
+    );
+
+    if (connResult.rows.length === 0) {
+      const inactiveConn = await client.query(
+        `SELECT id, refresh_token_encrypted FROM calendar_connections
+         WHERE user_id = $1
+         ORDER BY updated_at DESC LIMIT 1`,
+        [currentUser.userId]
+      );
+
+      if (inactiveConn.rows.length > 0 && inactiveConn.rows[0].refresh_token_encrypted) {
+        await client.query(
+          `UPDATE calendar_connections SET is_active = true, updated_at = NOW() WHERE id = $1`,
+          [inactiveConn.rows[0].id]
+        );
+        connResult = { rows: [{ id: inactiveConn.rows[0].id }] } as typeof connResult;
+      } else {
+        res.status(400).json({ error: "No calendar connected. Please log out and log back in with Google to connect your calendar." });
+        return;
+      }
+    }
+
+    const connectionId = connResult.rows[0].id;
+    const results: Array<{ courtEventId: number; calendarEntryId: number; synced: boolean; error?: string }> = [];
+
+    for (const courtEventId of courtEventIds) {
+      try {
+        // Check if event exists
+        const eventResult = await client.query(
+          "SELECT id FROM court_events WHERE id = $1",
+          [courtEventId]
+        );
+        if (eventResult.rows.length === 0) {
+          results.push({ courtEventId, calendarEntryId: 0, synced: false, error: "Event not found" });
+          continue;
+        }
+
+        // Check for existing entry
+        const existingEntry = await client.query(
+          `SELECT id FROM calendar_entries
+           WHERE user_id = $1 AND court_event_id = $2 AND calendar_connection_id = $3`,
+          [currentUser.userId, courtEventId, connectionId]
+        );
+
+        let entryId: number;
+        if (existingEntry.rows.length > 0) {
+          entryId = existingEntry.rows[0].id;
+          await client.query(
+            `UPDATE calendar_entries SET sync_status = 'pending', last_synced_content_hash = NULL, updated_at = NOW() WHERE id = $1`,
+            [entryId]
+          );
+        } else {
+          const insertResult = await client.query(
+            `INSERT INTO calendar_entries
+             (user_id, court_event_id, calendar_connection_id, sync_status)
+             VALUES ($1, $2, $3, 'pending')
+             RETURNING id`,
+            [currentUser.userId, courtEventId, connectionId]
+          );
+          entryId = insertResult.rows[0].id;
+        }
+
+        const success = await syncCalendarEntry(entryId);
+        results.push({ courtEventId, calendarEntryId: entryId, synced: success });
+      } catch (err) {
+        results.push({ courtEventId, calendarEntryId: 0, synced: false, error: err instanceof Error ? err.message : "Sync failed" });
+      }
+    }
+
+    const syncedCount = results.filter(r => r.synced).length;
+    res.json({
+      message: `Added ${syncedCount} of ${courtEventIds.length} events to calendar`,
+      results,
+    });
+  } catch (err) {
+    console.error("❌ POST /api/calendar/events/batch failed:", err);
+    res.status(500).json({ error: "Failed to add events to calendar" });
+  } finally {
+    client.release();
+  }
+});
+
 // GET /api/calendar/events/synced - Get court_event_ids the user has synced
 router.get("/events/synced", authenticateToken, async (req: Request, res: Response) => {
   if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
