@@ -2,41 +2,74 @@ import { Router, Request, Response } from "express";
 import { heavyLimiter } from "../middleware/rateLimiter";
 import { authenticateToken } from "../middleware/auth";
 import { searchCourtEvents } from "../services/searchService";
-import { liveSearchUtcourts, LiveSearchParams } from "../services/courtScraper";
+import { liveSearchUtcourts, fetchCourtList, LiveSearchParams, CourtInfo } from "../services/courtScraper";
 import { parseHtmlCalendarResults, ParsedCourtEvent } from "../services/courtEventParser";
 import { CourtEvent } from "../../../shared/types";
 import { getPool } from "../db/pool";
 import { config } from "../config/env";
 
 /**
- * Build a list of weekday dates (YYYY-MM-DD) between two ISO date strings (inclusive).
- * Skips Saturday/Sunday since courts don't hold hearings on weekends.
+ * Cached court list — fetched once and reused.
+ * utcourts.gov name-based searches (party, attorney, judge) require a specific
+ * court location code; loc=all silently returns 0 results.
  */
-function buildWeekdayRange(from: string, to: string): string[] {
-  const dates: string[] = [];
-  const start = new Date(from + "T00:00:00");
-  const end = new Date(to + "T00:00:00");
-  const current = new Date(start);
+let cachedCourts: CourtInfo[] | null = null;
+let cachedCourtsAt = 0;
+const COURT_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
-  while (current <= end) {
-    const day = current.getDay();
-    if (day !== 0 && day !== 6) {
-      dates.push(current.toISOString().split("T")[0]);
-    }
-    current.setDate(current.getDate() + 1);
+async function getCourtLocations(): Promise<CourtInfo[]> {
+  if (cachedCourts && Date.now() - cachedCourtsAt < COURT_CACHE_TTL) {
+    return cachedCourts;
   }
-
-  return dates;
+  cachedCourts = await fetchCourtList();
+  cachedCourtsAt = Date.now();
+  console.log(`📋 Cached ${cachedCourts.length} court locations`);
+  return cachedCourts;
 }
 
 /**
- * Build a default date range: today through 30 calendar days out, weekdays only.
+ * Search utcourts.gov across all court locations in parallel batches.
+ * Name-based searches (party, attorney, judge) require loc=<specific code>;
+ * loc=all returns 0 results. We search each court with d=all.
  */
-function buildDefaultDateRange(): string[] {
-  const now = new Date();
-  const end = new Date(now);
-  end.setDate(end.getDate() + 30);
-  return buildWeekdayRange(now.toISOString().split("T")[0], end.toISOString().split("T")[0]);
+async function searchAllCourts(
+  liveBase: LiveSearchParams
+): Promise<ParsedCourtEvent[]> {
+  const courts = await getCourtLocations();
+  console.log(`🌐 Searching ${courts.length} courts on utcourts.gov...`);
+
+  const allParsed: ParsedCourtEvent[] = [];
+  const BATCH_SIZE = 5;
+  const DELAY_BETWEEN_BATCHES = 500;
+
+  for (let i = 0; i < courts.length; i += BATCH_SIZE) {
+    const batch = courts.slice(i, i + BATCH_SIZE);
+
+    const results = await Promise.allSettled(
+      batch.map(async (court) => {
+        const html = await liveSearchUtcourts({
+          ...liveBase,
+          date: "all",
+          locationCode: court.locationCode,
+        });
+        return parseHtmlCalendarResults(html);
+      })
+    );
+
+    for (const result of results) {
+      if (result.status === "fulfilled" && result.value.length > 0) {
+        allParsed.push(...result.value);
+      }
+    }
+
+    // Delay between batches to be respectful of utcourts.gov
+    if (i + BATCH_SIZE < courts.length) {
+      await new Promise((r) => setTimeout(r, DELAY_BETWEEN_BATCHES));
+    }
+  }
+
+  console.log(`  📋 Found ${allParsed.length} events across ${courts.length} courts`);
+  return allParsed;
 }
 
 const router = Router();
@@ -78,10 +111,9 @@ router.get("/coverage", async (_req: Request, res: Response) => {
 router.use(heavyLimiter);
 
 /**
- * Map user search params to LiveSearchParams for utcourts.gov (without date —
- * date is handled separately to allow per-date iteration).
- * Returns null if no searchable field is provided (utcourts requires
- * at least one of: party name, case number, judge, or attorney).
+ * Map user search params to LiveSearchParams for utcourts.gov (without date
+ * or location — those are handled by the per-court search loop).
+ * Returns null if no searchable field is provided.
  */
 function toLiveSearchBase(params: Record<string, string | undefined>): LiveSearchParams | null {
   if (params.caseNumber) return { caseNumber: params.caseNumber };
@@ -92,28 +124,11 @@ function toLiveSearchBase(params: Record<string, string | undefined>): LiveSearc
 }
 
 /**
- * Determine which dates to search on utcourts.gov.
- *
- * - If a single courtDate is specified, search only that date.
- * - If dateFrom/dateTo are specified, search each weekday in that range.
- * - Otherwise, search each weekday from today through 30 days out.
- *
- * Searching per-date avoids the result caps and "next 30 days" truncation
- * that utcourts.gov applies to d=all searches.
+ * Check if the search is a name-based search (party, attorney, judge).
+ * These require per-court-location iteration on utcourts.gov.
  */
-function getSearchDates(params: Record<string, string | undefined>): string[] {
-  if (params.courtDate) return [params.courtDate];
-  if (params.dateFrom && params.dateTo) return buildWeekdayRange(params.dateFrom, params.dateTo);
-  if (params.dateFrom) {
-    const end = new Date();
-    end.setDate(end.getDate() + 30);
-    return buildWeekdayRange(params.dateFrom, end.toISOString().split("T")[0]);
-  }
-  if (params.dateTo) {
-    const start = new Date();
-    return buildWeekdayRange(start.toISOString().split("T")[0], params.dateTo);
-  }
-  return buildDefaultDateRange();
+function isNameSearch(params: Record<string, string | undefined>): boolean {
+  return !!(params.defendantName || params.attorney || params.judgeName);
 }
 
 /**
@@ -307,30 +322,20 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       return;
     }
 
-    // Search utcourts.gov for each date individually to avoid result caps
-    // and ensure complete coverage across the full date range.
-    const dates = getSearchDates(searchParams);
-    console.log(`🌐 Running live search on utcourts.gov across ${dates.length} dates...`);
+    // Name-based searches (party, attorney, judge) require searching each court
+    // location individually — utcourts.gov returns 0 results for loc=all on
+    // name searches. Case number searches work without a location.
+    let allParsed: ParsedCourtEvent[];
 
-    const allParsed: ParsedCourtEvent[] = [];
-
-    for (const date of dates) {
-      try {
-        const html = await liveSearchUtcourts({ ...liveBase, date });
-        const parsed = parseHtmlCalendarResults(html);
-        allParsed.push(...parsed);
-      } catch (err) {
-        // Log per-date failures but continue with other dates
-        console.warn(`  ⚠️ Live search failed for date ${date}: ${err instanceof Error ? err.message : err}`);
-      }
-
-      // Small delay between requests to be respectful of utcourts.gov
-      if (dates.length > 1) {
-        await new Promise((r) => setTimeout(r, 500));
-      }
+    if (isNameSearch(searchParams)) {
+      allParsed = await searchAllCourts(liveBase);
+    } else {
+      // Case number search — works with a single request, no location needed
+      console.log("🌐 Running live case number search on utcourts.gov...");
+      const html = await liveSearchUtcourts({ ...liveBase, date: "all" });
+      allParsed = parseHtmlCalendarResults(html);
+      console.log(`  📋 Live search returned ${allParsed.length} events`);
     }
-
-    console.log(`  📋 Live search returned ${allParsed.length} total events across ${dates.length} dates`);
 
     // Persist live results to court_events so DB stays up to date
     await persistLiveResults(allParsed);

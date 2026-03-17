@@ -1,6 +1,6 @@
 import cron from "node-cron";
 import { getPool } from "../db/pool";
-import { liveSearchUtcourts, LiveSearchParams } from "./courtScraper";
+import { liveSearchUtcourts, fetchCourtList, LiveSearchParams, CourtInfo } from "./courtScraper";
 import { parseHtmlCalendarResults, ParsedCourtEvent } from "./courtEventParser";
 import { detectChanges, processChanges } from "./changeDetector";
 import { syncCalendarEntry } from "./calendarSync";
@@ -18,28 +18,18 @@ interface WatchedCaseRow {
   label: string;
 }
 
-/** How many upcoming weekdays to search for watched cases */
-const WATCHED_CASE_DAYS_AHEAD = 30;
+/** Cached court list for per-location searching */
+let cachedCourts: CourtInfo[] | null = null;
+let cachedCourtsAt = 0;
+const COURT_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
-/**
- * Build a list of weekday dates (YYYY-MM-DD) from today through N calendar days out.
- */
-function buildDateRange(daysAhead: number): string[] {
-  const dates: string[] = [];
-  const now = new Date();
-  const end = new Date(now);
-  end.setDate(end.getDate() + daysAhead);
-  const current = new Date(now);
-
-  while (current <= end) {
-    const day = current.getDay();
-    if (day !== 0 && day !== 6) {
-      dates.push(current.toISOString().split("T")[0]);
-    }
-    current.setDate(current.getDate() + 1);
+async function getCourtLocations(): Promise<CourtInfo[]> {
+  if (cachedCourts && Date.now() - cachedCourtsAt < COURT_CACHE_TTL) {
+    return cachedCourts;
   }
-
-  return dates;
+  cachedCourts = await fetchCourtList();
+  cachedCourtsAt = Date.now();
+  return cachedCourts;
 }
 
 /**
@@ -99,22 +89,47 @@ export async function runWatchedCaseSearch(watchedCaseId: number): Promise<{
       return { eventsFound: 0, newEntries: 0, changes: 0 };
     }
 
-    // Search utcourts.gov for each date individually to get complete results
-    const dates = buildDateRange(WATCHED_CASE_DAYS_AHEAD);
-    console.log(`🔍 Searching utcourts.gov for watched case ${wc.id}: ${wc.search_type}="${wc.search_value}" across ${dates.length} dates`);
+    // Name-based searches (party, attorney, judge) require searching each court
+    // location individually — utcourts.gov returns 0 for loc=all on name searches.
+    // Case number searches work without a location.
+    const isNameBased = ["defendant_name", "attorney", "judge_name"].includes(wc.search_type);
 
     const allParsed: ParsedCourtEvent[] = [];
-    for (const date of dates) {
-      try {
-        const html = await liveSearchUtcourts({ ...liveParams, date });
-        const parsed = parseHtmlCalendarResults(html);
-        allParsed.push(...parsed);
-      } catch (err) {
-        console.warn(`  ⚠️ Search failed for date ${date}: ${err instanceof Error ? err.message : err}`);
+
+    if (isNameBased) {
+      const courts = await getCourtLocations();
+      console.log(`🔍 Searching ${courts.length} courts for watched case ${wc.id}: ${wc.search_type}="${wc.search_value}"`);
+
+      const BATCH_SIZE = 5;
+      for (let i = 0; i < courts.length; i += BATCH_SIZE) {
+        const batch = courts.slice(i, i + BATCH_SIZE);
+        const results = await Promise.allSettled(
+          batch.map(async (court) => {
+            const html = await liveSearchUtcourts({
+              ...liveParams,
+              date: "all",
+              locationCode: court.locationCode,
+            });
+            return parseHtmlCalendarResults(html);
+          })
+        );
+        for (const result of results) {
+          if (result.status === "fulfilled" && result.value.length > 0) {
+            allParsed.push(...result.value);
+          }
+        }
+        if (i + BATCH_SIZE < courts.length) {
+          await new Promise((r) => setTimeout(r, 500));
+        }
       }
-      // Small delay between requests
-      if (dates.length > 1) {
-        await new Promise((r) => setTimeout(r, 500));
+    } else {
+      // Case number search — works with a single request
+      console.log(`🔍 Searching utcourts.gov for watched case ${wc.id}: ${wc.search_type}="${wc.search_value}"`);
+      try {
+        const html = await liveSearchUtcourts({ ...liveParams, date: "all" });
+        allParsed.push(...parseHtmlCalendarResults(html));
+      } catch (err) {
+        console.warn(`  ⚠️ Search failed: ${err instanceof Error ? err.message : err}`);
       }
     }
 
@@ -125,11 +140,11 @@ export async function runWatchedCaseSearch(watchedCaseId: number): Promise<{
     );
 
     if (allParsed.length === 0) {
-      console.log(`  📭 No results for "${wc.label}" across ${dates.length} dates`);
+      console.log(`  📭 No results for "${wc.label}"`);
       return { eventsFound: 0, newEntries: 0, changes: 0 };
     }
 
-    console.log(`  📋 Found ${allParsed.length} events for "${wc.label}" across ${dates.length} dates`);
+    console.log(`  📋 Found ${allParsed.length} events for "${wc.label}"`);
 
     let changes = 0;
 
