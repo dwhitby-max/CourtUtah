@@ -9,7 +9,8 @@
       "Bash(curl:*)",
       "Bash(npm:*)",
       "WebFetch(domain:utah-courts.replit.app)",
-      "WebFetch(domain:legacy.utcourts.gov)"
+      "WebFetch(domain:legacy.utcourts.gov)",
+      "Bash(git add:*)"
     ]
   }
 }
