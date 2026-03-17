@@ -8,6 +8,37 @@ import { CourtEvent } from "../../../shared/types";
 import { getPool } from "../db/pool";
 import { config } from "../config/env";
 
+/**
+ * Build a list of weekday dates (YYYY-MM-DD) between two ISO date strings (inclusive).
+ * Skips Saturday/Sunday since courts don't hold hearings on weekends.
+ */
+function buildWeekdayRange(from: string, to: string): string[] {
+  const dates: string[] = [];
+  const start = new Date(from + "T00:00:00");
+  const end = new Date(to + "T00:00:00");
+  const current = new Date(start);
+
+  while (current <= end) {
+    const day = current.getDay();
+    if (day !== 0 && day !== 6) {
+      dates.push(current.toISOString().split("T")[0]);
+    }
+    current.setDate(current.getDate() + 1);
+  }
+
+  return dates;
+}
+
+/**
+ * Build a default date range: today through 30 calendar days out, weekdays only.
+ */
+function buildDefaultDateRange(): string[] {
+  const now = new Date();
+  const end = new Date(now);
+  end.setDate(end.getDate() + 30);
+  return buildWeekdayRange(now.toISOString().split("T")[0], end.toISOString().split("T")[0]);
+}
+
 const router = Router();
 
 // GET /api/search/coverage — date range and counts of scraped data (public)
@@ -47,16 +78,42 @@ router.get("/coverage", async (_req: Request, res: Response) => {
 router.use(heavyLimiter);
 
 /**
- * Map user search params to LiveSearchParams for utcourts.gov.
+ * Map user search params to LiveSearchParams for utcourts.gov (without date —
+ * date is handled separately to allow per-date iteration).
  * Returns null if no searchable field is provided (utcourts requires
  * at least one of: party name, case number, judge, or attorney).
  */
-function toLiveSearchParams(params: Record<string, string | undefined>): LiveSearchParams | null {
-  if (params.caseNumber) return { caseNumber: params.caseNumber, date: params.courtDate || "all" };
-  if (params.defendantName) return { partyName: params.defendantName, date: params.courtDate || "all" };
-  if (params.judgeName) return { judgeName: params.judgeName, date: params.courtDate || "all" };
-  if (params.attorney) return { attorneyLastName: params.attorney, date: params.courtDate || "all" };
+function toLiveSearchBase(params: Record<string, string | undefined>): LiveSearchParams | null {
+  if (params.caseNumber) return { caseNumber: params.caseNumber };
+  if (params.defendantName) return { partyName: params.defendantName };
+  if (params.judgeName) return { judgeName: params.judgeName };
+  if (params.attorney) return { attorneyLastName: params.attorney };
   return null;
+}
+
+/**
+ * Determine which dates to search on utcourts.gov.
+ *
+ * - If a single courtDate is specified, search only that date.
+ * - If dateFrom/dateTo are specified, search each weekday in that range.
+ * - Otherwise, search each weekday from today through 30 days out.
+ *
+ * Searching per-date avoids the result caps and "next 30 days" truncation
+ * that utcourts.gov applies to d=all searches.
+ */
+function getSearchDates(params: Record<string, string | undefined>): string[] {
+  if (params.courtDate) return [params.courtDate];
+  if (params.dateFrom && params.dateTo) return buildWeekdayRange(params.dateFrom, params.dateTo);
+  if (params.dateFrom) {
+    const end = new Date();
+    end.setDate(end.getDate() + 30);
+    return buildWeekdayRange(params.dateFrom, end.toISOString().split("T")[0]);
+  }
+  if (params.dateTo) {
+    const start = new Date();
+    return buildWeekdayRange(start.toISOString().split("T")[0], params.dateTo);
+  }
+  return buildDefaultDateRange();
 }
 
 /**
@@ -232,32 +289,11 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
   const pKey = searchParamsKey(searchParams);
 
   try {
-    // Check if this search has been run before (has cached results in DB)
-    const existingSaved = await findExistingSavedSearch(userId, pKey);
+    const liveBase = toLiveSearchBase(searchParams);
 
-    // If this is a returning search with cached data, use DB results
-    if (existingSaved) {
-      const dbResults = await searchCourtEvents(searchParams);
-      if (dbResults.length > 0) {
-        // Update last_run_at
-        await saveSearch(userId, searchParams, pKey, dbResults.length);
-        res.json({
-          results: dbResults,
-          resultsCount: dbResults.length,
-          searchParams,
-          source: "database",
-          savedSearchId: existingSaved.id,
-          processedAt: new Date().toISOString(),
-        });
-        return;
-      }
-    }
-
-    // First-time search or no cached results: always go live
-    const liveParams = toLiveSearchParams(searchParams);
-    if (!liveParams) {
-      // Fields like OTN, citation, charges can't be searched directly on utcourts
-      // Fall back to DB search
+    // Fields like OTN, citation, charges can't be searched directly on utcourts —
+    // fall back to DB-only search
+    if (!liveBase) {
       const dbResults = await searchCourtEvents(searchParams);
       const savedId = await saveSearch(userId, searchParams, pKey, dbResults.length);
       res.json({
@@ -271,23 +307,42 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       return;
     }
 
-    console.log("🌐 Running live search on utcourts.gov...");
-    const html = await liveSearchUtcourts(liveParams);
-    const parsed = parseHtmlCalendarResults(html);
+    // Search utcourts.gov for each date individually to avoid result caps
+    // and ensure complete coverage across the full date range.
+    const dates = getSearchDates(searchParams);
+    console.log(`🌐 Running live search on utcourts.gov across ${dates.length} dates...`);
 
-    // Persist live results to court_events for future searches
-    await persistLiveResults(parsed);
+    const allParsed: ParsedCourtEvent[] = [];
 
-    const allEvents = parsed.map((event) => toCourtEvent(event));
-    const filtered = applyAllFilters(allEvents, searchParams);
-    const resultSlice = filtered.slice(0, 200);
+    for (const date of dates) {
+      try {
+        const html = await liveSearchUtcourts({ ...liveBase, date });
+        const parsed = parseHtmlCalendarResults(html);
+        allParsed.push(...parsed);
+      } catch (err) {
+        // Log per-date failures but continue with other dates
+        console.warn(`  ⚠️ Live search failed for date ${date}: ${err instanceof Error ? err.message : err}`);
+      }
 
-    // If live returned results, use them
-    if (resultSlice.length > 0) {
-      const savedId = await saveSearch(userId, searchParams, pKey, resultSlice.length);
+      // Small delay between requests to be respectful of utcourts.gov
+      if (dates.length > 1) {
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+
+    console.log(`  📋 Live search returned ${allParsed.length} total events across ${dates.length} dates`);
+
+    // Persist live results to court_events so DB stays up to date
+    await persistLiveResults(allParsed);
+
+    // Now query the DB which has both old and newly-persisted results
+    const dbResults = await searchCourtEvents(searchParams);
+
+    if (dbResults.length > 0) {
+      const savedId = await saveSearch(userId, searchParams, pKey, dbResults.length);
       res.json({
-        results: resultSlice,
-        resultsCount: filtered.length,
+        results: dbResults,
+        resultsCount: dbResults.length,
         searchParams,
         source: "live",
         savedSearchId: savedId,
@@ -296,15 +351,17 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       return;
     }
 
-    // Live returned 0 — fall back to DB (may have cached results from prior scrapes)
-    console.log("📭 Live search returned 0 results, checking database...");
-    const dbResults = await searchCourtEvents(searchParams);
-    const savedId = await saveSearch(userId, searchParams, pKey, dbResults.length);
+    // DB is empty — return live-parsed results directly (they may not have
+    // persisted if they lacked a case number or date)
+    const allEvents = allParsed.map((event) => toCourtEvent(event));
+    const filtered = applyAllFilters(allEvents, searchParams);
+    const resultSlice = filtered.slice(0, 200);
+    const savedId = await saveSearch(userId, searchParams, pKey, resultSlice.length);
     res.json({
-      results: dbResults,
-      resultsCount: dbResults.length,
+      results: resultSlice,
+      resultsCount: filtered.length,
       searchParams,
-      source: dbResults.length > 0 ? "database" : "live",
+      source: "live",
       savedSearchId: savedId,
       processedAt: new Date().toISOString(),
     });
