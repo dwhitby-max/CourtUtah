@@ -1,6 +1,6 @@
 import cron from "node-cron";
 import { getPool } from "../db/pool";
-import { liveSearchUtcourts, fetchCourtList, LiveSearchParams, CourtInfo } from "./courtScraper";
+import { liveSearchUtcourts, LiveSearchParams } from "./courtScraper";
 import { parseHtmlCalendarResults, ParsedCourtEvent } from "./courtEventParser";
 import { detectChanges, processChanges } from "./changeDetector";
 import { syncCalendarEntry } from "./calendarSync";
@@ -16,20 +16,6 @@ interface WatchedCaseRow {
   search_type: string;
   search_value: string;
   label: string;
-}
-
-/** Cached court list for per-location searching */
-let cachedCourts: CourtInfo[] | null = null;
-let cachedCourtsAt = 0;
-const COURT_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
-
-async function getCourtLocations(): Promise<CourtInfo[]> {
-  if (cachedCourts && Date.now() - cachedCourtsAt < COURT_CACHE_TTL) {
-    return cachedCourts;
-  }
-  cachedCourts = await fetchCourtList();
-  cachedCourtsAt = Date.now();
-  return cachedCourts;
 }
 
 /**
@@ -89,48 +75,14 @@ export async function runWatchedCaseSearch(watchedCaseId: number): Promise<{
       return { eventsFound: 0, newEntries: 0, changes: 0 };
     }
 
-    // Name-based searches (party, attorney, judge) require searching each court
-    // location individually — utcourts.gov returns 0 for loc=all on name searches.
-    // Case number searches work without a location.
-    const isNameBased = ["defendant_name", "attorney", "judge_name"].includes(wc.search_type);
-
+    // Single request to utcourts.gov with loc=all — works for all search types
     const allParsed: ParsedCourtEvent[] = [];
-
-    if (isNameBased) {
-      const courts = await getCourtLocations();
-      console.log(`🔍 Searching ${courts.length} courts for watched case ${wc.id}: ${wc.search_type}="${wc.search_value}"`);
-
-      const BATCH_SIZE = 5;
-      for (let i = 0; i < courts.length; i += BATCH_SIZE) {
-        const batch = courts.slice(i, i + BATCH_SIZE);
-        const results = await Promise.allSettled(
-          batch.map(async (court) => {
-            const html = await liveSearchUtcourts({
-              ...liveParams,
-              date: "all",
-              locationCode: court.locationCode,
-            });
-            return parseHtmlCalendarResults(html);
-          })
-        );
-        for (const result of results) {
-          if (result.status === "fulfilled" && result.value.length > 0) {
-            allParsed.push(...result.value);
-          }
-        }
-        if (i + BATCH_SIZE < courts.length) {
-          await new Promise((r) => setTimeout(r, 500));
-        }
-      }
-    } else {
-      // Case number search — works with a single request
-      console.log(`🔍 Searching utcourts.gov for watched case ${wc.id}: ${wc.search_type}="${wc.search_value}"`);
-      try {
-        const html = await liveSearchUtcourts({ ...liveParams, date: "all" });
-        allParsed.push(...parseHtmlCalendarResults(html));
-      } catch (err) {
-        console.warn(`  ⚠️ Search failed: ${err instanceof Error ? err.message : err}`);
-      }
+    console.log(`🔍 Searching utcourts.gov for watched case ${wc.id}: ${wc.search_type}="${wc.search_value}"`);
+    try {
+      const html = await liveSearchUtcourts({ ...liveParams, date: "all", locationCode: "all" });
+      allParsed.push(...parseHtmlCalendarResults(html));
+    } catch (err) {
+      console.warn(`  ⚠️ Search failed: ${err instanceof Error ? err.message : err}`);
     }
 
     // Update last_refreshed_at even if no results

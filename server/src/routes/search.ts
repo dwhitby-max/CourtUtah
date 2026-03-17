@@ -2,75 +2,12 @@ import { Router, Request, Response } from "express";
 import { heavyLimiter } from "../middleware/rateLimiter";
 import { authenticateToken } from "../middleware/auth";
 import { searchCourtEvents } from "../services/searchService";
-import { liveSearchUtcourts, fetchCourtList, LiveSearchParams, CourtInfo } from "../services/courtScraper";
+import { liveSearchUtcourts, LiveSearchParams } from "../services/courtScraper";
 import { parseHtmlCalendarResults, ParsedCourtEvent } from "../services/courtEventParser";
 import { CourtEvent } from "../../../shared/types";
 import { getPool } from "../db/pool";
 import { config } from "../config/env";
 
-/**
- * Cached court list — fetched once and reused.
- * utcourts.gov name-based searches (party, attorney, judge) require a specific
- * court location code; loc=all silently returns 0 results.
- */
-let cachedCourts: CourtInfo[] | null = null;
-let cachedCourtsAt = 0;
-const COURT_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
-
-async function getCourtLocations(): Promise<CourtInfo[]> {
-  if (cachedCourts && Date.now() - cachedCourtsAt < COURT_CACHE_TTL) {
-    return cachedCourts;
-  }
-  cachedCourts = await fetchCourtList();
-  cachedCourtsAt = Date.now();
-  console.log(`📋 Cached ${cachedCourts.length} court locations`);
-  return cachedCourts;
-}
-
-/**
- * Search utcourts.gov across all court locations in parallel batches.
- * Name-based searches (party, attorney, judge) require loc=<specific code>;
- * loc=all returns 0 results. We search each court with d=all.
- */
-async function searchAllCourts(
-  liveBase: LiveSearchParams
-): Promise<ParsedCourtEvent[]> {
-  const courts = await getCourtLocations();
-  console.log(`🌐 Searching ${courts.length} courts on utcourts.gov...`);
-
-  const allParsed: ParsedCourtEvent[] = [];
-  const BATCH_SIZE = 5;
-  const DELAY_BETWEEN_BATCHES = 500;
-
-  for (let i = 0; i < courts.length; i += BATCH_SIZE) {
-    const batch = courts.slice(i, i + BATCH_SIZE);
-
-    const results = await Promise.allSettled(
-      batch.map(async (court) => {
-        const html = await liveSearchUtcourts({
-          ...liveBase,
-          date: "all",
-          locationCode: court.locationCode,
-        });
-        return parseHtmlCalendarResults(html);
-      })
-    );
-
-    for (const result of results) {
-      if (result.status === "fulfilled" && result.value.length > 0) {
-        allParsed.push(...result.value);
-      }
-    }
-
-    // Delay between batches to be respectful of utcourts.gov
-    if (i + BATCH_SIZE < courts.length) {
-      await new Promise((r) => setTimeout(r, DELAY_BETWEEN_BATCHES));
-    }
-  }
-
-  console.log(`  📋 Found ${allParsed.length} events across ${courts.length} courts`);
-  return allParsed;
-}
 
 const router = Router();
 
@@ -111,9 +48,8 @@ router.get("/coverage", async (_req: Request, res: Response) => {
 router.use(heavyLimiter);
 
 /**
- * Map user search params to LiveSearchParams for utcourts.gov (without date
- * or location — those are handled by the per-court search loop).
- * Returns null if no searchable field is provided.
+ * Map user search params to LiveSearchParams for utcourts.gov.
+ * Returns null if no searchable field is provided (OTN, citation, charges are DB-only).
  */
 function toLiveSearchBase(params: Record<string, string | undefined>): LiveSearchParams | null {
   if (params.caseNumber) return { caseNumber: params.caseNumber };
@@ -121,14 +57,6 @@ function toLiveSearchBase(params: Record<string, string | undefined>): LiveSearc
   if (params.judgeName) return { judgeName: params.judgeName };
   if (params.attorney) return { attorneyLastName: params.attorney };
   return null;
-}
-
-/**
- * Check if the search is a name-based search (party, attorney, judge).
- * These require per-court-location iteration on utcourts.gov.
- */
-function isNameSearch(params: Record<string, string | undefined>): boolean {
-  return !!(params.defendantName || params.attorney || params.judgeName);
 }
 
 /**
@@ -322,20 +250,12 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       return;
     }
 
-    // Name-based searches (party, attorney, judge) require searching each court
-    // location individually — utcourts.gov returns 0 results for loc=all on
-    // name searches. Case number searches work without a location.
-    let allParsed: ParsedCourtEvent[];
-
-    if (isNameSearch(searchParams)) {
-      allParsed = await searchAllCourts(liveBase);
-    } else {
-      // Case number search — works with a single request, no location needed
-      console.log("🌐 Running live case number search on utcourts.gov...");
-      const html = await liveSearchUtcourts({ ...liveBase, date: "all" });
-      allParsed = parseHtmlCalendarResults(html);
-      console.log(`  📋 Live search returned ${allParsed.length} events`);
-    }
+    // Single request to utcourts.gov with loc=all — works for all search types
+    // (party name, case number, judge, attorney)
+    console.log("🌐 Running live search on utcourts.gov...");
+    const html = await liveSearchUtcourts({ ...liveBase, date: "all", locationCode: "all" });
+    const allParsed = parseHtmlCalendarResults(html);
+    console.log(`  📋 Live search returned ${allParsed.length} events`);
 
     // Persist live results to court_events so DB stays up to date
     await persistLiveResults(allParsed);
