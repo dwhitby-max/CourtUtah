@@ -1,5 +1,4 @@
 import { getPool } from "../db/pool";
-import { notifyScheduleChange } from "./notificationService";
 
 interface ChangeRecord {
   field: string;
@@ -63,23 +62,7 @@ export async function processChanges(
       );
     }
 
-    // Find users watching this event
-    const watchResult = await client.query(
-      `SELECT DISTINCT wc.user_id, wc.label
-       FROM watched_cases wc
-       JOIN calendar_entries ce ON ce.watched_case_id = wc.id
-       WHERE ce.court_event_id = $1 AND wc.is_active = true`,
-      [courtEventId]
-    );
-
-    // Notify each affected user
-    for (const row of watchResult.rows) {
-      await notifyScheduleChange(
-        row.user_id,
-        row.label,
-        changes
-      );
-    }
+    // User notifications are handled by the scheduler after auto-syncing calendar entries
   } finally {
     client.release();
   }

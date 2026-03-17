@@ -417,23 +417,33 @@ async function upsertCourtEvent(event: ParsedCourtEvent): Promise<boolean> {
 
         await processChanges(existingRow.id, changes);
 
-        // Mark affected calendar entries as pending_update (requires user confirmation)
+        // Auto-sync affected calendar entries and notify users of changes
         const calEntries = await client.query<{ id: number; user_id: number }>(
           `SELECT id, user_id FROM calendar_entries WHERE court_event_id = $1`,
           [existingRow.id]
         );
         for (const entry of calEntries.rows) {
+          // Set to pending so syncCalendarEntry will push the updated data
           await client.query(
-            `UPDATE calendar_entries SET sync_status = 'pending_update', updated_at = NOW() WHERE id = $1`,
+            `UPDATE calendar_entries SET sync_status = 'pending', last_synced_content_hash = NULL, updated_at = NOW() WHERE id = $1`,
             [entry.id]
           );
+
+          // Auto-sync the calendar entry with updated event data
+          let synced = false;
+          try {
+            synced = await syncCalendarEntry(entry.id);
+          } catch (syncErr) {
+            console.warn(`⚠️  Auto-sync failed for entry ${entry.id}:`, syncErr instanceof Error ? syncErr.message : syncErr);
+          }
+
           const changeDescription = changes.map(c => `${c.field}: "${c.oldValue}" → "${c.newValue}"`).join(", ");
           await createNotification({
             userId: entry.user_id,
             type: "schedule_change",
-            title: "Court schedule changed — review required",
-            message: `Changes detected: ${changeDescription}. Go to Watched Cases to review and confirm the update to your calendar.`,
-            metadata: { calendarEntryId: entry.id, courtEventId: existingRow.id, changes },
+            title: "Court schedule updated",
+            message: `Changes detected and ${synced ? "your calendar has been updated automatically" : "calendar update is pending"}. Changes: ${changeDescription}`,
+            metadata: { calendarEntryId: entry.id, courtEventId: existingRow.id, changes, autoSynced: synced },
           });
         }
 

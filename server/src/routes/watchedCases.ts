@@ -151,9 +151,10 @@ router.post("/:id/sync", async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/watched-cases/pending-updates — get calendar entries awaiting user confirmation
+// GET /api/watched-cases/pending-updates — get recent changes for user's watched events
 router.get("/pending-updates", async (req: Request, res: Response) => {
   if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const currentUser = req.user;
   const pool = getPool();
   if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
 
@@ -166,11 +167,10 @@ router.get("/pending-updates", async (req: Request, res: Response) => {
               cl.field_changed, cl.old_value, cl.new_value, cl.detected_at
        FROM calendar_entries ce
        JOIN court_events ev ON ev.id = ce.court_event_id
-       LEFT JOIN change_log cl ON cl.court_event_id = ce.court_event_id
-         AND cl.detected_at = (SELECT MAX(detected_at) FROM change_log WHERE court_event_id = ce.court_event_id)
-       WHERE ce.user_id = $1 AND ce.sync_status = 'pending_update'
+       JOIN change_log cl ON cl.court_event_id = ce.court_event_id
+       WHERE ce.user_id = $1 AND cl.detected_at > NOW() - INTERVAL '7 days'
        ORDER BY cl.detected_at DESC`,
-      [req.user.userId]
+      [currentUser.userId]
     );
     res.json({ pendingUpdates: result.rows });
   } catch (err) {

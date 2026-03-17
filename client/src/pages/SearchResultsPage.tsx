@@ -260,35 +260,8 @@ export default function SearchResultsPage() {
     fetchUpdates();
   }
 
-  async function handleConfirmUpdate(courtEventId: number) {
-    const entryId = calEntryMap[courtEventId];
-    if (!entryId) return;
-
-    try {
-      const res = await apiFetch(`/watched-cases/confirm-update/${entryId}`, { method: "POST" });
-      if (res.ok) {
-        setUpdates(prev => prev.filter(u => u.courtEventId !== courtEventId));
-        setWatchSuccess("Calendar updated with latest changes.");
-      }
-    } catch (err) {
-      console.error("Failed to confirm update:", err);
-      setWatchError("Failed to confirm update.");
-    }
-  }
-
-  async function handleDismissUpdate(courtEventId: number) {
-    const entryId = calEntryMap[courtEventId];
-    if (!entryId) return;
-
-    try {
-      const res = await apiFetch(`/watched-cases/dismiss-update/${entryId}`, { method: "POST" });
-      if (res.ok) {
-        setUpdates(prev => prev.filter(u => u.courtEventId !== courtEventId));
-      }
-    } catch (err) {
-      console.error("Failed to dismiss update:", err);
-      setWatchError("Failed to dismiss update.");
-    }
+  function handleDismissUpdate(courtEventId: number) {
+    setUpdates(prev => prev.filter(u => u.courtEventId !== courtEventId));
   }
 
   function toggleExpand(id: number) {
@@ -340,7 +313,6 @@ export default function SearchResultsPage() {
 
       <UpdatesSection
         updates={updates}
-        onConfirmUpdate={handleConfirmUpdate}
         onDismissUpdate={handleDismissUpdate}
       />
 

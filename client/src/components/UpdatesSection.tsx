@@ -10,7 +10,6 @@ interface ChangeRecord {
 
 interface UpdatesSectionProps {
   updates: ChangeRecord[];
-  onConfirmUpdate: (courtEventId: number) => void;
   onDismissUpdate: (courtEventId: number) => void;
 }
 
@@ -18,7 +17,7 @@ function formatFieldName(field: string): string {
   return field.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 }
 
-export default function UpdatesSection({ updates, onConfirmUpdate, onDismissUpdate }: UpdatesSectionProps) {
+export default function UpdatesSection({ updates, onDismissUpdate }: UpdatesSectionProps) {
   if (updates.length === 0) return null;
 
   return (
@@ -35,8 +34,16 @@ export default function UpdatesSection({ updates, onConfirmUpdate, onDismissUpda
         {updates.map((update, idx) => (
           <div key={idx} className="px-6 py-3 flex items-center justify-between">
             <div>
-              <div className="font-medium text-gray-900">
-                {update.caseNumber || "Unknown Case"} - {update.defendantName || "Unknown"}
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-gray-900">
+                  {update.caseNumber || "Unknown Case"} - {update.defendantName || "Unknown"}
+                </span>
+                <span className="inline-flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                  Calendar updated
+                </span>
               </div>
               <div className="text-sm text-amber-700 mt-1">
                 <span className="font-medium">{formatFieldName(update.fieldChanged)}:</span>{" "}
@@ -45,20 +52,15 @@ export default function UpdatesSection({ updates, onConfirmUpdate, onDismissUpda
                 <span className="font-medium text-amber-900">{update.newValue || "N/A"}</span>
               </div>
             </div>
-            <div className="flex gap-2 ml-4 shrink-0">
-              <button
-                onClick={() => onConfirmUpdate(update.courtEventId)}
-                className="px-3 py-1.5 text-xs font-medium bg-amber-600 text-white rounded hover:bg-amber-700"
-              >
-                Update Calendar
-              </button>
-              <button
-                onClick={() => onDismissUpdate(update.courtEventId)}
-                className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-300 rounded hover:bg-gray-50"
-              >
-                Dismiss
-              </button>
-            </div>
+            <button
+              onClick={() => onDismissUpdate(update.courtEventId)}
+              className="ml-4 shrink-0 p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+              title="Dismiss"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
         ))}
       </div>
