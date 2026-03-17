@@ -298,14 +298,18 @@ router.post("/events/batch", authenticateToken, heavyLimiter, async (req: Reques
   const client = await pool.connect();
   try {
     // Verify user has an active calendar connection
-    let connResult = await client.query(
+    const connResult = await client.query(
       `SELECT id FROM calendar_connections
        WHERE user_id = $1 AND is_active = true
        ORDER BY created_at ASC LIMIT 1`,
       [currentUser.userId]
     );
 
-    if (connResult.rows.length === 0) {
+    let connectionId: number;
+
+    if (connResult.rows.length > 0) {
+      connectionId = connResult.rows[0].id;
+    } else {
       const inactiveConn = await client.query(
         `SELECT id, refresh_token_encrypted FROM calendar_connections
          WHERE user_id = $1
@@ -318,14 +322,12 @@ router.post("/events/batch", authenticateToken, heavyLimiter, async (req: Reques
           `UPDATE calendar_connections SET is_active = true, updated_at = NOW() WHERE id = $1`,
           [inactiveConn.rows[0].id]
         );
-        connResult = { rows: [{ id: inactiveConn.rows[0].id }] } as typeof connResult;
+        connectionId = inactiveConn.rows[0].id;
       } else {
         res.status(400).json({ error: "No calendar connected. Please log out and log back in with Google to connect your calendar." });
         return;
       }
     }
-
-    const connectionId = connResult.rows[0].id;
     const results: Array<{ courtEventId: number; calendarEntryId: number; synced: boolean; error?: string }> = [];
 
     for (const courtEventId of courtEventIds) {

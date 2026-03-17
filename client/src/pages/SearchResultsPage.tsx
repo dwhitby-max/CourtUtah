@@ -1,10 +1,12 @@
 import { useEffect, useState, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useSearch } from "@/hooks/useSearch";
-import { useAuth } from "@/store/authStore";
 import { apiFetch } from "@/api/client";
 import { addEventToCalendar, addAllEventsToCalendar, getCalendarConnections, getSyncedEvents, removeEventFromCalendar } from "@/api/calendar";
+import UpdatesSection from "@/components/UpdatesSection";
+import MonitorModal from "@/components/MonitorModal";
 import { CourtEvent } from "@shared/types";
+import { ChangeRecord } from "@/components/UpdatesSection";
 
 const providerLabels: Record<string, string> = {
   google: "Google Calendar",
@@ -13,25 +15,13 @@ const providerLabels: Record<string, string> = {
   caldav: "CalDAV",
 };
 
-interface ChangeRecord {
-  courtEventId: number;
-  caseNumber: string | null;
-  defendantName: string | null;
-  fieldChanged: string;
-  oldValue: string | null;
-  newValue: string | null;
-  detectedAt: string;
-}
-
 export default function SearchResultsPage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isLoggedIn } = useAuth();
   const { results, searched, loading, error, search } = useSearch();
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [watchSuccess, setWatchSuccess] = useState("");
   const [watchError, setWatchError] = useState("");
-  const [watchingIds, setWatchingIds] = useState<Set<number>>(new Set());
   const [calSyncingIds, setCalSyncingIds] = useState<Set<number>>(new Set());
   const [calSyncedIds, setCalSyncedIds] = useState<Set<number>>(new Set());
   const [calEntryMap, setCalEntryMap] = useState<Record<number, number>>({});
@@ -48,7 +38,6 @@ export default function SearchResultsPage() {
 
   // Updates section state
   const [updates, setUpdates] = useState<ChangeRecord[]>([]);
-  const [updatesLoading, setUpdatesLoading] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -62,27 +51,23 @@ export default function SearchResultsPage() {
   }, [location.search]);
 
   useEffect(() => {
-    if (isLoggedIn) {
-      getCalendarConnections()
-        .then(data => {
-          const active = (data.connections as Array<{ provider: string; is_active: boolean }>)
-            .find(c => c.is_active);
-          setCalendarProvider(active?.provider ?? null);
-        })
-        .catch(() => {});
-      getSyncedEvents()
-        .then(synced => {
-          setCalEntryMap(synced);
-          setCalSyncedIds(new Set(Object.keys(synced).map(Number)));
-        })
-        .catch(() => {});
-    }
-  }, [isLoggedIn]);
+    getCalendarConnections()
+      .then(data => {
+        const active = data.connections.find(c => c.is_active);
+        setCalendarProvider(active?.provider ?? null);
+      })
+      .catch((err) => console.error("Failed to fetch calendar connections:", err));
+    getSyncedEvents()
+      .then(synced => {
+        setCalEntryMap(synced);
+        setCalSyncedIds(new Set(Object.keys(synced).map(Number)));
+      })
+      .catch((err) => console.error("Failed to fetch synced events:", err));
+  }, []);
 
   // Fetch updates (changes detected for events in current results)
   const fetchUpdates = useCallback(async () => {
-    if (!isLoggedIn || results.length === 0) return;
-    setUpdatesLoading(true);
+    if (results.length === 0) return;
     try {
       const res = await apiFetch("/watched-cases/pending-updates");
       const data = await res.json();
@@ -101,12 +86,10 @@ export default function SearchResultsPage() {
           }));
         setUpdates(relevant);
       }
-    } catch {
-      // Non-critical - silently ignore
-    } finally {
-      setUpdatesLoading(false);
+    } catch (err) {
+      console.error("Failed to fetch updates:", err);
     }
-  }, [isLoggedIn, results]);
+  }, [results]);
 
   useEffect(() => {
     if (searched && !loading && results.length > 0) {
@@ -124,6 +107,10 @@ export default function SearchResultsPage() {
       setWatchError("");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to add to calendar";
+      if (msg.includes("No calendar connected")) {
+        window.location.href = "/api/auth/google";
+        return;
+      }
       setWatchError(msg);
       setWatchSuccess("");
     } finally {
@@ -203,6 +190,10 @@ export default function SearchResultsPage() {
       setShowMonitorModal(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to add events to calendar";
+      if (msg.includes("No calendar connected")) {
+        window.location.href = "/api/auth/google";
+        return;
+      }
       setWatchError(msg);
       setBatchProgress("");
     } finally {
@@ -249,8 +240,8 @@ export default function SearchResultsPage() {
           body: JSON.stringify(req),
         });
         if (res.ok) successCount++;
-      } catch {
-        // Continue with remaining watches
+      } catch (err) {
+        console.error("Failed to create watched case:", err);
       }
     }
 
@@ -279,7 +270,8 @@ export default function SearchResultsPage() {
         setUpdates(prev => prev.filter(u => u.courtEventId !== courtEventId));
         setWatchSuccess("Calendar updated with latest changes.");
       }
-    } catch {
+    } catch (err) {
+      console.error("Failed to confirm update:", err);
       setWatchError("Failed to confirm update.");
     }
   }
@@ -293,7 +285,8 @@ export default function SearchResultsPage() {
       if (res.ok) {
         setUpdates(prev => prev.filter(u => u.courtEventId !== courtEventId));
       }
-    } catch {
+    } catch (err) {
+      console.error("Failed to dismiss update:", err);
       setWatchError("Failed to dismiss update.");
     }
   }
@@ -325,10 +318,6 @@ export default function SearchResultsPage() {
     return dateStr;
   }
 
-  function formatFieldName(field: string): string {
-    return field.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-  }
-
   const allSynced = results.length > 0 && results.every(e => calSyncedIds.has(e.id));
 
   return (
@@ -349,50 +338,11 @@ export default function SearchResultsPage() {
 
       {loading && <div className="text-gray-500">Searching...</div>}
 
-      {/* Updates Section */}
-      {updates.length > 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg overflow-hidden">
-          <div className="px-6 py-4 border-b border-amber-200 flex items-center gap-2">
-            <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <h2 className="text-lg font-semibold text-amber-800">
-              Updated ({updates.length})
-            </h2>
-          </div>
-          <div className="divide-y divide-amber-100">
-            {updates.map((update, idx) => (
-              <div key={idx} className="px-6 py-3 flex items-center justify-between">
-                <div>
-                  <div className="font-medium text-gray-900">
-                    {update.caseNumber || "Unknown Case"} - {update.defendantName || "Unknown"}
-                  </div>
-                  <div className="text-sm text-amber-700 mt-1">
-                    <span className="font-medium">{formatFieldName(update.fieldChanged)}:</span>{" "}
-                    <span className="line-through text-gray-400">{update.oldValue || "N/A"}</span>
-                    {" → "}
-                    <span className="font-medium text-amber-900">{update.newValue || "N/A"}</span>
-                  </div>
-                </div>
-                <div className="flex gap-2 ml-4 shrink-0">
-                  <button
-                    onClick={() => handleConfirmUpdate(update.courtEventId)}
-                    className="px-3 py-1.5 text-xs font-medium bg-amber-600 text-white rounded hover:bg-amber-700"
-                  >
-                    Update Calendar
-                  </button>
-                  <button
-                    onClick={() => handleDismissUpdate(update.courtEventId)}
-                    className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-300 rounded hover:bg-gray-50"
-                  >
-                    Dismiss
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <UpdatesSection
+        updates={updates}
+        onConfirmUpdate={handleConfirmUpdate}
+        onDismissUpdate={handleDismissUpdate}
+      />
 
       {searched && !loading && (
         <div className="bg-white shadow rounded-lg overflow-hidden">
@@ -400,7 +350,7 @@ export default function SearchResultsPage() {
             <h2 className="text-lg font-semibold text-gray-900">
               {results.length} Result{results.length !== 1 ? "s" : ""} Found
             </h2>
-            {isLoggedIn && results.length > 0 && calendarProvider && (
+            {results.length > 0 && calendarProvider && (
               <button
                 onClick={handleAddAllToCalendar}
                 disabled={batchAdding || allSynced}
@@ -477,7 +427,7 @@ export default function SearchResultsPage() {
                         <td className="px-4 py-3 text-sm">{event.hearingType || "N/A"}</td>
                         <td className="px-4 py-3 text-sm">
                           <div className="flex items-center gap-2">
-                            {isLoggedIn && calendarProvider && (
+                            {calendarProvider ? (
                               <>
                                 {calSyncedIds.has(event.id) ? (
                                   <button
@@ -517,8 +467,7 @@ export default function SearchResultsPage() {
                                   </button>
                                 )}
                               </>
-                            )}
-                            {isLoggedIn && !calendarProvider && (
+                            ) : (
                               <button
                                 onClick={() => navigate("/calendar-settings")}
                                 className="p-1.5 rounded-md text-gray-300 hover:text-amber-600 hover:bg-amber-50 transition-colors"
@@ -527,14 +476,6 @@ export default function SearchResultsPage() {
                                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                                 </svg>
-                              </button>
-                            )}
-                            {!isLoggedIn && (
-                              <button
-                                onClick={() => navigate("/login")}
-                                className="text-amber-700 hover:text-slate-800 text-xs font-medium"
-                              >
-                                Log in to track
                               </button>
                             )}
                             {hasDetails(event) && (
@@ -626,41 +567,12 @@ export default function SearchResultsPage() {
         </div>
       )}
 
-      {/* Monitor Hearings Modal */}
       {showMonitorModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="fixed inset-0 bg-black/50" onClick={() => setShowMonitorModal(false)} />
-          <div className="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
-                <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                </svg>
-              </div>
-              <h3 className="text-lg font-semibold text-gray-900">Monitor These Hearings?</h3>
-            </div>
-            <p className="text-gray-600 text-sm mb-6">
-              Would you like to automatically monitor these hearings for schedule changes?
-              If anything changes (date, time, courtroom, judge, etc.), we'll update your calendar
-              and notify you by email.
-            </p>
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setShowMonitorModal(false)}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-              >
-                No Thanks
-              </button>
-              <button
-                onClick={handleMonitorConfirm}
-                disabled={monitoringInProgress}
-                className="px-4 py-2 text-sm font-medium text-white bg-amber-600 rounded-md hover:bg-amber-700 disabled:opacity-50"
-              >
-                {monitoringInProgress ? "Setting Up..." : "Yes, Monitor"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <MonitorModal
+          monitoringInProgress={monitoringInProgress}
+          onConfirm={handleMonitorConfirm}
+          onCancel={() => setShowMonitorModal(false)}
+        />
       )}
     </div>
   );

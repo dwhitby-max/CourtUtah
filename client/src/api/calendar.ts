@@ -1,6 +1,18 @@
 import { apiFetch } from "./client";
 
-export async function getCalendarConnections(): Promise<{ connections: unknown[] }> {
+interface CalendarConnectionRow {
+  id: number;
+  user_id: number;
+  provider: string;
+  calendar_id: string | null;
+  caldav_url: string | null;
+  is_active: boolean;
+  token_expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function getCalendarConnections(): Promise<{ connections: CalendarConnectionRow[] }> {
   const res = await apiFetch("/calendar/connections");
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "Failed to fetch connections");
