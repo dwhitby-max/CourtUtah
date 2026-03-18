@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import { authenticateToken } from "../middleware/auth";
 import { getPool } from "../db/pool";
 import { runWatchedCaseSearch } from "../services/schedulerService";
-import { syncCalendarEntry } from "../services/calendarSync";
+import { syncCalendarEntry, deleteCalendarEntry } from "../services/calendarSync";
 
 const router = Router();
 
@@ -87,8 +87,9 @@ router.post("/", async (req: Request, res: Response) => {
   });
 });
 
-// DELETE /api/watched-cases/:id
-router.delete("/:id", async (req: Request, res: Response) => {
+// DELETE /api/watched-cases/calendar-entries/all — remove ALL synced calendar entries for the user
+// NOTE: Must be registered BEFORE /:id to avoid Express matching "calendar-entries" as an :id param
+router.delete("/calendar-entries/all", async (req: Request, res: Response) => {
   if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
   const currentUser = req.user;
   const pool = getPool();
@@ -96,15 +97,96 @@ router.delete("/:id", async (req: Request, res: Response) => {
 
   const client = await pool.connect();
   try {
-    const result = await client.query(
-      `DELETE FROM watched_cases WHERE id = $1 AND user_id = $2 RETURNING id`,
-      [req.params.id, currentUser.userId]
+    const entries = await client.query(
+      `SELECT id FROM calendar_entries WHERE user_id = $1`,
+      [currentUser.userId]
     );
 
-    if (result.rows.length === 0) {
+    let removed = 0;
+    let errors = 0;
+    for (const row of entries.rows) {
+      const success = await deleteCalendarEntry(row.id, currentUser.userId);
+      if (success) removed++;
+      else errors++;
+    }
+
+    res.json({ message: `Removed ${removed} calendar event${removed !== 1 ? "s" : ""}`, removed, errors });
+  } catch (err) {
+    console.error("❌ DELETE /api/watched-cases/calendar-entries/all failed:", err);
+    res.status(500).json({ error: "Failed to remove calendar entries" });
+  } finally {
+    client.release();
+  }
+});
+
+// GET /api/watched-cases/:id/calendar-entries — list synced calendar entries for a watched case
+router.get("/:id/calendar-entries", async (req: Request, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const currentUser = req.user;
+  const pool = getPool();
+  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
+
+  const watchedCaseId = parseInt(req.params.id, 10);
+  if (isNaN(watchedCaseId)) { res.status(400).json({ error: "Invalid ID" }); return; }
+
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      `SELECT ce.id AS calendar_entry_id, ce.sync_status, ce.created_at AS synced_at,
+              ev.id AS court_event_id, ev.case_number, ev.defendant_name,
+              ev.event_date, ev.event_time, ev.court_name, ev.court_room,
+              ev.hearing_type, ev.judge_name, ev.is_virtual
+       FROM calendar_entries ce
+       JOIN court_events ev ON ev.id = ce.court_event_id
+       WHERE ce.watched_case_id = $1 AND ce.user_id = $2
+       ORDER BY ev.event_date ASC, ev.event_time ASC`,
+      [watchedCaseId, currentUser.userId]
+    );
+
+    res.json({ calendarEntries: result.rows });
+  } catch (err) {
+    console.error("❌ GET /api/watched-cases/:id/calendar-entries failed:", err);
+    res.status(500).json({ error: "Failed to fetch calendar entries" });
+  } finally {
+    client.release();
+  }
+});
+
+// DELETE /api/watched-cases/:id
+router.delete("/:id", async (req: Request, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const currentUser = req.user;
+  const pool = getPool();
+  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
+
+  const watchedCaseId = parseInt(req.params.id, 10);
+  if (isNaN(watchedCaseId)) { res.status(400).json({ error: "Invalid ID" }); return; }
+
+  const client = await pool.connect();
+  try {
+    // Verify ownership
+    const check = await client.query(
+      `SELECT id FROM watched_cases WHERE id = $1 AND user_id = $2`,
+      [watchedCaseId, currentUser.userId]
+    );
+    if (check.rows.length === 0) {
       res.status(404).json({ error: "Watched case not found" });
       return;
     }
+
+    // Clean up synced calendar entries from providers before deleting the watched case
+    const entries = await client.query(
+      `SELECT id FROM calendar_entries WHERE watched_case_id = $1 AND user_id = $2`,
+      [watchedCaseId, currentUser.userId]
+    );
+    for (const row of entries.rows) {
+      await deleteCalendarEntry(row.id, currentUser.userId);
+    }
+
+    await client.query(
+      `DELETE FROM watched_cases WHERE id = $1 AND user_id = $2`,
+      [watchedCaseId, currentUser.userId]
+    );
 
     res.json({ message: "Watched case deleted" });
   } catch (err) {
@@ -241,6 +323,51 @@ router.post("/dismiss-update/:entryId", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("❌ POST /api/watched-cases/dismiss-update failed:", err);
     res.status(500).json({ error: "Failed to dismiss update" });
+  } finally {
+    client.release();
+  }
+});
+
+// DELETE /api/watched-cases/:id/calendar-entries — remove all synced calendar entries for a watched case
+router.delete("/:id/calendar-entries", async (req: Request, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const currentUser = req.user;
+  const pool = getPool();
+  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
+
+  const watchedCaseId = parseInt(req.params.id, 10);
+  if (isNaN(watchedCaseId)) { res.status(400).json({ error: "Invalid watched case ID" }); return; }
+
+  const client = await pool.connect();
+  try {
+    // Verify ownership
+    const wcResult = await client.query(
+      `SELECT id FROM watched_cases WHERE id = $1 AND user_id = $2`,
+      [watchedCaseId, currentUser.userId]
+    );
+    if (wcResult.rows.length === 0) {
+      res.status(404).json({ error: "Watched case not found" });
+      return;
+    }
+
+    // Find all calendar entries for this watched case
+    const entries = await client.query(
+      `SELECT id FROM calendar_entries WHERE watched_case_id = $1 AND user_id = $2`,
+      [watchedCaseId, currentUser.userId]
+    );
+
+    let removed = 0;
+    let errors = 0;
+    for (const row of entries.rows) {
+      const success = await deleteCalendarEntry(row.id, currentUser.userId);
+      if (success) removed++;
+      else errors++;
+    }
+
+    res.json({ message: `Removed ${removed} calendar event${removed !== 1 ? "s" : ""}`, removed, errors });
+  } catch (err) {
+    console.error("❌ DELETE /api/watched-cases/:id/calendar-entries failed:", err);
+    res.status(500).json({ error: "Failed to remove calendar entries" });
   } finally {
     client.release();
   }

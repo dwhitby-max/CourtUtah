@@ -87,6 +87,43 @@ export async function removeEventFromCalendar(calendarEntryId: number): Promise<
   return data;
 }
 
+export interface WatchedCaseCalendarEntry {
+  calendar_entry_id: number;
+  sync_status: string;
+  synced_at: string;
+  court_event_id: number;
+  case_number: string | null;
+  defendant_name: string | null;
+  event_date: string;
+  event_time: string | null;
+  court_name: string;
+  court_room: string | null;
+  hearing_type: string | null;
+  judge_name: string | null;
+  is_virtual: boolean;
+}
+
+export async function getCalendarEntriesForCase(watchedCaseId: number): Promise<{ calendarEntries: WatchedCaseCalendarEntry[] }> {
+  const res = await apiFetch(`/watched-cases/${watchedCaseId}/calendar-entries`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Failed to fetch calendar entries");
+  return data;
+}
+
+export async function removeCalendarEntriesForCase(watchedCaseId: number): Promise<{ message: string; removed: number; errors: number }> {
+  const res = await apiFetch(`/watched-cases/${watchedCaseId}/calendar-entries`, { method: "DELETE" });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Failed to remove calendar entries");
+  return data;
+}
+
+export async function removeAllCalendarEntries(): Promise<{ message: string; removed: number; errors: number }> {
+  const res = await apiFetch("/watched-cases/calendar-entries/all", { method: "DELETE" });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Failed to remove calendar entries");
+  return data;
+}
+
 export async function removeConnection(id: number): Promise<{ message: string; eventsRemoved: number; eventErrors: number }> {
   const res = await apiFetch(`/calendar/connections/${id}`, { method: "DELETE" });
   const data = await res.json();
