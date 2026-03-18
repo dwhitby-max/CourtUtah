@@ -18,17 +18,24 @@ interface Connection {
   caldav_url: string | null;
   is_active: boolean;
   token_expires_at: string | null;
+  has_refresh_token: boolean;
   created_at: string;
 }
 
 type ConnectionStatus = "active" | "expiring" | "expired" | "unknown";
 
 function getConnectionStatus(conn: Connection): ConnectionStatus {
+  if (!conn.is_active) return "expired";
+
   // CalDAV/Apple connections don't have token expiry — they're either active or not
   if (conn.provider === "caldav" || conn.provider === "apple") {
-    return conn.is_active ? "active" : "expired";
+    return "active";
   }
 
+  // If a refresh token exists, the access token auto-renews — connection is healthy
+  if (conn.has_refresh_token) return "active";
+
+  // No refresh token — status depends on access token expiry
   if (!conn.token_expires_at) return "unknown";
 
   const expiresAt = new Date(conn.token_expires_at).getTime();

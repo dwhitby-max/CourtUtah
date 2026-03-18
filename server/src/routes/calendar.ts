@@ -151,7 +151,8 @@ router.get("/connections", authenticateToken, heavyLimiter, async (req: Request,
   try {
     const result = await client.query(
       `SELECT id, user_id, provider, calendar_id, caldav_url, is_active,
-              token_expires_at, created_at, updated_at
+              token_expires_at, created_at, updated_at,
+              (refresh_token_encrypted IS NOT NULL) AS has_refresh_token
        FROM calendar_connections
        WHERE user_id = $1
        ORDER BY created_at DESC`,

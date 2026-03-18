@@ -220,8 +220,18 @@ router.get("/google/callback", async (req: Request, res: Response) => {
         );
       }
 
+      // Verify refresh token exists — if Google didn't send one AND the DB doesn't have one,
+      // calendar operations will fail after the access token expires (~1 hour)
+      const connCheck = await client.query(
+        "SELECT refresh_token_encrypted FROM calendar_connections WHERE user_id = $1 AND provider = 'google'",
+        [userId]
+      );
+      if (connCheck.rows.length > 0 && !connCheck.rows[0].refresh_token_encrypted) {
+        console.warn(`⚠️ Google OAuth for userId=${userId}: NO refresh token stored. Calendar will stop working after access token expires (~1 hour). User should revoke app access at https://myaccount.google.com/permissions and re-authorize.`);
+      }
+
       await client.query("COMMIT");
-      console.log(`✅ Google OAuth complete: userId=${userId}, email=${userinfo.email}, google_id=${userinfo.id}, calendar_connection=created`);
+      console.log(`✅ Google OAuth complete: userId=${userId}, email=${userinfo.email}, google_id=${userinfo.id}, refresh_token_received=${!!tokens.refresh_token}`);
 
       // Generate JWT and redirect to client callback
       const jwt = generateToken({ userId, email: userinfo.email.toLowerCase() });
