@@ -13,7 +13,10 @@
       "Bash(git add:*)",
       "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsImlhdCI6MTc3Mzc5ODM4MSwiZXhwIjoxNzczODAxOTgxfQ.fIMrEc0NwKMdql5FR87cGiADlDf7jOprQqp6F-besW4\")",
       "Bash(__NEW_LINE_dcf108580d7c3013__ echo:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(node:*)",
+      "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsImVtYWlsIjoidGVzdEB0ZXN0LmNvbSIsImlhdCI6MTc3Mzg3MDkwMCwiZXhwIjoxNzczODc0NTAwfQ.NSjKFZESTBTCCU7c63YLQujxiCXZl3iP3i-q2P5QYmc\")",
+      "Bash(python3 -m json.tool)"
     ]
   }
 }
