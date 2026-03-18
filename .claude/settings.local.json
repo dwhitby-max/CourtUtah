@@ -10,7 +10,10 @@
       "Bash(npm:*)",
       "WebFetch(domain:utah-courts.replit.app)",
       "WebFetch(domain:legacy.utcourts.gov)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsImlhdCI6MTc3Mzc5ODM4MSwiZXhwIjoxNzczODAxOTgxfQ.fIMrEc0NwKMdql5FR87cGiADlDf7jOprQqp6F-besW4\")",
+      "Bash(__NEW_LINE_dcf108580d7c3013__ echo:*)",
+      "Bash(git push:*)"
     ]
   }
 }
