@@ -165,34 +165,69 @@ async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<void> {
     for (const event of parsed) {
       // Upsert by case_number + event_date
       if (!event.caseNumber || !event.eventDate) continue;
-      const existing = await client.query(
-        `SELECT id FROM court_events WHERE case_number = $1 AND event_date = $2 LIMIT 1`,
-        [event.caseNumber, event.eventDate]
-      );
-      if (existing.rows.length > 0) continue; // already in DB
+      try {
+        const existing = await client.query(
+          `SELECT id, defense_attorney, prosecuting_attorney FROM court_events
+           WHERE case_number = $1 AND event_date = $2 LIMIT 1`,
+          [event.caseNumber, event.eventDate]
+        );
 
-      await client.query(
-        `INSERT INTO court_events (
-          court_type, court_name, court_room, event_date, event_time,
-          hearing_type, case_number, case_type, defendant_name,
-          defendant_otn, defendant_dob, prosecuting_attorney,
-          defense_attorney, citation_number, sheriff_number,
-          lea_number, content_hash,
-          judge_name, hearing_location, is_virtual
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
-        [
-          "", event.hearingLocation || "", event.courtRoom, event.eventDate,
-          event.eventTime, event.hearingType, event.caseNumber,
-          event.caseType, event.defendantName, event.defendantOtn,
-          event.defendantDob, event.prosecutingAttorney,
-          event.defenseAttorney, event.citationNumber,
-          event.sheriffNumber, event.leaNumber, event.contentHash,
-          event.judgeName, event.hearingLocation, event.isVirtual,
-        ]
-      );
+        if (existing.rows.length > 0) {
+          // Update existing row with any new data from the live search
+          // (e.g. attorney names that the daily scraper doesn't capture)
+          const row = existing.rows[0];
+          const updates: string[] = [];
+          const values: (string | null)[] = [];
+          let paramIdx = 1;
+
+          if (event.defenseAttorney && !row.defense_attorney) {
+            updates.push(`defense_attorney = $${paramIdx++}`);
+            values.push(event.defenseAttorney);
+          }
+          if (event.prosecutingAttorney && !row.prosecuting_attorney) {
+            updates.push(`prosecuting_attorney = $${paramIdx++}`);
+            values.push(event.prosecutingAttorney);
+          }
+          if (event.defendantName && updates.length > 0) {
+            // Also fill in defendant if we're updating
+            updates.push(`defendant_name = COALESCE(defendant_name, $${paramIdx++})`);
+            values.push(event.defendantName);
+          }
+
+          if (updates.length > 0) {
+            updates.push(`updated_at = NOW()`);
+            await client.query(
+              `UPDATE court_events SET ${updates.join(", ")} WHERE id = $${paramIdx}`,
+              [...values, row.id]
+            );
+          }
+          continue;
+        }
+
+        await client.query(
+          `INSERT INTO court_events (
+            court_type, court_name, court_room, event_date, event_time,
+            hearing_type, case_number, case_type, defendant_name,
+            defendant_otn, defendant_dob, prosecuting_attorney,
+            defense_attorney, citation_number, sheriff_number,
+            lea_number, content_hash,
+            judge_name, hearing_location, is_virtual
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+          [
+            "", event.hearingLocation || "", event.courtRoom, event.eventDate,
+            event.eventTime, event.hearingType, event.caseNumber,
+            event.caseType, event.defendantName, event.defendantOtn,
+            event.defendantDob, event.prosecutingAttorney,
+            event.defenseAttorney, event.citationNumber,
+            event.sheriffNumber, event.leaNumber, event.contentHash,
+            event.judgeName, event.hearingLocation, event.isVirtual,
+          ]
+        );
+      } catch (err) {
+        // Log but continue — don't let one event failure stop the rest
+        console.warn(`⚠️ Failed to persist event ${event.caseNumber}:`, err instanceof Error ? err.message : err);
+      }
     }
-  } catch (err) {
-    console.error("⚠️ Failed to persist some live results:", err instanceof Error ? err.message : err);
   } finally {
     client.release();
   }
@@ -263,28 +298,26 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     // Now query the DB which has both old and newly-persisted results
     const dbResults = await searchCourtEvents(searchParams);
 
-    if (dbResults.length > 0) {
-      const savedId = await saveSearch(userId, searchParams, pKey, dbResults.length);
-      res.json({
-        results: dbResults,
-        resultsCount: dbResults.length,
-        searchParams,
-        source: "live",
-        savedSearchId: savedId,
-        processedAt: new Date().toISOString(),
-      });
-      return;
-    }
+    // Convert live-parsed results to CourtEvent format and apply filters
+    const liveEvents = allParsed.map((event) => toCourtEvent(event));
+    const filteredLive = applyAllFilters(liveEvents, searchParams);
 
-    // DB is empty — return live-parsed results directly (they may not have
-    // persisted if they lacked a case number or date)
-    const allEvents = allParsed.map((event) => toCourtEvent(event));
-    const filtered = applyAllFilters(allEvents, searchParams);
-    const resultSlice = filtered.slice(0, 200);
-    const savedId = await saveSearch(userId, searchParams, pKey, resultSlice.length);
+    // Merge: use DB results as the base (they have richer data from reports.php),
+    // then add any live results whose case_number+date aren't already in the DB set.
+    // This ensures we return all results the court website shows, even when the DB
+    // attorney field doesn't match (e.g. case has multiple attorneys).
+    const dbKeys = new Set(
+      dbResults.map((r) => `${r.caseNumber}|${r.eventDate}`)
+    );
+    const extraLive = filteredLive.filter(
+      (e) => !dbKeys.has(`${e.caseNumber}|${e.eventDate}`)
+    );
+    const merged = [...dbResults, ...extraLive].slice(0, 200);
+
+    const savedId = await saveSearch(userId, searchParams, pKey, merged.length);
     res.json({
-      results: resultSlice,
-      resultsCount: filtered.length,
+      results: merged,
+      resultsCount: merged.length,
       searchParams,
       source: "live",
       savedSearchId: savedId,
