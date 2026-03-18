@@ -40,12 +40,10 @@ export default function CourtPicker({ selected, onChange }: CourtPickerProps) {
   }, []);
 
   const filterLower = filter.toLowerCase();
-  const filtered = filter
+  const filtered = (filter
     ? courts.filter((c) => c.name.toLowerCase().includes(filterLower))
-    : courts;
-
-  const districtCourts = filtered.filter((c) => c.type === "DistrictCourt");
-  const justiceCourts = filtered.filter((c) => c.type === "JusticeCourt");
+    : courts
+  ).sort((a, b) => a.name.localeCompare(b.name));
 
   function toggle(name: string) {
     if (selected.includes(name)) {
@@ -138,49 +136,20 @@ export default function CourtPicker({ selected, onChange }: CourtPickerProps) {
               <p className="p-3 text-sm text-gray-500">No courts match &quot;{filter}&quot;</p>
             )}
 
-            {districtCourts.length > 0 && (
-              <div>
-                <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 uppercase bg-gray-50 sticky top-0">
-                  District Courts
-                </div>
-                {districtCourts.map((court) => (
-                  <label
-                    key={court.locationCode}
-                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-amber-50 cursor-pointer text-sm"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selected.includes(court.name)}
-                      onChange={() => toggle(court.name)}
-                      className="rounded border-gray-300 text-amber-600 focus:ring-amber-500"
-                    />
-                    {court.name}
-                  </label>
-                ))}
-              </div>
-            )}
-
-            {justiceCourts.length > 0 && (
-              <div>
-                <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 uppercase bg-gray-50 sticky top-0">
-                  Justice Courts
-                </div>
-                {justiceCourts.map((court) => (
-                  <label
-                    key={court.locationCode}
-                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-amber-50 cursor-pointer text-sm"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selected.includes(court.name)}
-                      onChange={() => toggle(court.name)}
-                      className="rounded border-gray-300 text-amber-600 focus:ring-amber-500"
-                    />
-                    {court.name}
-                  </label>
-                ))}
-              </div>
-            )}
+            {filtered.map((court) => (
+              <label
+                key={court.locationCode}
+                className="flex items-center gap-2 px-3 py-1.5 hover:bg-amber-50 cursor-pointer text-sm"
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.includes(court.name)}
+                  onChange={() => toggle(court.name)}
+                  className="rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                />
+                {court.name}
+              </label>
+            ))}
           </div>
         </div>
       )}
