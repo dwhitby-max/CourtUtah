@@ -42,7 +42,7 @@ router.post("/", async (req: Request, res: Response) => {
   const pool = getPool();
   if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
 
-  const { searchType, searchValue, label } = req.body;
+  const { searchType, searchValue, label, monitorChanges, autoAddNew } = req.body;
 
   if (!searchType || !searchValue || !label) {
     res.status(400).json({ error: "searchType, searchValue, and label are required" });
@@ -59,10 +59,10 @@ router.post("/", async (req: Request, res: Response) => {
   let watchedCase: Record<string, unknown>;
   try {
     const result = await client.query(
-      `INSERT INTO watched_cases (user_id, search_type, search_value, label)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO watched_cases (user_id, search_type, search_value, label, monitor_changes, auto_add_new)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
-      [currentUser.userId, searchType, searchValue, label]
+      [currentUser.userId, searchType, searchValue, label, !!monitorChanges, !!autoAddNew]
     );
     watchedCase = result.rows[0];
   } catch (err) {

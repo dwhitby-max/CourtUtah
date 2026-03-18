@@ -9,6 +9,8 @@ interface WatchedCaseRow {
   search_type: string;
   search_value: string;
   label: string;
+  monitor_changes: boolean;
+  auto_add_new: boolean;
 }
 
 interface CalendarConnectionRow {
@@ -61,7 +63,7 @@ export async function matchWatchedCases(): Promise<MatchResult> {
   try {
     // Get all active watched cases
     const watchedResult = await client.query<WatchedCaseRow>(
-      `SELECT id, user_id, search_type, search_value, label
+      `SELECT id, user_id, search_type, search_value, label, monitor_changes, auto_add_new
        FROM watched_cases
        WHERE is_active = true`
     );
@@ -72,6 +74,8 @@ export async function matchWatchedCases(): Promise<MatchResult> {
     if (watchedCases.length === 0) return result;
 
     for (const wc of watchedCases) {
+      // Only auto-create calendar entries for cases that opted into auto_add_new
+      if (!wc.auto_add_new) continue;
       try {
         await matchSingleWatchedCase(client, wc, result);
       } catch (err) {

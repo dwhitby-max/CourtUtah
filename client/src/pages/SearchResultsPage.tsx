@@ -201,12 +201,12 @@ export default function SearchResultsPage() {
     }
   }
 
-  async function handleMonitorConfirm() {
+  async function handleMonitorConfirm(options: { monitorChanges: boolean; autoAddNew: boolean }) {
     setMonitoringInProgress(true);
 
     // Create watched cases for unique defendants and case numbers in results
     const seen = new Set<string>();
-    const watchRequests: Array<{ searchType: string; searchValue: string; label: string }> = [];
+    const watchRequests: Array<{ searchType: string; searchValue: string; label: string; monitorChanges: boolean; autoAddNew: boolean }> = [];
 
     for (const event of results) {
       if (event.caseNumber) {
@@ -217,6 +217,8 @@ export default function SearchResultsPage() {
             searchType: "case_number",
             searchValue: event.caseNumber,
             label: `${event.caseNumber} - ${event.defendantName || "Unknown"} (${event.courtName})`,
+            monitorChanges: options.monitorChanges,
+            autoAddNew: options.autoAddNew,
           });
         }
       } else if (event.defendantName) {
@@ -227,6 +229,8 @@ export default function SearchResultsPage() {
             searchType: "defendant_name",
             searchValue: event.defendantName,
             label: `${event.defendantName} (${event.courtName})`,
+            monitorChanges: options.monitorChanges,
+            autoAddNew: options.autoAddNew,
           });
         }
       }
@@ -249,7 +253,10 @@ export default function SearchResultsPage() {
     setShowMonitorModal(false);
 
     if (successCount > 0) {
-      setWatchSuccess(`Monitoring ${successCount} case${successCount !== 1 ? "s" : ""} for updates. You'll be notified by email of any changes.`);
+      const features: string[] = [];
+      if (options.monitorChanges) features.push("monitoring for changes");
+      if (options.autoAddNew) features.push("auto-adding new hearings");
+      setWatchSuccess(`Set up ${successCount} case${successCount !== 1 ? "s" : ""} with ${features.join(" and ")}. You'll be notified by email of any updates.`);
     } else if (watchRequests.length === 0) {
       setWatchSuccess("No cases to monitor from these results.");
     } else {

@@ -57,7 +57,7 @@ describe("watchedCaseMatcher", () => {
   it("skips watched case with no active calendar connections", async () => {
     // Active watched cases
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 1, user_id: 10, search_type: "defendant_name", search_value: "SMITH", label: "Smith Case" }],
+      rows: [{ id: 1, user_id: 10, search_type: "defendant_name", search_value: "SMITH", label: "Smith Case", monitor_changes: true, auto_add_new: true }],
     });
     // No calendar connections for user 10
     mockQuery.mockResolvedValueOnce({ rows: [] });
@@ -70,7 +70,7 @@ describe("watchedCaseMatcher", () => {
 
   it("skips when no matching court events found", async () => {
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 1, user_id: 10, search_type: "case_number", search_value: "241000001", label: "My Case" }],
+      rows: [{ id: 1, user_id: 10, search_type: "case_number", search_value: "241000001", label: "My Case", monitor_changes: true, auto_add_new: true }],
     });
     // Calendar connection
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 5 }] });
@@ -85,7 +85,7 @@ describe("watchedCaseMatcher", () => {
   it("creates calendar entry and syncs for new match", async () => {
     // Active watched case
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 1, user_id: 10, search_type: "defendant_name", search_value: "JONES", label: "Jones Watch" }],
+      rows: [{ id: 1, user_id: 10, search_type: "defendant_name", search_value: "JONES", label: "Jones Watch", monitor_changes: true, auto_add_new: true }],
     });
     // Calendar connection
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 5 }] });
@@ -119,7 +119,7 @@ describe("watchedCaseMatcher", () => {
 
   it("skips already-linked events (no duplicate entries)", async () => {
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 1, user_id: 10, search_type: "case_number", search_value: "240900555", label: "Existing" }],
+      rows: [{ id: 1, user_id: 10, search_type: "case_number", search_value: "240900555", label: "Existing", monitor_changes: true, auto_add_new: true }],
     });
     // Calendar connection
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 5 }] });
@@ -137,8 +137,8 @@ describe("watchedCaseMatcher", () => {
     // Two watched cases: one name, one date
     mockQuery.mockResolvedValueOnce({
       rows: [
-        { id: 1, user_id: 10, search_type: "defendant_name", search_value: "DOE", label: "Doe" },
-        { id: 2, user_id: 10, search_type: "court_date", search_value: "2026-04-01", label: "April 1" },
+        { id: 1, user_id: 10, search_type: "defendant_name", search_value: "DOE", label: "Doe", monitor_changes: true, auto_add_new: true },
+        { id: 2, user_id: 10, search_type: "court_date", search_value: "2026-04-01", label: "April 1", monitor_changes: true, auto_add_new: true },
       ],
     });
 
@@ -165,7 +165,7 @@ describe("watchedCaseMatcher", () => {
 
   it("handles sync failure gracefully (non-fatal)", async () => {
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 1, user_id: 10, search_type: "defendant_name", search_value: "FAIL", label: "Fail Test" }],
+      rows: [{ id: 1, user_id: 10, search_type: "defendant_name", search_value: "FAIL", label: "Fail Test", monitor_changes: true, auto_add_new: true }],
     });
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 5 }] });
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 200 }] });
@@ -184,7 +184,7 @@ describe("watchedCaseMatcher", () => {
 
   it("handles multiple calendar connections per user", async () => {
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 1, user_id: 10, search_type: "defendant_name", search_value: "MULTI", label: "Multi Cal" }],
+      rows: [{ id: 1, user_id: 10, search_type: "defendant_name", search_value: "MULTI", label: "Multi Cal", monitor_changes: true, auto_add_new: true }],
     });
     // Two calendar connections
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 5 }, { id: 6 }] });

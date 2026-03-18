@@ -16,6 +16,8 @@ interface WatchedCaseRow {
   search_type: string;
   search_value: string;
   label: string;
+  monitor_changes: boolean;
+  auto_add_new: boolean;
 }
 
 /**
@@ -62,7 +64,7 @@ export async function runWatchedCaseSearch(watchedCaseId: number): Promise<{
   try {
     // Load the watched case
     const wcResult = await client.query<WatchedCaseRow>(
-      `SELECT id, user_id, search_type, search_value, label
+      `SELECT id, user_id, search_type, search_value, label, monitor_changes, auto_add_new
        FROM watched_cases WHERE id = $1`,
       [watchedCaseId]
     );
@@ -106,8 +108,10 @@ export async function runWatchedCaseSearch(watchedCaseId: number): Promise<{
       if (changed) changes++;
     }
 
-    // Now match against the DB to create calendar entries
-    const newEntries = await createCalendarEntriesForWatchedCase(wc, client);
+    // Only auto-create calendar entries for new events if user opted in
+    const newEntries = wc.auto_add_new
+      ? await createCalendarEntriesForWatchedCase(wc, client)
+      : 0;
 
     return { eventsFound: allParsed.length, newEntries, changes };
   } finally {
@@ -304,7 +308,7 @@ export async function refreshAllWatchedCases(): Promise<{
     let watchedCases: WatchedCaseRow[];
     try {
       const result = await client.query<WatchedCaseRow>(
-        `SELECT id, user_id, search_type, search_value, label
+        `SELECT id, user_id, search_type, search_value, label, monitor_changes, auto_add_new
          FROM watched_cases WHERE is_active = true`
       );
       watchedCases = result.rows;
@@ -424,11 +428,20 @@ async function upsertCourtEvent(event: ParsedCourtEvent): Promise<boolean> {
         await processChanges(existingRow.id, changes);
 
         // Auto-sync affected calendar entries and notify users of changes
-        const calEntries = await client.query<{ id: number; user_id: number }>(
-          `SELECT id, user_id FROM calendar_entries WHERE court_event_id = $1`,
+        // Only auto-sync entries linked to watched cases with monitor_changes enabled,
+        // or entries not linked to any watched case (manually added by user)
+        const calEntries = await client.query<{ id: number; user_id: number; watched_case_id: number | null; monitor_changes: boolean | null }>(
+          `SELECT ce.id, ce.user_id, ce.watched_case_id, wc.monitor_changes
+           FROM calendar_entries ce
+           LEFT JOIN watched_cases wc ON wc.id = ce.watched_case_id
+           WHERE ce.court_event_id = $1`,
           [existingRow.id]
         );
         for (const entry of calEntries.rows) {
+          // Skip auto-sync if this entry is from a watched case that didn't opt into change monitoring
+          const shouldAutoSync = entry.watched_case_id === null || entry.monitor_changes === true;
+          if (!shouldAutoSync) continue;
+
           // Set to pending so syncCalendarEntry will push the updated data
           await client.query(
             `UPDATE calendar_entries SET sync_status = 'pending', last_synced_content_hash = NULL, updated_at = NOW() WHERE id = $1`,
