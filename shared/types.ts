@@ -95,6 +95,8 @@ export interface SearchRequest {
   defendantName?: string;
   caseNumber?: string;
   courtName?: string;
+  /** Comma-separated list of specific court names to filter by */
+  courtNames?: string;
   courtDate?: string;
   dateFrom?: string;
   dateTo?: string;

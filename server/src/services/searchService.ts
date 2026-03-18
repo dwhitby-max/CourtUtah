@@ -23,8 +23,16 @@ export async function searchCourtEvents(params: SearchRequest): Promise<CourtEve
     paramIndex++;
   }
 
-  if (params.courtName) {
-    conditions.push(`UPPER(court_name) LIKE $${paramIndex}`);
+  if (params.courtNames) {
+    const names = params.courtNames.split(",").map((n) => n.trim()).filter(Boolean);
+    if (names.length > 0) {
+      const orClauses = names.map((_, i) => `UPPER(court_name) LIKE $${paramIndex + i} OR UPPER(hearing_location) LIKE $${paramIndex + i}`);
+      conditions.push(`(${orClauses.join(" OR ")})`);
+      names.forEach((n) => values.push(`%${n.toUpperCase()}%`));
+      paramIndex += names.length;
+    }
+  } else if (params.courtName) {
+    conditions.push(`(UPPER(court_name) LIKE $${paramIndex} OR UPPER(hearing_location) LIKE $${paramIndex})`);
     values.push(`%${params.courtName.toUpperCase()}%`);
     paramIndex++;
   }

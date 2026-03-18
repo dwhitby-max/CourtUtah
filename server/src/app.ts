@@ -15,12 +15,12 @@ const app = express();
 
 app.set("trust proxy", 1);
 
-// Resolve client build directory — try multiple strategies:
-// 1. Relative to project root (process.cwd()) — works when started from project root
-// 2. Relative to compiled JS location (__dirname → server/dist/server/src → ../../..)
+// Resolve client build directory — try multiple __dirname-based strategies:
+// Compiled JS location: server/dist/server/src/app.js
+// Strategy 1: dist/server/src → ../../../../client/build (monorepo standard)
+// Strategy 2: dist/server/src → ../../../client/build (flat dist)
 function resolveClientBuild(): string {
   const candidates = [
-    path.join(process.cwd(), "client", "build"),
     path.resolve(__dirname, "..", "..", "..", "..", "client", "build"),
     path.resolve(__dirname, "..", "..", "..", "client", "build"),
   ];

@@ -140,15 +140,43 @@ export function parseCourtListHtml(html: string): CourtInfo[] {
   const courts: CourtInfo[] = [];
   const seen = new Set<string>();
 
-  // --- District Courts ---
-  // Pattern: "* CourtName - [Today](search.php?t=c&d=today&loc=XXXXD)"
-  // In raw HTML: <li>...CourtName...<a href="search.php?t=c&d=today&loc=XXXXD">Today</a></li>
+  // --- Try <optgroup>/<option> structure first (current utcourts.gov format) ---
+  const optgroupPattern = /<optgroup\s+label="([^"]*)">([\s\S]*?)<\/optgroup>/gi;
+  let optMatch;
+  let foundOptgroups = false;
+
+  while ((optMatch = optgroupPattern.exec(html)) !== null) {
+    const label = optMatch[1];
+    const content = optMatch[2];
+    const courtType: "DistrictCourt" | "JusticeCourt" =
+      label.toLowerCase().includes("district") ? "DistrictCourt" : "JusticeCourt";
+
+    const optionPattern = /<option\s+value="([^"]+)"[^>]*>([^<]+)<\/option>/gi;
+    let optionMatch;
+    while ((optionMatch = optionPattern.exec(content)) !== null) {
+      const locationCode = optionMatch[1];
+      const name = optionMatch[2].trim();
+      if (locationCode === "all" || seen.has(locationCode)) continue;
+      seen.add(locationCode);
+      foundOptgroups = true;
+
+      courts.push({
+        name,
+        type: courtType,
+        locationCode,
+        calendarUrl: `${COURT_CALENDARS_BASE}/search.php?t=c&d=today&loc=${locationCode}`,
+      });
+    }
+  }
+
+  if (foundOptgroups) return courts;
+
+  // --- Fallback: <li>/<a> structure (legacy format) ---
   const districtSection = extractSection(html, "District Court Calendars", "Justice Court Calendars");
   if (districtSection) {
     extractCourts(districtSection, "DistrictCourt", courts, seen);
   }
 
-  // --- Justice Courts ---
   const justiceSection = extractSection(html, "Justice Court Calendars", null);
   if (justiceSection) {
     extractCourts(justiceSection, "JusticeCourt", courts, seen);

@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import { heavyLimiter } from "../middleware/rateLimiter";
 import { authenticateToken } from "../middleware/auth";
 import { searchCourtEvents } from "../services/searchService";
-import { liveSearchUtcourts, LiveSearchParams } from "../services/courtScraper";
+import { liveSearchUtcourts, LiveSearchParams, fetchCourtList, CourtInfo } from "../services/courtScraper";
 import { parseHtmlCalendarResults, ParsedCourtEvent } from "../services/courtEventParser";
 import { CourtEvent } from "../../../shared/types";
 import { getPool } from "../db/pool";
@@ -10,6 +10,42 @@ import { config } from "../config/env";
 
 
 const router = Router();
+
+// --- Court list cache (refreshed every 24h) ---
+let cachedCourts: CourtInfo[] = [];
+let courtsCachedAt = 0;
+const COURTS_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+async function getCourts(): Promise<CourtInfo[]> {
+  if (cachedCourts.length > 0 && Date.now() - courtsCachedAt < COURTS_CACHE_TTL) {
+    return cachedCourts;
+  }
+  try {
+    cachedCourts = await fetchCourtList();
+    courtsCachedAt = Date.now();
+  } catch (err) {
+    console.error("Failed to fetch court list:", err);
+    // Return stale cache if available
+    if (cachedCourts.length > 0) return cachedCourts;
+    throw err;
+  }
+  return cachedCourts;
+}
+
+// GET /api/search/courts — list all available courts (public, cached)
+router.get("/courts", async (_req: Request, res: Response) => {
+  try {
+    const courts = await getCourts();
+    res.json(courts.map((c) => ({
+      name: c.name,
+      type: c.type,
+      locationCode: c.locationCode,
+    })));
+  } catch (err) {
+    console.error("Failed to serve court list:", err);
+    res.status(500).json({ error: "Failed to fetch court list" });
+  }
+});
 
 // GET /api/search/coverage — date range and counts of scraped data (public)
 router.get("/coverage", async (_req: Request, res: Response) => {
@@ -77,7 +113,10 @@ function buildSearchLabel(params: Record<string, string | undefined>): string {
   const parts: string[] = [];
   if (params.defendantName) parts.push(`Defendant: ${params.defendantName}`);
   if (params.caseNumber) parts.push(`Case: ${params.caseNumber}`);
-  if (params.courtName) parts.push(`Court: ${params.courtName}`);
+  if (params.courtNames) {
+    const names = params.courtNames.split(",").map((n) => n.trim()).filter(Boolean);
+    parts.push(names.length <= 2 ? `Courts: ${names.join(", ")}` : `Courts: ${names.length} selected`);
+  } else if (params.courtName) parts.push(`Court: ${params.courtName}`);
   if (params.judgeName) parts.push(`Judge: ${params.judgeName}`);
   if (params.attorney) parts.push(`Attorney: ${params.attorney}`);
   if (params.defendantOtn) parts.push(`OTN: ${params.defendantOtn}`);
@@ -246,6 +285,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     defendantName: qp("defendant_name"),
     caseNumber: qp("case_number"),
     courtName: qp("court_name"),
+    courtNames: qp("court_names"),
     courtDate: qp("court_date"),
     dateFrom: qp("date_from"),
     dateTo: qp("date_to"),
@@ -390,7 +430,19 @@ function applyAllFilters(
     );
   }
 
-  if (params.courtName) {
+  if (params.courtNames) {
+    // Multiple specific courts selected — match any
+    const names = params.courtNames.split(",").map((n) => n.trim().toUpperCase()).filter(Boolean);
+    if (names.length > 0) {
+      filtered = filtered.filter((e) =>
+        names.some(
+          (name) =>
+            (e.courtName && e.courtName.toUpperCase().includes(name)) ||
+            (e.hearingLocation && e.hearingLocation.toUpperCase().includes(name))
+        )
+      );
+    }
+  } else if (params.courtName) {
     const court = params.courtName.toUpperCase();
     filtered = filtered.filter(
       (e) =>

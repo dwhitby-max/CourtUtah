@@ -15,7 +15,10 @@ async function runMigrations(): Promise<void> {
     connectionTimeoutMillis: 8000,
   });
 
-  const migrationsDir = path.join(process.cwd(), "server", "migrations");
+  // Compiled JS: server/dist/server/src/db/migrate.js
+  // Migrations:  server/migrations/
+  // Path: __dirname (db/) → ../../../../migrations
+  const migrationsDir = path.resolve(__dirname, "..", "..", "..", "..", "migrations");
 
   console.log("🔄 Running migrations from:", migrationsDir);
 

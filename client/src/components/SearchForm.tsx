@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { apiFetch } from "@/api/client";
+import CourtPicker from "./CourtPicker";
 
 interface SearchFormProps {
   onSearch: (params: Record<string, string>) => void;
@@ -9,7 +10,7 @@ interface SearchFormProps {
 export default function SearchForm({ onSearch, loading }: SearchFormProps) {
   const [defendantName, setDefendantName] = useState("");
   const [caseNumber, setCaseNumber] = useState("");
-  const [courtName, setCourtName] = useState("");
+  const [selectedCourts, setSelectedCourts] = useState<string[]>([]);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [defendantOtn, setDefendantOtn] = useState("");
@@ -36,7 +37,7 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
     const params: Record<string, string> = {};
     if (defendantName) params.defendant_name = defendantName;
     if (caseNumber) params.case_number = caseNumber;
-    if (courtName) params.court_name = courtName;
+    if (selectedCourts.length > 0) params.court_names = selectedCourts.join(",");
     if (dateFrom) params.date_from = dateFrom;
     if (dateTo) params.date_to = dateTo;
     if (defendantOtn) params.defendant_otn = defendantOtn;
@@ -86,14 +87,7 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Court Name</label>
-          <input
-            type="text"
-            value={courtName}
-            onChange={(e) => setCourtName(e.target.value)}
-            placeholder="e.g. Salt Lake"
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-amber-500 focus:border-amber-500"
-          />
+          <CourtPicker selected={selectedCourts} onChange={setSelectedCourts} />
         </div>
 
         <div>

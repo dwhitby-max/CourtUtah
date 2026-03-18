@@ -274,16 +274,33 @@ function parseEventBlock(
       caseNumber = caseNumMatch[1];
     }
 
-    // Case type is on the line after case number (separated by <br>)
-    const caseLines = htmlToLines(caseHtml);
-    for (const line of caseLines) {
-      // Skip the "Case # ..." line and "View Case Details" line
-      if (/Case\s*#/i.test(line)) continue;
-      if (/View\s*Case\s*Details/i.test(line)) continue;
-      const trimmed = line.trim();
-      if (trimmed.length > 0 && trimmed.length < 100) {
-        caseType = trimmed;
-        break;
+    // Case type may be on the same line after the case number digits,
+    // e.g. "Case # 261200001 Misdemeanor" or "Case # 251100233 State Felony"
+    if (caseNumber) {
+      const afterNumMatch = caseHtml.match(
+        new RegExp(`Case\\s*#\\s*${caseNumber}\\s+([A-Za-z][A-Za-z ]+?)(?:<|$)`, "i")
+      );
+      if (afterNumMatch) {
+        const candidate = afterNumMatch[1]
+          .replace(/View\s*Case\s*Details/i, "")
+          .trim();
+        if (candidate.length > 0 && candidate.length < 100) {
+          caseType = candidate;
+        }
+      }
+    }
+
+    // Fallback: case type on a separate line after case number (separated by <br>)
+    if (!caseType) {
+      const caseLines = htmlToLines(caseHtml);
+      for (const line of caseLines) {
+        if (/Case\s*#/i.test(line)) continue;
+        if (/View\s*Case\s*Details/i.test(line)) continue;
+        const trimmed = line.trim();
+        if (trimmed.length > 0 && trimmed.length < 100) {
+          caseType = trimmed;
+          break;
+        }
       }
     }
   } else {
