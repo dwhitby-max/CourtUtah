@@ -138,10 +138,17 @@ export default function SearchPage() {
       setLastSearchParams(params);
       setLastSearchSavedId(data.savedSearchId ?? null);
       setCalSyncingIds(new Set());
-      setCalSyncedIds(new Set());
       setAddedAll(false);
       // Refresh saved searches list after search (it may have been auto-saved)
       fetchSavedSearches();
+      // Re-fetch synced events so previously-synced results show the remove button
+      try {
+        const synced = await getSyncedEvents();
+        setCalEntryMap(synced);
+        setCalSyncedIds(new Set(Object.keys(synced).map(Number)));
+      } catch {
+        setCalSyncedIds(new Set());
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Search failed";
       setError(msg);
