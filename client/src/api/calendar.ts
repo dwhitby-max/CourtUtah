@@ -87,10 +87,16 @@ export async function removeEventFromCalendar(calendarEntryId: number): Promise<
   return data;
 }
 
-export async function removeConnection(id: number): Promise<void> {
+export async function removeConnection(id: number): Promise<{ message: string; eventsRemoved: number; eventErrors: number }> {
   const res = await apiFetch(`/calendar/connections/${id}`, { method: "DELETE" });
-  if (!res.ok) {
-    const data = await res.json();
-    throw new Error(data.error || "Failed to remove connection");
-  }
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Failed to remove connection");
+  return data;
+}
+
+export async function removeAllConnections(): Promise<{ message: string; connectionsRemoved: number; eventsRemoved: number; eventErrors: number }> {
+  const res = await apiFetch("/calendar/connections", { method: "DELETE" });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Failed to remove connections");
+  return data;
 }

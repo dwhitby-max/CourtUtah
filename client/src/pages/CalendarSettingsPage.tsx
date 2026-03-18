@@ -7,6 +7,7 @@ import {
   connectApple,
   connectCaldav,
   removeConnection,
+  removeAllConnections,
 } from "@/api/calendar";
 import { apiFetch } from "@/api/client";
 
@@ -173,13 +174,39 @@ export default function CalendarSettingsPage() {
     }
   }
 
+  const [confirmRemoveId, setConfirmRemoveId] = useState<number | null>(null);
+  const [confirmRemoveAll, setConfirmRemoveAll] = useState(false);
+  const [removing, setRemoving] = useState(false);
+
   async function handleRemove(id: number) {
+    setRemoving(true);
+    setError("");
     try {
-      await removeConnection(id);
+      const result = await removeConnection(id);
       setConnections((prev) => prev.filter((c) => c.id !== id));
-      setSuccess("Calendar connection removed");
+      const evtMsg = result.eventsRemoved > 0 ? ` (${result.eventsRemoved} synced event${result.eventsRemoved === 1 ? "" : "s"} removed from calendar)` : "";
+      setSuccess(`Calendar connection removed${evtMsg}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to remove");
+    } finally {
+      setRemoving(false);
+      setConfirmRemoveId(null);
+    }
+  }
+
+  async function handleRemoveAll() {
+    setRemoving(true);
+    setError("");
+    try {
+      const result = await removeAllConnections();
+      setConnections([]);
+      const evtMsg = result.eventsRemoved > 0 ? ` and ${result.eventsRemoved} synced event${result.eventsRemoved === 1 ? "" : "s"}` : "";
+      setSuccess(`Removed ${result.connectionsRemoved} calendar connection${result.connectionsRemoved === 1 ? "" : "s"}${evtMsg}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to remove connections");
+    } finally {
+      setRemoving(false);
+      setConfirmRemoveAll(false);
     }
   }
 
@@ -198,7 +225,41 @@ export default function CalendarSettingsPage() {
       {success && <div className="bg-green-50 text-green-700 p-4 rounded-md text-sm">{success}</div>}
 
       <div className="bg-white shadow rounded-lg p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Connected Calendars</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">Connected Calendars</h2>
+          {connections.length > 1 && (
+            <button
+              onClick={() => setConfirmRemoveAll(true)}
+              disabled={removing}
+              className="text-red-600 hover:text-red-800 text-sm font-medium disabled:opacity-50"
+            >
+              Remove All
+            </button>
+          )}
+        </div>
+
+        {confirmRemoveAll && (
+          <div className="bg-red-50 border border-red-200 rounded-md p-4 mb-4">
+            <p className="text-sm text-red-800 font-medium">Remove all {connections.length} calendar connections?</p>
+            <p className="text-sm text-red-700 mt-1">All synced events will be deleted from your calendars. This cannot be undone.</p>
+            <div className="flex gap-3 mt-3">
+              <button
+                onClick={handleRemoveAll}
+                disabled={removing}
+                className="bg-red-600 text-white px-3 py-1.5 rounded-md text-sm font-medium hover:bg-red-700 disabled:opacity-50"
+              >
+                {removing ? "Removing..." : "Yes, Remove All"}
+              </button>
+              <button
+                onClick={() => setConfirmRemoveAll(false)}
+                disabled={removing}
+                className="bg-white border border-gray-300 text-gray-700 px-3 py-1.5 rounded-md text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         {loading ? (
           <p className="text-gray-500">Loading...</p>
@@ -209,33 +270,61 @@ export default function CalendarSettingsPage() {
             {connections.map((conn) => {
               const status = getConnectionStatus(conn);
               const badge = statusBadge[status];
+              const isConfirming = confirmRemoveId === conn.id;
               return (
-                <div key={conn.id} className="flex items-center justify-between border border-gray-200 rounded-md p-4">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{providerLabel[conn.provider] || conn.provider}</span>
-                      <span className={`inline-block text-xs px-2 py-0.5 rounded-full font-medium ${badge.className}`}>
-                        {badge.label}
-                      </span>
+                <div key={conn.id} className="border border-gray-200 rounded-md p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{providerLabel[conn.provider] || conn.provider}</span>
+                        <span className={`inline-block text-xs px-2 py-0.5 rounded-full font-medium ${badge.className}`}>
+                          {badge.label}
+                        </span>
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        Connected {new Date(conn.created_at).toLocaleDateString()}
+                        {conn.calendar_id ? ` — ${conn.calendar_id}` : ""}
+                      </div>
                     </div>
-                    <div className="text-sm text-gray-500">
-                      Connected {new Date(conn.created_at).toLocaleDateString()}
-                      {conn.calendar_id ? ` — ${conn.calendar_id}` : ""}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {(status === "expired" || status === "expiring") && (conn.provider === "google" || conn.provider === "microsoft") && (
+                    <div className="flex items-center gap-3">
+                      {(status === "expired" || status === "expiring") && (conn.provider === "google" || conn.provider === "microsoft") && (
+                        <button
+                          onClick={() => conn.provider === "google" ? handleGoogle() : handleMicrosoft()}
+                          className="text-amber-700 hover:text-slate-800 text-sm font-medium"
+                        >
+                          Re-authorize
+                        </button>
+                      )}
                       <button
-                        onClick={() => conn.provider === "google" ? handleGoogle() : handleMicrosoft()}
-                        className="text-amber-700 hover:text-slate-800 text-sm font-medium"
+                        onClick={() => setConfirmRemoveId(conn.id)}
+                        disabled={removing}
+                        className="text-red-600 hover:text-red-800 text-sm font-medium disabled:opacity-50"
                       >
-                        Re-authorize
+                        Remove
                       </button>
-                    )}
-                    <button onClick={() => handleRemove(conn.id)} className="text-red-600 hover:text-red-800 text-sm font-medium">
-                      Remove
-                    </button>
+                    </div>
                   </div>
+                  {isConfirming && (
+                    <div className="mt-3 pt-3 border-t border-gray-100">
+                      <p className="text-sm text-gray-700">Remove this connection? Synced events will be deleted from your calendar.</p>
+                      <div className="flex gap-3 mt-2">
+                        <button
+                          onClick={() => handleRemove(conn.id)}
+                          disabled={removing}
+                          className="bg-red-600 text-white px-3 py-1.5 rounded-md text-sm font-medium hover:bg-red-700 disabled:opacity-50"
+                        >
+                          {removing ? "Removing..." : "Confirm Remove"}
+                        </button>
+                        <button
+                          onClick={() => setConfirmRemoveId(null)}
+                          disabled={removing}
+                          className="bg-white border border-gray-300 text-gray-700 px-3 py-1.5 rounded-md text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}

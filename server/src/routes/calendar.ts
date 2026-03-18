@@ -4,7 +4,7 @@ import { getPool } from "../db/pool";
 import { config } from "../config/env";
 import { encrypt } from "../services/encryptionService";
 import { heavyLimiter } from "../middleware/rateLimiter";
-import { syncCalendarEntry, deleteCalendarEntry } from "../services/calendarSync";
+import { syncCalendarEntry, deleteCalendarEntry, deleteAllEntriesForConnection } from "../services/calendarSync";
 
 const router = Router();
 
@@ -595,29 +595,96 @@ router.post("/caldav", authenticateToken, heavyLimiter, async (req: Request, res
   }
 });
 
-// DELETE /api/calendar/connections/:id
+// DELETE /api/calendar/connections/:id - Remove a single connection and its synced events
 router.delete("/connections/:id", authenticateToken, heavyLimiter, async (req: Request, res: Response) => {
   if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
   const currentUser = req.user;
+  const connectionId = parseInt(req.params.id, 10);
+  if (isNaN(connectionId)) { res.status(400).json({ error: "Invalid connection ID" }); return; }
+
   const pool = getPool();
   if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
 
   const client = await pool.connect();
   try {
-    const result = await client.query(
-      `DELETE FROM calendar_connections WHERE id = $1 AND user_id = $2 RETURNING id`,
-      [req.params.id, currentUser.userId]
+    // Verify the connection belongs to the user
+    const check = await client.query(
+      `SELECT id FROM calendar_connections WHERE id = $1 AND user_id = $2`,
+      [connectionId, currentUser.userId]
     );
-
-    if (result.rows.length === 0) {
+    if (check.rows.length === 0) {
       res.status(404).json({ error: "Connection not found" });
       return;
     }
 
-    res.json({ message: "Calendar connection removed" });
+    // Delete all calendar entries from providers first
+    const { deleted, errors } = await deleteAllEntriesForConnection(connectionId, currentUser.userId);
+
+    // Delete the connection itself (cascade will clean up any remaining entry rows)
+    await client.query(
+      `DELETE FROM calendar_connections WHERE id = $1 AND user_id = $2`,
+      [connectionId, currentUser.userId]
+    );
+
+    res.json({
+      message: "Calendar connection removed",
+      eventsRemoved: deleted,
+      eventErrors: errors,
+    });
   } catch (err) {
     console.error("❌ DELETE /api/calendar/connections/:id failed:", err);
     res.status(500).json({ error: "Failed to remove calendar connection" });
+  } finally {
+    client.release();
+  }
+});
+
+// DELETE /api/calendar/connections - Remove ALL connections and their synced events
+router.delete("/connections", authenticateToken, heavyLimiter, async (req: Request, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const currentUser = req.user;
+
+  const pool = getPool();
+  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
+
+  const client = await pool.connect();
+  try {
+    // Get all connections for user
+    const connResult = await client.query(
+      `SELECT id FROM calendar_connections WHERE user_id = $1`,
+      [currentUser.userId]
+    );
+
+    if (connResult.rows.length === 0) {
+      res.status(404).json({ error: "No calendar connections found" });
+      return;
+    }
+
+    let totalDeleted = 0;
+    let totalErrors = 0;
+
+    // Delete all calendar entries from providers for each connection
+    for (const row of connResult.rows) {
+      const { deleted, errors } = await deleteAllEntriesForConnection(row.id, currentUser.userId);
+      totalDeleted += deleted;
+      totalErrors += errors;
+    }
+
+    // Delete all connections
+    const deleteResult = await client.query(
+      `DELETE FROM calendar_connections WHERE user_id = $1`,
+      [currentUser.userId]
+    );
+
+    res.json({
+      message: `Removed ${deleteResult.rowCount} calendar connection(s)`,
+      connectionsRemoved: deleteResult.rowCount,
+      eventsRemoved: totalDeleted,
+      eventErrors: totalErrors,
+    });
+  } catch (err) {
+    console.error("❌ DELETE /api/calendar/connections failed:", err);
+    res.status(500).json({ error: "Failed to remove calendar connections" });
   } finally {
     client.release();
   }

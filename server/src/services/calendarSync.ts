@@ -741,6 +741,41 @@ export async function deleteCalendarEntry(
 }
 
 /**
+ * Delete all calendar entries associated with a specific connection from providers and DB.
+ * Called before removing a calendar connection to clean up provider-side events.
+ */
+export async function deleteAllEntriesForConnection(
+  connectionId: number,
+  userId: number
+): Promise<{ deleted: number; errors: number }> {
+  const pool = getPool();
+  if (!pool) return { deleted: 0, errors: 0 };
+
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      `SELECT ce.id
+       FROM calendar_entries ce
+       WHERE ce.calendar_connection_id = $1 AND ce.user_id = $2`,
+      [connectionId, userId]
+    );
+
+    let deleted = 0;
+    let errors = 0;
+
+    for (const row of result.rows) {
+      const success = await deleteCalendarEntry(row.id, userId);
+      if (success) deleted++;
+      else errors++;
+    }
+
+    return { deleted, errors };
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Sync all pending or outdated calendar entries for a user.
  */
 export async function syncAllForUser(userId: number): Promise<{ synced: number; errors: number }> {
