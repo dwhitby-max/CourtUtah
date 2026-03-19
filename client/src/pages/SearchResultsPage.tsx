@@ -29,9 +29,10 @@ export default function SearchResultsPage() {
   const [calRemovingIds, setCalRemovingIds] = useState<Set<number>>(new Set());
   const [calendarProvider, setCalendarProvider] = useState<string | null>(null);
 
-  // Batch add state
+  // Batch add/remove state
   const [batchAdding, setBatchAdding] = useState(false);
   const [batchProgress, setBatchProgress] = useState("");
+  const [batchRemoving, setBatchRemoving] = useState(false);
 
   // Monitor modal state
   const [showMonitorModal, setShowMonitorModal] = useState(false);
@@ -202,6 +203,51 @@ export default function SearchResultsPage() {
     }
   }
 
+  async function handleRemoveAllFromCalendar() {
+    const syncedInResults = results.filter(e => calSyncedIds.has(e.id) && calEntryMap[e.id]);
+
+    if (syncedInResults.length === 0) {
+      setWatchSuccess("No events to remove from your calendar.");
+      return;
+    }
+
+    setBatchRemoving(true);
+    setBatchProgress(`Removing ${syncedInResults.length} events...`);
+    setWatchError("");
+    setWatchSuccess("");
+
+    let removed = 0;
+    let failed = 0;
+
+    for (const event of syncedInResults) {
+      try {
+        await removeEventFromCalendar(calEntryMap[event.id]);
+        removed++;
+        setCalSyncedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(event.id);
+          return next;
+        });
+        setCalEntryMap((prev) => {
+          const next = { ...prev };
+          delete next[event.id];
+          return next;
+        });
+      } catch {
+        failed++;
+      }
+    }
+
+    setBatchRemoving(false);
+    setBatchProgress("");
+
+    if (failed > 0) {
+      setWatchSuccess(`Removed ${removed} event${removed !== 1 ? "s" : ""} from ${calLabel}. ${failed} failed.`);
+    } else {
+      setWatchSuccess(`Removed all ${removed} event${removed !== 1 ? "s" : ""} from ${calLabel}`);
+    }
+  }
+
   async function handleMonitorConfirm(options: { monitorChanges: boolean; autoAddNew: boolean }) {
     setMonitoringInProgress(true);
 
@@ -300,6 +346,7 @@ export default function SearchResultsPage() {
   }
 
   const allSynced = results.length > 0 && results.every(e => calSyncedIds.has(e.id));
+  const anySynced = results.some(e => calSyncedIds.has(e.id));
 
   const { newResults, existingResults } = useMemo(() => {
     if (!previousRunAt) return { newResults: [], existingResults: results };
@@ -353,21 +400,36 @@ export default function SearchResultsPage() {
                 : `${results.length} Result${results.length !== 1 ? "s" : ""} Found`}
             </h2>
             {results.length > 0 && (
-              <button
-                onClick={calendarProvider ? handleAddAllToCalendar : () => navigate("/calendar-settings")}
-                disabled={batchAdding || allSynced}
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed bg-amber-600 text-white hover:bg-amber-700 transition-colors"
-                title={allSynced ? "All events already added" : calendarProvider ? `Add all ${results.length} events to ${providerLabels[calendarProvider] || "Calendar"}` : "Connect a calendar to add events"}
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-                {batchAdding
-                  ? batchProgress
-                  : allSynced
-                    ? "All Added"
-                    : `Add All to ${calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar"}`}
-              </button>
+              <div className="flex items-center gap-2">
+                {anySynced && calendarProvider && (
+                  <button
+                    onClick={handleRemoveAllFromCalendar}
+                    disabled={batchRemoving || batchAdding}
+                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed bg-red-600 text-white hover:bg-red-700 transition-colors"
+                    title={`Remove all synced events from ${providerLabels[calendarProvider] || "Calendar"}`}
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    {batchRemoving ? batchProgress : `Remove All from ${providerLabels[calendarProvider] || "Calendar"}`}
+                  </button>
+                )}
+                <button
+                  onClick={calendarProvider ? handleAddAllToCalendar : () => navigate("/calendar-settings")}
+                  disabled={batchAdding || allSynced || batchRemoving}
+                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed bg-amber-600 text-white hover:bg-amber-700 transition-colors"
+                  title={allSynced ? "All events already added" : calendarProvider ? `Add all ${results.length} events to ${providerLabels[calendarProvider] || "Calendar"}` : "Connect a calendar to add events"}
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  {batchAdding
+                    ? batchProgress
+                    : allSynced
+                      ? "All Added"
+                      : `Add All to ${calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar"}`}
+                </button>
+              </div>
             )}
           </div>
 

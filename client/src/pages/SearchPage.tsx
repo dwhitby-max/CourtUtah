@@ -80,6 +80,7 @@ export default function SearchPage() {
   const [hasCalendarConnection, setHasCalendarConnection] = useState(true);
   const [addingAll, setAddingAll] = useState(false);
   const [addedAll, setAddedAll] = useState(false);
+  const [removingAll, setRemovingAll] = useState(false);
   const [previousRunAt, setPreviousRunAt] = useState<string | null>(null);
 
   // Load saved searches and calendar provider on mount
@@ -271,6 +272,44 @@ export default function SearchPage() {
     }
   }
 
+  async function handleRemoveAllFromCalendar() {
+    const syncedInResults = results.filter(e => calSyncedIds.has(e.id) && calEntryMap[e.id]);
+    if (syncedInResults.length === 0) return;
+
+    setRemovingAll(true);
+    setError("");
+    setWatchSuccess("");
+    let removed = 0;
+    let failed = 0;
+
+    for (const event of syncedInResults) {
+      try {
+        await removeEventFromCalendar(calEntryMap[event.id]);
+        setCalSyncedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(event.id);
+          return next;
+        });
+        setCalEntryMap((prev) => {
+          const next = { ...prev };
+          delete next[event.id];
+          return next;
+        });
+        removed++;
+      } catch {
+        failed++;
+      }
+    }
+
+    setRemovingAll(false);
+    setAddedAll(false);
+    if (failed > 0) {
+      setWatchSuccess(`Removed ${removed} event${removed !== 1 ? "s" : ""} from ${calLabel}. ${failed} failed.`);
+    } else {
+      setWatchSuccess(`Removed all ${removed} event${removed !== 1 ? "s" : ""} from ${calLabel}`);
+    }
+  }
+
   function toggleExpand(id: number) {
     setExpandedId(expandedId === id ? null : id);
   }
@@ -299,6 +338,7 @@ export default function SearchPage() {
   }
 
   const calLabel = calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar";
+  const anySynced = results.some(e => calSyncedIds.has(e.id));
 
   const { newResults, existingResults } = useMemo(() => {
     if (!previousRunAt) return { newResults: [], existingResults: results };
@@ -383,10 +423,19 @@ export default function SearchPage() {
                   Connect Google Calendar
                 </button>
               )}
+              {results.length > 0 && hasCalendarConnection && anySynced && (
+                <button
+                  onClick={handleRemoveAllFromCalendar}
+                  disabled={removingAll || addingAll}
+                  className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md disabled:opacity-50"
+                >
+                  {removingAll ? "Removing..." : `Remove all from ${calLabel}`}
+                </button>
+              )}
               {results.length > 0 && hasCalendarConnection && (
                 <button
                   onClick={handleAddAllToCalendar}
-                  disabled={addingAll || addedAll}
+                  disabled={addingAll || addedAll || removingAll}
                   className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-amber-700 hover:bg-amber-800 rounded-md disabled:opacity-50"
                 >
                   {addingAll
