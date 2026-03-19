@@ -26,8 +26,11 @@ export function getPool(): Pool | null {
   }
 
   if (!pool) {
+    const dbUrl = new URL(config.databaseUrl);
+    dbUrl.searchParams.set("sslmode", "require");
+
     pool = new Pool({
-      connectionString: config.databaseUrl,
+      connectionString: dbUrl.toString(),
       ssl: { rejectUnauthorized: false },
       connectionTimeoutMillis: 8000,
       max: 5,

@@ -87,6 +87,8 @@ export interface CourtEvent {
   contentHash: string;
   charges: string[];
   scrapedAt: string;
+  createdAt?: string;
+  isNew?: boolean;
 }
 
 // --- Search ---
@@ -113,6 +115,7 @@ export interface SearchResponse {
   searchParams: SearchRequest;
   source?: "live" | "database";
   savedSearchId?: number | null;
+  previousRunAt?: string | null;
   processedAt: string;
 }
 

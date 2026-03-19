@@ -7,6 +7,7 @@ export function useSearch() {
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [previousRunAt, setPreviousRunAt] = useState<string | null>(null);
 
   async function search(params: Record<string, string>) {
     setError("");
@@ -16,9 +17,11 @@ export function useSearch() {
     try {
       const data = await searchCourtEvents(params);
       setResults(data.results);
+      setPreviousRunAt(data.previousRunAt ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Search failed");
       setResults([]);
+      setPreviousRunAt(null);
     } finally {
       setLoading(false);
     }
@@ -28,7 +31,8 @@ export function useSearch() {
     setResults([]);
     setSearched(false);
     setError("");
+    setPreviousRunAt(null);
   }
 
-  return { results, searched, loading, error, search, clearResults };
+  return { results, searched, loading, error, previousRunAt, search, clearResults };
 }

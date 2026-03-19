@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import SearchForm from "@/components/SearchForm";
 import { searchCourtEvents } from "@/api/search";
 import { addEventToCalendar, getCalendarConnections, getSyncedEvents, removeEventFromCalendar } from "@/api/calendar";
 import { apiFetch } from "@/api/client";
+import NewEntriesSection from "@/components/NewEntriesSection";
 import { CourtEvent } from "@shared/types";
 
 interface SavedSearchRow {
@@ -79,6 +80,7 @@ export default function SearchPage() {
   const [hasCalendarConnection, setHasCalendarConnection] = useState(true);
   const [addingAll, setAddingAll] = useState(false);
   const [addedAll, setAddedAll] = useState(false);
+  const [previousRunAt, setPreviousRunAt] = useState<string | null>(null);
 
   // Load saved searches and calendar provider on mount
   useEffect(() => {
@@ -137,6 +139,7 @@ export default function SearchPage() {
       setResults(data.results);
       setLastSearchParams(params);
       setLastSearchSavedId(data.savedSearchId ?? null);
+      setPreviousRunAt(data.previousRunAt ?? null);
       setCalSyncingIds(new Set());
       setAddedAll(false);
       // Refresh saved searches list after search (it may have been auto-saved)
@@ -297,6 +300,13 @@ export default function SearchPage() {
 
   const calLabel = calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar";
 
+  const { newResults, existingResults } = useMemo(() => {
+    if (!previousRunAt) return { newResults: [], existingResults: results };
+    const newOnes = results.filter(e => e.isNew);
+    const existing = results.filter(e => !e.isNew);
+    return { newResults: newOnes, existingResults: existing };
+  }, [results, previousRunAt]);
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-gray-900">Search Court Calendars</h1>
@@ -345,11 +355,24 @@ export default function SearchPage() {
       {error && <div className="bg-red-50 text-red-700 p-4 rounded-md text-sm">{error}</div>}
       {watchSuccess && <div className="bg-green-50 text-green-700 p-4 rounded-md text-sm">{watchSuccess}</div>}
 
+      {searched && !loading && newResults.length > 0 && (
+        <NewEntriesSection
+          events={newResults}
+          formatDate={formatDate}
+          onAddToCalendar={hasCalendarConnection ? handleAddToCalendar : undefined}
+          calSyncedIds={calSyncedIds}
+          calSyncingIds={calSyncingIds}
+          calLabel={calLabel}
+        />
+      )}
+
       {searched && !loading && (
         <div className="bg-white shadow rounded-lg overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-gray-900">
-              {results.length} Result{results.length !== 1 ? "s" : ""} Found
+              {existingResults.length > 0 && newResults.length > 0
+                ? `${existingResults.length} Previous Result${existingResults.length !== 1 ? "s" : ""}`
+                : `${results.length} Result${results.length !== 1 ? "s" : ""} Found`}
             </h2>
             <div className="flex items-center gap-3">
               {results.length > 0 && !hasCalendarConnection && (
@@ -385,7 +408,7 @@ export default function SearchPage() {
             <div className="p-6 text-gray-500 text-center">
               No court events match your search criteria. Try broadening your search.
             </div>
-          ) : (
+          ) : (existingResults.length > 0 || newResults.length === 0) && (
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
@@ -400,7 +423,7 @@ export default function SearchPage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {results.map((event) => (
+                  {(newResults.length > 0 ? existingResults : results).map((event) => (
                     <>
                       <tr key={event.id} className="hover:bg-gray-50">
                         <td className="px-4 py-3 text-sm whitespace-nowrap">

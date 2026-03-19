@@ -99,7 +99,7 @@ export async function searchCourtEvents(params: SearchRequest): Promise<CourtEve
       defendant_dob, citation_number, sheriff_number, lea_number,
       prosecuting_attorney, defense_attorney, source_pdf_url,
       source_page_number, content_hash, scraped_at,
-      judge_name, hearing_location, is_virtual, source_url, charges
+      judge_name, hearing_location, is_virtual, source_url, charges, created_at
     FROM court_events
     WHERE ${whereClause}
     ORDER BY event_date DESC, event_time ASC
@@ -156,5 +156,6 @@ function mapRowToCourtEvent(row: Record<string, unknown>): CourtEvent {
     contentHash: row.content_hash as string,
     charges: Array.isArray(row.charges) ? row.charges as string[] : [],
     scrapedAt: row.scraped_at ? toDateString(row.scraped_at) : "",
+    createdAt: row.created_at ? new Date(row.created_at as string).toISOString() : undefined,
   };
 }

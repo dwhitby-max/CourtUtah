@@ -135,14 +135,14 @@ function buildSearchLabel(params: Record<string, string | undefined>): string {
 async function findExistingSavedSearch(
   userId: number,
   paramsKey: string
-): Promise<{ id: number } | null> {
+): Promise<{ id: number; last_run_at: string | null } | null> {
   const pool = getPool();
   if (!pool) return null;
   const client = await pool.connect();
   try {
     // Compare by canonical key stored in search_params JSONB
     const result = await client.query(
-      `SELECT id FROM saved_searches
+      `SELECT id, last_run_at FROM saved_searches
        WHERE user_id = $1 AND search_params->>'_key' = $2 AND is_active = true
        LIMIT 1`,
       [userId, paramsKey]
@@ -161,9 +161,9 @@ async function saveSearch(
   params: Record<string, string | undefined>,
   paramsKey: string,
   resultsCount: number
-): Promise<number> {
+): Promise<{ savedSearchId: number; previousRunAt: string | null }> {
   const pool = getPool();
-  if (!pool) return -1;
+  if (!pool) return { savedSearchId: -1, previousRunAt: null };
   const client = await pool.connect();
   try {
     const existing = await findExistingSavedSearch(userId, paramsKey);
@@ -171,13 +171,16 @@ async function saveSearch(
     const label = buildSearchLabel(params);
 
     if (existing) {
+      const previousRunAt = existing.last_run_at
+        ? new Date(existing.last_run_at).toISOString()
+        : null;
       await client.query(
         `UPDATE saved_searches
          SET results_count = $1, last_run_at = NOW(), updated_at = NOW()
          WHERE id = $2`,
         [resultsCount, existing.id]
       );
-      return existing.id;
+      return { savedSearchId: existing.id, previousRunAt };
     }
 
     const result = await client.query(
@@ -186,7 +189,7 @@ async function saveSearch(
        RETURNING id`,
       [userId, JSON.stringify(paramsWithKey), label, resultsCount]
     );
-    return result.rows[0].id;
+    return { savedSearchId: result.rows[0].id, previousRunAt: null };
   } finally {
     client.release();
   }
@@ -313,13 +316,15 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     // fall back to DB-only search
     if (!liveBase) {
       const dbResults = await searchCourtEvents(searchParams);
-      const savedId = await saveSearch(userId, searchParams, pKey, dbResults.length);
+      const { savedSearchId, previousRunAt } = await saveSearch(userId, searchParams, pKey, dbResults.length);
+      markNewEvents(dbResults, previousRunAt);
       res.json({
         results: dbResults,
         resultsCount: dbResults.length,
         searchParams,
         source: "database",
-        savedSearchId: savedId,
+        savedSearchId,
+        previousRunAt,
         processedAt: new Date().toISOString(),
       });
       return;
@@ -354,13 +359,15 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     );
     const merged = [...dbResults, ...extraLive].slice(0, 200);
 
-    const savedId = await saveSearch(userId, searchParams, pKey, merged.length);
+    const { savedSearchId, previousRunAt } = await saveSearch(userId, searchParams, pKey, merged.length);
+    markNewEvents(merged, previousRunAt);
     res.json({
       results: merged,
       resultsCount: merged.length,
       searchParams,
       source: "live",
-      savedSearchId: savedId,
+      savedSearchId,
+      previousRunAt,
       processedAt: new Date().toISOString(),
     });
   } catch (err) {
@@ -368,6 +375,23 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     res.status(500).json({ error: "Search failed" });
   }
 });
+
+/**
+ * Mark events as new if they were created after the previous search run.
+ * Events without createdAt (live results) are always considered new when previousRunAt exists.
+ */
+function markNewEvents(events: CourtEvent[], previousRunAt: string | null): void {
+  if (!previousRunAt) return; // First run — nothing is "new"
+  const cutoff = new Date(previousRunAt).getTime();
+  for (const event of events) {
+    if (!event.createdAt) {
+      // Live result without DB row — it's new
+      event.isNew = true;
+    } else {
+      event.isNew = new Date(event.createdAt).getTime() > cutoff;
+    }
+  }
+}
 
 /** Counter for assigning temporary negative IDs to live (non-persisted) results */
 let liveIdCounter = 0;
@@ -404,6 +428,7 @@ function toCourtEvent(event: ParsedCourtEvent): CourtEvent {
     contentHash: event.contentHash,
     charges: [],
     scrapedAt: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
   };
 }
 

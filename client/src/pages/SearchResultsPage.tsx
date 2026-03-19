@@ -1,9 +1,10 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useSearch } from "@/hooks/useSearch";
 import { apiFetch } from "@/api/client";
 import { addEventToCalendar, addAllEventsToCalendar, getCalendarConnections, getSyncedEvents, removeEventFromCalendar } from "@/api/calendar";
 import UpdatesSection from "@/components/UpdatesSection";
+import NewEntriesSection from "@/components/NewEntriesSection";
 import MonitorModal from "@/components/MonitorModal";
 import { CourtEvent } from "@shared/types";
 import { ChangeRecord } from "@/components/UpdatesSection";
@@ -18,7 +19,7 @@ const providerLabels: Record<string, string> = {
 export default function SearchResultsPage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { results, searched, loading, error, search } = useSearch();
+  const { results, searched, loading, error, previousRunAt, search } = useSearch();
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [watchSuccess, setWatchSuccess] = useState("");
   const [watchError, setWatchError] = useState("");
@@ -300,6 +301,15 @@ export default function SearchResultsPage() {
 
   const allSynced = results.length > 0 && results.every(e => calSyncedIds.has(e.id));
 
+  const { newResults, existingResults } = useMemo(() => {
+    if (!previousRunAt) return { newResults: [], existingResults: results };
+    const newOnes = results.filter(e => e.isNew);
+    const existing = results.filter(e => !e.isNew);
+    return { newResults: newOnes, existingResults: existing };
+  }, [results, previousRunAt]);
+
+  const calLabel = calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar";
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -323,11 +333,24 @@ export default function SearchResultsPage() {
         onDismissUpdate={handleDismissUpdate}
       />
 
+      {searched && !loading && newResults.length > 0 && (
+        <NewEntriesSection
+          events={newResults}
+          formatDate={formatDate}
+          onAddToCalendar={calendarProvider ? handleAddToCalendar : undefined}
+          calSyncedIds={calSyncedIds}
+          calSyncingIds={calSyncingIds}
+          calLabel={calLabel}
+        />
+      )}
+
       {searched && !loading && (
         <div className="bg-white shadow rounded-lg overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-gray-900">
-              {results.length} Result{results.length !== 1 ? "s" : ""} Found
+              {existingResults.length > 0 && newResults.length > 0
+                ? `${existingResults.length} Previous Result${existingResults.length !== 1 ? "s" : ""}`
+                : `${results.length} Result${results.length !== 1 ? "s" : ""} Found`}
             </h2>
             {results.length > 0 && (
               <button
@@ -352,7 +375,7 @@ export default function SearchResultsPage() {
             <div className="p-6 text-gray-500 text-center">
               No court events match your search criteria. Try broadening your search.
             </div>
-          ) : (
+          ) : (existingResults.length > 0 || newResults.length === 0) && (
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
@@ -367,7 +390,7 @@ export default function SearchResultsPage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {results.map((event) => (
+                  {(newResults.length > 0 ? existingResults : results).map((event) => (
                     <>
                       <tr key={event.id} className="hover:bg-gray-50">
                         <td className="px-4 py-3 text-sm whitespace-nowrap">
