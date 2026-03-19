@@ -13,6 +13,11 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
     return <Navigate to="/accept-terms" replace />;
   }
 
+  // Block unapproved users — show pending approval page
+  if (user && !user.isApproved) {
+    return <Navigate to="/pending-approval" replace />;
+  }
+
   // If user hasn't connected Google (old password-based account), force Google OAuth.
   // Use sessionStorage flag to prevent redirect loops — only attempt once per session.
   if (!user.googleConnected) {

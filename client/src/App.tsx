@@ -17,6 +17,7 @@ import NotificationSettingsPage from "@/pages/NotificationSettingsPage";
 import PrivacyPolicyPage from "@/pages/PrivacyPolicyPage";
 import TermsPage from "@/pages/TermsPage";
 import AcceptTermsPage from "@/pages/AcceptTermsPage";
+import PendingApprovalPage from "@/pages/PendingApprovalPage";
 
 export default function App() {
   return (
@@ -30,6 +31,7 @@ export default function App() {
           <Route path="/privacy" element={<PrivacyPolicyPage />} />
           <Route path="/terms" element={<TermsPage />} />
           <Route path="/accept-terms" element={<AcceptTermsPage />} />
+          <Route path="/pending-approval" element={<PendingApprovalPage />} />
 
           {/* Protected routes */}
           <Route

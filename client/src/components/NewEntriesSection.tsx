@@ -4,30 +4,50 @@ interface NewEntriesSectionProps {
   events: CourtEvent[];
   formatDate: (dateStr: string) => string;
   onAddToCalendar?: (event: CourtEvent) => void;
+  onAddAllNewToCalendar?: () => void;
   calSyncedIds?: Set<number>;
   calSyncingIds?: Set<number>;
   calLabel?: string;
+  batchAdding?: boolean;
 }
 
 export default function NewEntriesSection({
   events,
   formatDate,
   onAddToCalendar,
+  onAddAllNewToCalendar,
   calSyncedIds,
   calSyncingIds,
   calLabel = "Calendar",
+  batchAdding = false,
 }: NewEntriesSectionProps) {
   if (events.length === 0) return null;
 
+  const allNewSynced = events.every(e => calSyncedIds?.has(e.id));
+
   return (
     <div className="bg-blue-50 border border-blue-200 rounded-lg overflow-hidden">
-      <div className="px-6 py-4 border-b border-blue-200 flex items-center gap-2">
-        <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-        </svg>
-        <h2 className="text-lg font-semibold text-blue-800">
-          New Since Last Search ({events.length})
-        </h2>
+      <div className="px-6 py-4 border-b border-blue-200 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+          </svg>
+          <h2 className="text-lg font-semibold text-blue-800">
+            New Since Last Search ({events.length})
+          </h2>
+        </div>
+        {onAddAllNewToCalendar && !allNewSynced && (
+          <button
+            onClick={onAddAllNewToCalendar}
+            disabled={batchAdding}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            {batchAdding ? "Adding..." : `Add All New to ${calLabel}`}
+          </button>
+        )}
       </div>
       <div className="divide-y divide-blue-100">
         {events.map((event) => (

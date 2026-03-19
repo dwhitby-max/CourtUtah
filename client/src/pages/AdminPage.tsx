@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { apiFetch } from "@/api/client";
 import { useAuth } from "@/store/authStore";
 
-type Tab = "overview" | "users";
+type Tab = "overview" | "pending" | "users";
 
 interface UserRow {
   id: number;
@@ -10,6 +10,7 @@ interface UserRow {
   phone: string | null;
   email_verified: boolean;
   is_admin: boolean;
+  is_approved: boolean;
   created_at: string;
   watched_count: string;
   calendar_count: string;
@@ -34,7 +35,7 @@ export default function AdminPage() {
 
       <div className="border-b border-gray-200">
         <nav className="flex space-x-4">
-          {(["overview", "users"] as Tab[]).map((t) => (
+          {(["overview", "pending", "users"] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -44,13 +45,14 @@ export default function AdminPage() {
                   : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
               }`}
             >
-              {t === "overview" ? "Overview" : "Users"}
+              {t === "overview" ? "Overview" : t === "pending" ? "Pending Approval" : "Users"}
             </button>
           ))}
         </nav>
       </div>
 
       {tab === "overview" && <OverviewTab />}
+      {tab === "pending" && <PendingTab />}
       {tab === "users" && <UsersTab />}
     </div>
   );
@@ -115,6 +117,76 @@ function StatCard({ label, value }: { label: string; value: string }) {
   );
 }
 
+// ─── Pending Approval Tab ───
+
+function PendingTab() {
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    apiFetch("/admin/users")
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => {
+        if (d) setUsers(d.users.filter((u: UserRow) => !u.is_approved));
+        setLoading(false);
+      });
+  }, []);
+
+  async function approveUser(userId: number) {
+    const res = await apiFetch(`/admin/users/${userId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ isApproved: true }),
+    });
+    if (res.ok) {
+      setUsers((prev) => prev.filter((u) => u.id !== userId));
+    }
+  }
+
+  async function rejectUser(userId: number) {
+    if (!confirm("Reject this user? They will remain unable to access the app.")) return;
+    // Keep is_approved = false — no action needed, just confirmation
+  }
+
+  if (loading) {
+    return <p className="text-gray-500 text-sm py-4">Loading...</p>;
+  }
+
+  if (users.length === 0) {
+    return (
+      <div className="bg-white shadow rounded-lg p-8 text-center">
+        <p className="text-gray-500">No users pending approval.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {users.map((u) => (
+        <div key={u.id} className="bg-white shadow rounded-lg p-4 flex items-center justify-between">
+          <div>
+            <p className="font-medium text-gray-900">{u.email}</p>
+            <p className="text-xs text-gray-500">Signed up {new Date(u.created_at).toLocaleString()}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => approveUser(u.id)}
+              className="bg-green-600 text-white px-4 py-1.5 rounded-md text-sm font-medium hover:bg-green-700"
+            >
+              Approve
+            </button>
+            <button
+              onClick={() => rejectUser(u.id)}
+              className="bg-red-50 text-red-700 border border-red-200 px-4 py-1.5 rounded-md text-sm font-medium hover:bg-red-100"
+            >
+              Reject
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── Users Tab ───
 
 function UsersTab() {
@@ -134,6 +206,16 @@ function UsersTab() {
     }
   }
 
+  async function toggleApproval(userId: number, currentValue: boolean) {
+    const res = await apiFetch(`/admin/users/${userId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ isApproved: !currentValue }),
+    });
+    if (res.ok) {
+      setUsers((prev) => prev.map((u) => u.id === userId ? { ...u, is_approved: !currentValue } : u));
+    }
+  }
+
   return (
     <div className="bg-white shadow rounded-lg overflow-hidden">
       <div className="overflow-x-auto">
@@ -141,7 +223,7 @@ function UsersTab() {
           <thead className="bg-gray-50">
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Verified</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Admin</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Watched</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Calendars</th>
@@ -151,11 +233,11 @@ function UsersTab() {
           </thead>
           <tbody className="divide-y divide-gray-200">
             {users.map((u) => (
-              <tr key={u.id}>
+              <tr key={u.id} className={!u.is_approved ? "bg-amber-50" : ""}>
                 <td className="px-4 py-3 font-medium">{u.email}</td>
                 <td className="px-4 py-3">
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${u.email_verified ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-600"}`}>
-                    {u.email_verified ? "Yes" : "No"}
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${u.is_approved ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"}`}>
+                    {u.is_approved ? "Approved" : "Pending"}
                   </span>
                 </td>
                 <td className="px-4 py-3">
@@ -166,7 +248,13 @@ function UsersTab() {
                 <td className="px-4 py-3">{u.watched_count}</td>
                 <td className="px-4 py-3">{u.calendar_count}</td>
                 <td className="px-4 py-3 whitespace-nowrap">{new Date(u.created_at).toLocaleDateString()}</td>
-                <td className="px-4 py-3">
+                <td className="px-4 py-3 space-x-2">
+                  <button
+                    onClick={() => toggleApproval(u.id, u.is_approved)}
+                    className={`text-sm font-medium ${u.is_approved ? "text-red-600 hover:text-red-800" : "text-green-600 hover:text-green-800"}`}
+                  >
+                    {u.is_approved ? "Revoke" : "Approve"}
+                  </button>
                   <button
                     onClick={() => toggleAdmin(u.id, u.is_admin)}
                     className="text-amber-700 hover:text-slate-800 text-sm font-medium"

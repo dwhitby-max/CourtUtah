@@ -5,6 +5,7 @@ import { generateToken, authenticateToken } from "../middleware/auth";
 import { heavyLimiter } from "../middleware/rateLimiter";
 import { config } from "../config/env";
 import { encrypt } from "../services/encryptionService";
+import { sendNewSignupNotification } from "../services/emailService";
 
 const router = Router();
 
@@ -168,15 +169,24 @@ router.get("/google/callback", async (req: Request, res: Response) => {
             [userinfo.id, userId]
           );
         } else {
-          // Create new user
+          // Create new user — account requires admin approval
           const signupIp = req.ip || req.headers["x-forwarded-for"] || null;
           const newUser = await client.query(
-            `INSERT INTO users (email, google_id, email_verified, signup_ip, notification_preferences)
-             VALUES ($1, $2, true, $3, '{"emailEnabled": true, "smsEnabled": false, "inAppEnabled": true, "frequency": "immediate"}')
+            `INSERT INTO users (email, google_id, email_verified, signup_ip, is_approved, notification_preferences)
+             VALUES ($1, $2, true, $3, false, '{"emailEnabled": true, "smsEnabled": false, "inAppEnabled": true, "frequency": "immediate"}')
              RETURNING id`,
             [userinfo.email.toLowerCase(), userinfo.id, signupIp]
           );
           userId = newUser.rows[0].id;
+
+          // Notify admin of new signup
+          if (config.adminEmail) {
+            sendNewSignupNotification(config.adminEmail, userinfo.email, String(signupIp || "")).catch((err) => {
+              console.error("❌ Failed to send admin signup notification:", err);
+            });
+          } else {
+            console.warn("⚠️ ADMIN_EMAIL not configured — skipping new signup notification");
+          }
         }
       }
 
@@ -258,7 +268,7 @@ router.get("/me", authenticateToken, async (req: Request, res: Response) => {
   const client = await pool.connect();
   try {
     const result = await client.query(
-      `SELECT id, email, phone, email_verified, google_id, is_admin, notification_preferences, calendar_preferences, tos_agreed_at, created_at
+      `SELECT id, email, phone, email_verified, google_id, is_admin, is_approved, notification_preferences, calendar_preferences, tos_agreed_at, created_at
        FROM users WHERE id = $1`,
       [req.user.userId]
     );
@@ -277,6 +287,7 @@ router.get("/me", authenticateToken, async (req: Request, res: Response) => {
         emailVerified: user.email_verified,
         googleConnected: !!user.google_id,
         isAdmin: user.is_admin || false,
+        isApproved: user.is_approved !== false,
         notificationPreferences: user.notification_preferences,
         calendarPreferences: user.calendar_preferences || {},
         tosAgreedAt: user.tos_agreed_at || null,
@@ -307,7 +318,7 @@ router.post("/accept-terms", authenticateToken, async (req: Request, res: Respon
     );
 
     const result = await client.query(
-      `SELECT id, email, phone, email_verified, google_id, is_admin, notification_preferences, calendar_preferences, tos_agreed_at, created_at
+      `SELECT id, email, phone, email_verified, google_id, is_admin, is_approved, notification_preferences, calendar_preferences, tos_agreed_at, created_at
        FROM users WHERE id = $1`,
       [req.user.userId]
     );
@@ -321,6 +332,7 @@ router.post("/accept-terms", authenticateToken, async (req: Request, res: Respon
         emailVerified: user.email_verified,
         googleConnected: !!user.google_id,
         isAdmin: user.is_admin || false,
+        isApproved: user.is_approved !== false,
         notificationPreferences: user.notification_preferences,
         calendarPreferences: user.calendar_preferences || {},
         tosAgreedAt: user.tos_agreed_at,
@@ -371,7 +383,7 @@ router.patch("/profile", authenticateToken, async (req: Request, res: Response) 
     );
 
     const result = await client.query(
-      `SELECT id, email, phone, email_verified, google_id, is_admin, notification_preferences, calendar_preferences, tos_agreed_at, created_at FROM users WHERE id = $1`,
+      `SELECT id, email, phone, email_verified, google_id, is_admin, is_approved, notification_preferences, calendar_preferences, tos_agreed_at, created_at FROM users WHERE id = $1`,
       [req.user.userId]
     );
 
@@ -389,6 +401,7 @@ router.patch("/profile", authenticateToken, async (req: Request, res: Response) 
         emailVerified: user.email_verified,
         googleConnected: !!user.google_id,
         isAdmin: user.is_admin || false,
+        isApproved: user.is_approved !== false,
         notificationPreferences: user.notification_preferences,
         calendarPreferences: user.calendar_preferences || {},
         tosAgreedAt: user.tos_agreed_at || null,

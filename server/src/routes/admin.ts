@@ -4,6 +4,7 @@ import { requireAdmin } from "../middleware/adminAuth";
 import { heavyLimiter } from "../middleware/rateLimiter";
 import { getPool, getPoolStats } from "../db/pool";
 import { refreshAllWatchedCases } from "../services/schedulerService";
+import { sendAccountApprovedEmail } from "../services/emailService";
 
 const router = Router();
 
@@ -76,7 +77,7 @@ router.get("/users", async (_req: Request, res: Response) => {
   const client = await pool.connect();
   try {
     const result = await client.query(
-      `SELECT id, email, phone, email_verified, is_admin, created_at,
+      `SELECT id, email, phone, email_verified, is_admin, is_approved, created_at,
               (SELECT COUNT(*) FROM watched_cases wc WHERE wc.user_id = u.id AND wc.is_active = true) as watched_count,
               (SELECT COUNT(*) FROM calendar_connections cc WHERE cc.user_id = u.id AND cc.is_active = true) as calendar_count
        FROM users u ORDER BY created_at DESC`
@@ -90,18 +91,34 @@ router.get("/users", async (_req: Request, res: Response) => {
   }
 });
 
-// PATCH /api/admin/users/:id — update user (toggle admin, etc.)
+// PATCH /api/admin/users/:id — update user (toggle admin, approve/reject, etc.)
 router.patch("/users/:id", async (req: Request, res: Response) => {
   const pool = getPool();
   if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
 
-  const { isAdmin } = req.body;
+  const { isAdmin, isApproved } = req.body;
   const userId = parseInt(req.params.id, 10);
 
   const client = await pool.connect();
   try {
     if (isAdmin !== undefined) {
       await client.query("UPDATE users SET is_admin = $1, updated_at = NOW() WHERE id = $2", [isAdmin, userId]);
+    }
+    if (isApproved !== undefined) {
+      await client.query("UPDATE users SET is_approved = $1, updated_at = NOW() WHERE id = $2", [isApproved, userId]);
+
+      // Send approval email to the user
+      if (isApproved) {
+        const userResult = await client.query("SELECT email FROM users WHERE id = $1", [userId]);
+        if (userResult.rows.length > 0) {
+          const forwardedHost = req.get("x-forwarded-host") || req.get("host") || "";
+          const proto = req.get("x-forwarded-proto") || req.protocol || "https";
+          const appUrl = forwardedHost ? `${proto}://${forwardedHost}` : "";
+          sendAccountApprovedEmail(userResult.rows[0].email, appUrl).catch((err) => {
+            console.error("❌ Failed to send account approved email:", err);
+          });
+        }
+      }
     }
     res.json({ message: "User updated" });
   } catch (err) {

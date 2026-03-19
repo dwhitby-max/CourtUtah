@@ -54,6 +54,8 @@ export const config = {
   corsOrigin: process.env.CORS_ORIGIN || "",
 
   sentryDsn: process.env.SENTRY_DSN || "",
+
+  adminEmail: process.env.ADMIN_EMAIL || "",
 };
 
 validateEnv();

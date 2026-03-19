@@ -70,6 +70,36 @@ export async function sendVerificationEmail(to: string, verificationToken: strin
   return sendEmail(to, "Verify Your Email - Court Calendar Tracker", html);
 }
 
+export async function sendNewSignupNotification(
+  adminEmail: string,
+  newUserEmail: string,
+  signupIp: string | null
+): Promise<boolean> {
+  const html = `
+    <h2>New User Signup — Approval Required</h2>
+    <p>A new user has signed up for Court Calendar Tracker and is awaiting your approval.</p>
+    <table border="0" cellpadding="8" cellspacing="0" style="border-collapse:collapse;">
+      <tr><td><strong>Email:</strong></td><td>${newUserEmail}</td></tr>
+      <tr><td><strong>Signup IP:</strong></td><td>${signupIp || "Unknown"}</td></tr>
+      <tr><td><strong>Time:</strong></td><td>${new Date().toLocaleString("en-US", { timeZone: "America/Denver" })} MT</td></tr>
+    </table>
+    <p style="margin-top:16px;">
+      Log in to the <strong>Admin Panel → Users</strong> tab to approve or reject this account.
+    </p>
+  `;
+  return sendEmail(adminEmail, `New Signup Pending Approval: ${newUserEmail}`, html);
+}
+
+export async function sendAccountApprovedEmail(userEmail: string, appUrl: string): Promise<boolean> {
+  const html = `
+    <h2>Your Account Has Been Approved</h2>
+    <p>Great news! Your Court Calendar Tracker account has been approved by an administrator.</p>
+    <p>You can now sign in and start using the app:</p>
+    <p><a href="${appUrl}/login" style="display:inline-block;padding:12px 24px;background:#92400e;color:#fff;text-decoration:none;border-radius:6px;">Sign In</a></p>
+  `;
+  return sendEmail(userEmail, "Account Approved - Court Calendar Tracker", html);
+}
+
 export async function sendScheduleChangeEmail(
   to: string,
   caseName: string,

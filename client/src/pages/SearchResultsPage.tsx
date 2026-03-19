@@ -203,6 +203,103 @@ export default function SearchResultsPage() {
     }
   }
 
+  async function handleAddAllAndAutoUpdate() {
+    const unsyncedIds = results
+      .filter(e => !calSyncedIds.has(e.id))
+      .map(e => e.id);
+
+    setBatchAdding(true);
+    setBatchProgress("Adding events & setting up auto-updates...");
+    setWatchError("");
+    setWatchSuccess("");
+
+    try {
+      // Step 1: Batch add all unsynced events to calendar
+      if (unsyncedIds.length > 0) {
+        const data = await addAllEventsToCalendar(unsyncedIds);
+        const newSyncedIds = new Set(calSyncedIds);
+        const newEntryMap = { ...calEntryMap };
+
+        for (const r of data.results) {
+          if (r.synced) {
+            newSyncedIds.add(r.courtEventId);
+            newEntryMap[r.courtEventId] = r.calendarEntryId;
+          }
+        }
+
+        setCalSyncedIds(newSyncedIds);
+        setCalEntryMap(newEntryMap);
+      }
+
+      // Step 2: Create watched cases with both monitorChanges AND autoAddNew
+      setBatchProgress("Setting up auto-monitoring...");
+      const seen = new Set<string>();
+      let successCount = 0;
+
+      for (const event of results) {
+        if (event.caseNumber) {
+          const key = `case_number:${event.caseNumber}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            try {
+              const res = await apiFetch("/watched-cases", {
+                method: "POST",
+                body: JSON.stringify({
+                  searchType: "case_number",
+                  searchValue: event.caseNumber,
+                  label: `${event.caseNumber} - ${event.defendantName || "Unknown"} (${event.courtName})`,
+                  monitorChanges: true,
+                  autoAddNew: true,
+                }),
+              });
+              if (res.ok) successCount++;
+            } catch (err) {
+              console.error("Failed to create watched case:", err);
+            }
+          }
+        } else if (event.defendantName) {
+          const key = `defendant_name:${event.defendantName}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            try {
+              const res = await apiFetch("/watched-cases", {
+                method: "POST",
+                body: JSON.stringify({
+                  searchType: "defendant_name",
+                  searchValue: event.defendantName,
+                  label: `${event.defendantName} (${event.courtName})`,
+                  monitorChanges: true,
+                  autoAddNew: true,
+                }),
+              });
+              if (res.ok) successCount++;
+            } catch (err) {
+              console.error("Failed to create watched case:", err);
+            }
+          }
+        }
+      }
+
+      setBatchProgress("");
+      const parts: string[] = [];
+      if (unsyncedIds.length > 0) parts.push(`Added ${unsyncedIds.length} events to ${calLabel}`);
+      if (successCount > 0) parts.push(`monitoring ${successCount} case${successCount !== 1 ? "s" : ""} for changes and new hearings`);
+      setWatchSuccess(parts.join(". ") + ". Your calendar will stay up to date automatically.");
+
+      fetchUpdates();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to set up auto-updates";
+      if (msg.includes("No calendar connected")) {
+        window.location.href = "/api/auth/google";
+        return;
+      }
+      setWatchError(msg);
+      setBatchProgress("");
+    } finally {
+      setBatchAdding(false);
+    }
+  }
+
   async function handleRemoveAllFromCalendar() {
     const syncedInResults = results.filter(e => calSyncedIds.has(e.id) && calEntryMap[e.id]);
 
@@ -385,9 +482,30 @@ export default function SearchResultsPage() {
           events={newResults}
           formatDate={formatDate}
           onAddToCalendar={calendarProvider ? handleAddToCalendar : undefined}
+          onAddAllNewToCalendar={calendarProvider ? async () => {
+            const newUnsyncedIds = newResults.filter(e => !calSyncedIds.has(e.id)).map(e => e.id);
+            if (newUnsyncedIds.length === 0) return;
+            setBatchAdding(true);
+            setBatchProgress(`Adding ${newUnsyncedIds.length} new events...`);
+            try {
+              const data = await addAllEventsToCalendar(newUnsyncedIds);
+              const ns = new Set(calSyncedIds);
+              const nm = { ...calEntryMap };
+              for (const r of data.results) { if (r.synced) { ns.add(r.courtEventId); nm[r.courtEventId] = r.calendarEntryId; } }
+              setCalSyncedIds(ns);
+              setCalEntryMap(nm);
+              setWatchSuccess(`Added ${data.results.filter((r: { synced: boolean }) => r.synced).length} new events to ${calLabel}`);
+            } catch (err) {
+              setWatchError(err instanceof Error ? err.message : "Failed to add new events");
+            } finally {
+              setBatchAdding(false);
+              setBatchProgress("");
+            }
+          } : undefined}
           calSyncedIds={calSyncedIds}
           calSyncingIds={calSyncingIds}
           calLabel={calLabel}
+          batchAdding={batchAdding}
         />
       )}
 
@@ -415,10 +533,23 @@ export default function SearchResultsPage() {
                   </button>
                 )}
                 <button
+                  onClick={calendarProvider ? handleAddAllAndAutoUpdate : () => navigate("/calendar-settings")}
+                  disabled={batchAdding || batchRemoving}
+                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed bg-green-600 text-white hover:bg-green-700 transition-colors"
+                  title={calendarProvider ? `Add all events to ${providerLabels[calendarProvider] || "Calendar"} and auto-update when changes are found` : "Connect a calendar first"}
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  {batchAdding
+                    ? batchProgress
+                    : `Add All & Auto-Update ${calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar"}`}
+                </button>
+                <button
                   onClick={calendarProvider ? handleAddAllToCalendar : () => navigate("/calendar-settings")}
                   disabled={batchAdding || allSynced || batchRemoving}
                   className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed bg-amber-600 text-white hover:bg-amber-700 transition-colors"
-                  title={allSynced ? "All events already added" : calendarProvider ? `Add all ${results.length} events to ${providerLabels[calendarProvider] || "Calendar"}` : "Connect a calendar to add events"}
+                  title={allSynced ? "All events already added" : calendarProvider ? `Add all ${results.length} events to ${providerLabels[calendarProvider] || "Calendar"} (no auto-updates)` : "Connect a calendar to add events"}
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -427,7 +558,7 @@ export default function SearchResultsPage() {
                     ? batchProgress
                     : allSynced
                       ? "All Added"
-                      : `Add All to ${calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar"}`}
+                      : "Add All Only"}
                 </button>
               </div>
             )}

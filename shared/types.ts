@@ -12,6 +12,7 @@ export interface UserPublic {
   emailVerified: boolean;
   googleConnected: boolean;
   isAdmin: boolean;
+  isApproved: boolean;
   notificationPreferences: NotificationPreferences;
   calendarPreferences: CalendarPreferences;
   tosAgreedAt: string | null;

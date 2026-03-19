@@ -8,6 +8,7 @@ const errorMessages: Record<string, string> = {
   invalid_state: "Sign-in session expired. Please try again.",
   db_unavailable: "Service temporarily unavailable. Please try again later.",
   callback_failed: "Failed to complete sign-in. Please try again.",
+  pending_approval: "Your account is pending administrator approval. You'll receive an email when approved.",
 };
 
 export default function LoginPage() {
