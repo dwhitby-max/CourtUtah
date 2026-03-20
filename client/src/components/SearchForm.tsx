@@ -5,9 +5,11 @@ import CourtPicker from "./CourtPicker";
 interface SearchFormProps {
   onSearch: (params: Record<string, string>) => void;
   loading?: boolean;
+  hasCalendarConnection?: boolean;
+  initialAutoAdd?: boolean;
 }
 
-export default function SearchForm({ onSearch, loading }: SearchFormProps) {
+export default function SearchForm({ onSearch, loading, hasCalendarConnection, initialAutoAdd }: SearchFormProps) {
   const [defendantName, setDefendantName] = useState("");
   const [caseNumber, setCaseNumber] = useState("");
   const [selectedCourts, setSelectedCourts] = useState<string[]>([]);
@@ -18,6 +20,7 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
   const [charges, setCharges] = useState("");
   const [judgeName, setJudgeName] = useState("");
   const [attorney, setAttorney] = useState("");
+  const [autoAddToCalendar, setAutoAddToCalendar] = useState(initialAutoAdd ?? false);
   const [coverage, setCoverage] = useState<{
     totalEvents: number;
     totalCourts: number;
@@ -47,6 +50,7 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
     if (attorney) params.attorney = attorney;
 
     if (Object.keys(params).length === 0) return;
+    if (autoAddToCalendar) params._autoAddToCalendar = "true";
     onSearch(params);
   }
 
@@ -168,7 +172,7 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
         </div>
       </div>
 
-      <div className="mt-4">
+      <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-4">
         <button
           type="submit"
           disabled={loading}
@@ -176,6 +180,22 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
         >
           {loading ? "Searching..." : "Search"}
         </button>
+
+        {hasCalendarConnection && (
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <div className="relative">
+              <input
+                type="checkbox"
+                checked={autoAddToCalendar}
+                onChange={(e) => setAutoAddToCalendar(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-gray-300 rounded-full peer-checked:bg-green-500 transition-colors"></div>
+              <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow peer-checked:translate-x-4 transition-transform"></div>
+            </div>
+            <span className="text-sm text-gray-700 font-medium">Auto-add results to calendar</span>
+          </label>
+        )}
       </div>
     </form>
   );

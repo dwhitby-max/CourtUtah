@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import SearchForm from "@/components/SearchForm";
 import { searchCourtEvents } from "@/api/search";
-import { addEventToCalendar, getCalendarConnections, getSyncedEvents, removeEventFromCalendar } from "@/api/calendar";
+import { addEventToCalendar, addAllEventsToCalendar, getCalendarConnections, getSyncedEvents, removeEventFromCalendar } from "@/api/calendar";
 import { apiFetch } from "@/api/client";
 import NewEntriesSection from "@/components/NewEntriesSection";
 import { CourtEvent } from "@shared/types";
@@ -129,6 +129,11 @@ export default function SearchPage() {
   }
 
   async function handleSearch(params: Record<string, string>) {
+    // Extract auto-add flag before passing to API
+    const autoAdd = params._autoAddToCalendar === "true";
+    const searchParams = { ...params };
+    delete searchParams._autoAddToCalendar;
+
     setError("");
     setLoading(true);
     setSearched(true);
@@ -136,9 +141,9 @@ export default function SearchPage() {
     setExpandedId(null);
 
     try {
-      const data = await searchCourtEvents(params);
+      const data = await searchCourtEvents(searchParams);
       setResults(data.results);
-      setLastSearchParams(params);
+      setLastSearchParams(searchParams);
       setLastSearchSavedId(data.savedSearchId ?? null);
       setPreviousRunAt(data.previousRunAt ?? null);
       setCalSyncingIds(new Set());
@@ -146,12 +151,20 @@ export default function SearchPage() {
       // Refresh saved searches list after search (it may have been auto-saved)
       fetchSavedSearches();
       // Re-fetch synced events so previously-synced results show the remove button
+      let currentSynced: Set<number>;
       try {
         const synced = await getSyncedEvents();
         setCalEntryMap(synced);
-        setCalSyncedIds(new Set(Object.keys(synced).map(Number)));
+        currentSynced = new Set(Object.keys(synced).map(Number));
+        setCalSyncedIds(currentSynced);
       } catch {
-        setCalSyncedIds(new Set());
+        currentSynced = new Set();
+        setCalSyncedIds(currentSynced);
+      }
+
+      // Auto-add to calendar if toggled on
+      if (autoAdd && hasCalendarConnection && data.results.length > 0) {
+        await autoAddResults(data.results, currentSynced, data.savedSearchId);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Search failed";
@@ -162,9 +175,142 @@ export default function SearchPage() {
     }
   }
 
+  async function autoAddResults(
+    searchResults: CourtEvent[],
+    currentSynced: Set<number>,
+    savedSearchId?: number
+  ) {
+    const unsyncedIds = searchResults
+      .filter(e => e.id > 0 && !currentSynced.has(e.id))
+      .map(e => e.id);
+
+    if (unsyncedIds.length === 0) {
+      setWatchSuccess("All events are already on your calendar.");
+      setAddedAll(true);
+      return;
+    }
+
+    setAddingAll(true);
+    setWatchSuccess("");
+
+    try {
+      // Step 1: Batch add all unsynced events to calendar
+      const data = await addAllEventsToCalendar(unsyncedIds);
+      const newSyncedIds = new Set(currentSynced);
+      const newEntryMap = { ...calEntryMap };
+
+      for (const r of data.results) {
+        if (r.synced) {
+          newSyncedIds.add(r.courtEventId);
+          newEntryMap[r.courtEventId] = r.calendarEntryId;
+        }
+      }
+
+      setCalSyncedIds(newSyncedIds);
+      setCalEntryMap(newEntryMap);
+
+      // Step 2: Create watched cases with monitorChanges + autoAddNew
+      const seen = new Set<string>();
+      let watchCount = 0;
+
+      for (const event of searchResults) {
+        if (event.caseNumber) {
+          const key = `case_number:${event.caseNumber}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            try {
+              const res = await apiFetch("/watched-cases", {
+                method: "POST",
+                body: JSON.stringify({
+                  searchType: "case_number",
+                  searchValue: event.caseNumber,
+                  label: `${event.caseNumber} - ${event.defendantName || "Unknown"} (${event.courtName})`,
+                  monitorChanges: true,
+                  autoAddNew: true,
+                }),
+              });
+              if (res.ok) watchCount++;
+            } catch {
+              // non-fatal
+            }
+          }
+        } else if (event.defendantName) {
+          const key = `defendant_name:${event.defendantName}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            try {
+              const res = await apiFetch("/watched-cases", {
+                method: "POST",
+                body: JSON.stringify({
+                  searchType: "defendant_name",
+                  searchValue: event.defendantName,
+                  label: `${event.defendantName} (${event.courtName})`,
+                  monitorChanges: true,
+                  autoAddNew: true,
+                }),
+              });
+              if (res.ok) watchCount++;
+            } catch {
+              // non-fatal
+            }
+          }
+        }
+      }
+
+      // Update saved search to remember auto-add preference
+      if (savedSearchId && savedSearchId > 0) {
+        try {
+          await apiFetch(`/saved-searches/${savedSearchId}`, {
+            method: "PATCH",
+            body: JSON.stringify({ autoAddToCalendar: true }),
+          });
+        } catch {
+          // non-fatal
+        }
+      }
+
+      const added = data.results.filter(r => r.synced).length;
+      const parts: string[] = [];
+      parts.push(`Auto-added ${added} event${added !== 1 ? "s" : ""} to ${calLabel}`);
+      if (watchCount > 0) parts.push(`monitoring ${watchCount} case${watchCount !== 1 ? "s" : ""} for changes`);
+      setWatchSuccess(parts.join(". ") + ". Your calendar will stay up to date automatically.");
+      setAddedAll(true);
+
+      fetchSavedSearches();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to auto-add events";
+      setError(msg);
+    } finally {
+      setAddingAll(false);
+    }
+  }
+
   async function handleRunSavedSearch(saved: SavedSearchRow) {
     const queryParams = toQueryParams(saved.search_params);
+    // Carry over auto-add flag from saved search
+    if (saved.search_params._autoAddToCalendar) {
+      queryParams._autoAddToCalendar = "true";
+    }
     await handleSearch(queryParams);
+  }
+
+  async function handleToggleSavedAutoAdd(saved: SavedSearchRow) {
+    const newValue = !saved.search_params._autoAddToCalendar;
+    try {
+      const res = await apiFetch(`/saved-searches/${saved.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ autoAddToCalendar: newValue }),
+      });
+      if (res.ok) {
+        setSavedSearches(prev => prev.map(s =>
+          s.id === saved.id
+            ? { ...s, search_params: { ...s.search_params, _autoAddToCalendar: newValue ? "true" : undefined } }
+            : s
+        ));
+      }
+    } catch {
+      // non-fatal
+    }
   }
 
   async function handleDeleteSavedSearch(id: number) {
@@ -351,7 +497,7 @@ export default function SearchPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-gray-900">Search Court Calendars</h1>
 
-      <SearchForm onSearch={handleSearch} loading={loading} />
+      <SearchForm onSearch={handleSearch} loading={loading} hasCalendarConnection={hasCalendarConnection} />
 
       {/* Saved Searches */}
       {savedSearches.length > 0 && (
@@ -372,6 +518,21 @@ export default function SearchPage() {
                   </div>
                 </button>
                 <div className="flex items-center gap-3 shrink-0">
+                  {hasCalendarConnection && (
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none" title="Auto-add results to calendar when this search runs">
+                      <div className="relative">
+                        <input
+                          type="checkbox"
+                          checked={!!saved.search_params._autoAddToCalendar}
+                          onChange={() => handleToggleSavedAutoAdd(saved)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-7 h-4 bg-gray-300 rounded-full peer-checked:bg-green-500 transition-colors"></div>
+                        <div className="absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full shadow peer-checked:translate-x-3 transition-transform"></div>
+                      </div>
+                      <span className="text-xs text-gray-500">Auto-sync</span>
+                    </label>
+                  )}
                   <button
                     onClick={() => handleRunSavedSearch(saved)}
                     disabled={loading}
