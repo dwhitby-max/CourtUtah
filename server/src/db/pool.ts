@@ -26,14 +26,13 @@ export function getPool(): Pool | null {
   }
 
   if (!pool) {
-    // Replit's local PostgreSQL proxy does not support SSL;
-    // only enable SSL when DATABASE_URL explicitly contains sslmode or when in production with an external DB.
+    // Respect the sslmode in DATABASE_URL. Replit's local PostgreSQL uses sslmode=disable.
     const dbUrl = config.databaseUrl;
-    const needsSsl = dbUrl.includes("sslmode=") || dbUrl.includes(".com:") || dbUrl.includes(".io:");
+    const sslDisabled = dbUrl.includes("sslmode=disable");
 
     pool = new Pool({
       connectionString: dbUrl,
-      ssl: needsSsl ? { rejectUnauthorized: false } : false,
+      ssl: sslDisabled ? false : { rejectUnauthorized: false },
       connectionTimeoutMillis: 8000,
       max: 5,
       min: 0,
