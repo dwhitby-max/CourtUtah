@@ -76,18 +76,18 @@ export async function sendNewSignupNotification(
   signupIp: string | null
 ): Promise<boolean> {
   const html = `
-    <h2>New User Signup — Approval Required</h2>
-    <p>A new user has signed up for Court Calendar Tracker and is awaiting your approval.</p>
+    <h2>New User Signup — Auto-Approved</h2>
+    <p>A new user has signed up for Court Calendar Tracker and was automatically approved.</p>
     <table border="0" cellpadding="8" cellspacing="0" style="border-collapse:collapse;">
       <tr><td><strong>Email:</strong></td><td>${newUserEmail}</td></tr>
       <tr><td><strong>Signup IP:</strong></td><td>${signupIp || "Unknown"}</td></tr>
       <tr><td><strong>Time:</strong></td><td>${new Date().toLocaleString("en-US", { timeZone: "America/Denver" })} MT</td></tr>
     </table>
     <p style="margin-top:16px;">
-      Log in to the <strong>Admin Panel → Users</strong> tab to approve or reject this account.
+      You can manage users in the <strong>Admin Panel → Users</strong> tab.
     </p>
   `;
-  return sendEmail(adminEmail, `New Signup Pending Approval: ${newUserEmail}`, html);
+  return sendEmail(adminEmail, `New Signup (Auto-Approved): ${newUserEmail}`, html);
 }
 
 export async function sendAccountApprovedEmail(userEmail: string, appUrl: string): Promise<boolean> {

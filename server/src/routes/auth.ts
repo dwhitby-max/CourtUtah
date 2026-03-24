@@ -169,11 +169,11 @@ router.get("/google/callback", async (req: Request, res: Response) => {
             [userinfo.id, userId]
           );
         } else {
-          // Create new user — account requires admin approval
+          // Create new user — auto-approved, admin notified
           const signupIp = req.ip || req.headers["x-forwarded-for"] || null;
           const newUser = await client.query(
             `INSERT INTO users (email, google_id, email_verified, signup_ip, is_approved, notification_preferences)
-             VALUES ($1, $2, true, $3, false, '{"emailEnabled": true, "smsEnabled": false, "inAppEnabled": true, "frequency": "immediate"}')
+             VALUES ($1, $2, true, $3, true, '{"emailEnabled": true, "smsEnabled": false, "inAppEnabled": true, "frequency": "immediate"}')
              RETURNING id`,
             [userinfo.email.toLowerCase(), userinfo.id, signupIp]
           );
