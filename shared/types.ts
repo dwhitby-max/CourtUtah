@@ -6,7 +6,7 @@
 // --- Auth ---
 
 export type SubscriptionPlan = "free" | "pro";
-export type SubscriptionStatus = "none" | "active" | "canceled" | "past_due" | "trialing";
+export type SubscriptionStatus = "none" | "active" | "canceled" | "past_due" | "trialing" | "grandfathered";
 
 export interface UserPublic {
   id: number;

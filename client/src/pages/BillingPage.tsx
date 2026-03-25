@@ -51,7 +51,7 @@ export default function BillingPage() {
     }
   }, []);
 
-  const isPro = subscription?.plan === "pro" && subscription?.status === "active";
+  const isPro = subscription?.plan === "pro" && (subscription?.status === "active" || subscription?.status === "grandfathered");
 
   async function handleUpgrade() {
     setLoading(true);

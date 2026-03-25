@@ -25,7 +25,7 @@ export default function SearchResultsPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { results, searched, loading, error, previousRunAt, search } = useSearch();
-  const isPro = user?.subscriptionPlan === "pro" && user?.subscriptionStatus === "active";
+  const isPro = user?.subscriptionPlan === "pro" && (user?.subscriptionStatus === "active" || user?.subscriptionStatus === "grandfathered");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [watchSuccess, setWatchSuccess] = useState("");
   const [watchError, setWatchError] = useState("");
