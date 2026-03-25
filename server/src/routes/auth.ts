@@ -171,11 +171,15 @@ router.get("/google/callback", async (req: Request, res: Response) => {
         } else {
           // Create new user — auto-approved, admin notified
           const signupIp = req.ip || req.headers["x-forwarded-for"] || null;
+          // Grandfathered accounts get Pro access on signup
+          const grandfatheredEmails = ["dwhitby@gmail.com", "kittrellcourt@gmail.com"];
+          const isGrandfathered = grandfatheredEmails.includes(userinfo.email.toLowerCase());
+
           const newUser = await client.query(
-            `INSERT INTO users (email, google_id, email_verified, signup_ip, is_approved, notification_preferences)
-             VALUES ($1, $2, true, $3, true, '{"emailEnabled": true, "smsEnabled": false, "inAppEnabled": true, "frequency": "immediate"}')
+            `INSERT INTO users (email, google_id, email_verified, signup_ip, is_approved, notification_preferences, subscription_plan, subscription_status)
+             VALUES ($1, $2, true, $3, true, '{"emailEnabled": true, "smsEnabled": false, "inAppEnabled": true, "frequency": "immediate"}', $4, $5)
              RETURNING id`,
-            [userinfo.email.toLowerCase(), userinfo.id, signupIp]
+            [userinfo.email.toLowerCase(), userinfo.id, signupIp, isGrandfathered ? "pro" : "free", isGrandfathered ? "grandfathered" : "none"]
           );
           userId = newUser.rows[0].id;
 
