@@ -110,14 +110,36 @@ export default function TermsPage() {
             these Terms.
           </p>
 
-          <h2 className="text-xl font-semibold text-slate-800 mt-8">12. Termination</h2>
+          <h2 className="text-xl font-semibold text-slate-800 mt-8">12. Subscription, Refund, and Cancellation Policy</h2>
+          <p>
+            The Service offers a free tier with limited access and a paid Pro subscription at $14.99 per
+            month, billed monthly through Stripe. By subscribing, you authorize recurring monthly charges
+            to your payment method on file.
+          </p>
+          <p><strong>7-Day Refund Policy:</strong> If you are not satisfied with your Pro subscription,
+            you may request a full refund within seven (7) days of your initial subscription purchase.
+            Refund requests must be submitted by contacting us at ops@1564hub.com. After the 7-day
+            period, no refunds will be issued for the current billing month.
+          </p>
+          <p><strong>No Partial Refunds:</strong> Once the 7-day refund window has passed, no refunds
+            will be provided for any remaining time in the current billing period. You will continue to
+            have access to Pro features through the end of your paid billing cycle.
+          </p>
+          <p><strong>Cancellation:</strong> You may cancel your subscription at any time prior to your
+            next renewal date. Cancellations can be processed through the billing management page within
+            the Service or by contacting us at ops@1564hub.com. Upon cancellation, your Pro access will
+            remain active until the end of your current paid billing period, after which your account
+            will revert to the free tier. No further charges will be made after cancellation.
+          </p>
+
+          <h2 className="text-xl font-semibold text-slate-800 mt-8">13. Termination</h2>
           <p>
             We may terminate or suspend your access to the Service at any time, with or without cause,
             and with or without notice. Upon termination, your right to use the Service will immediately
             cease. Provisions that by their nature should survive termination shall survive.
           </p>
 
-          <h2 className="text-xl font-semibold text-slate-800 mt-8">13. Governing Law and Jurisdiction</h2>
+          <h2 className="text-xl font-semibold text-slate-800 mt-8">14. Governing Law and Jurisdiction</h2>
           <p>
             These Terms shall be governed by and construed in accordance with the laws of the State of
             Utah, without regard to its conflict of law provisions. Any legal action or proceeding arising
@@ -125,14 +147,14 @@ export default function TermsPage() {
             State of Utah, and you hereby consent to the personal jurisdiction and venue of such courts.
           </p>
 
-          <h2 className="text-xl font-semibold text-slate-800 mt-8">14. Changes to These Terms</h2>
+          <h2 className="text-xl font-semibold text-slate-800 mt-8">15. Changes to These Terms</h2>
           <p>
             We reserve the right to modify these Terms at any time. We will notify you of material
             changes by posting the updated Terms on this page and updating the "Effective Date" above.
             Your continued use of the Service after changes constitutes acceptance of the updated Terms.
           </p>
 
-          <h2 className="text-xl font-semibold text-slate-800 mt-8">15. Severability</h2>
+          <h2 className="text-xl font-semibold text-slate-800 mt-8">16. Severability</h2>
           <p>
             If any provision of these Terms is held to be unenforceable or invalid, such provision
             will be changed and interpreted to accomplish the objectives of such provision to the
@@ -140,7 +162,7 @@ export default function TermsPage() {
             in full force and effect.
           </p>
 
-          <h2 className="text-xl font-semibold text-slate-800 mt-8">16. Contact Us</h2>
+          <h2 className="text-xl font-semibold text-slate-800 mt-8">17. Contact Us</h2>
           <p>
             If you have questions about these Terms, please contact us at:
           </p>
