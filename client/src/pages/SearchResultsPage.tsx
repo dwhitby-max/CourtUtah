@@ -1,11 +1,13 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useSearch } from "@/hooks/useSearch";
+import { useAuth } from "@/store/authStore";
 import { apiFetch } from "@/api/client";
 import { addEventToCalendar, addAllEventsToCalendar, getCalendarConnections, getSyncedEvents, removeEventFromCalendar } from "@/api/calendar";
 import UpdatesSection from "@/components/UpdatesSection";
 import NewEntriesSection from "@/components/NewEntriesSection";
 import MonitorModal from "@/components/MonitorModal";
+import UpgradeBanner from "@/components/UpgradeBanner";
 import { CourtEvent } from "@shared/types";
 import { ChangeRecord } from "@/components/UpdatesSection";
 
@@ -16,10 +18,14 @@ const providerLabels: Record<string, string> = {
   caldav: "CalDAV",
 };
 
+const FREE_RESULT_LIMIT = 5;
+
 export default function SearchResultsPage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { results, searched, loading, error, previousRunAt, search } = useSearch();
+  const isPro = user?.subscriptionPlan === "pro" && user?.subscriptionStatus === "active";
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [watchSuccess, setWatchSuccess] = useState("");
   const [watchError, setWatchError] = useState("");
@@ -583,18 +589,20 @@ export default function SearchResultsPage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {(newResults.length > 0 ? existingResults : results).map((event) => (
+                  {(newResults.length > 0 ? existingResults : results).map((event, index) => {
+                    const isLocked = !isPro && index >= FREE_RESULT_LIMIT;
+                    return (
                     <>
                       <tr key={event.id} className="hover:bg-gray-50">
                         <td className="px-4 py-3 text-sm whitespace-nowrap">
-                          <div>{formatDate(event.eventDate)}</div>
+                          <div className={isLocked ? "blur-sm select-none" : ""}>{formatDate(event.eventDate)}</div>
                           {event.isVirtual && (
-                            <span className="inline-block mt-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+                            <span className={`inline-block mt-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full ${isLocked ? "blur-sm select-none" : ""}`}>
                               Virtual
                             </span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-sm whitespace-nowrap font-medium">
+                        <td className={`px-4 py-3 text-sm whitespace-nowrap font-medium ${isLocked ? "blur-sm select-none" : ""}`}>
                           {event.eventTime || "TBD"}
                         </td>
                         <td className="px-4 py-3 text-sm">
@@ -622,7 +630,17 @@ export default function SearchResultsPage() {
                         <td className="px-4 py-3 text-sm">{event.hearingType || "N/A"}</td>
                         <td className="px-4 py-3 text-sm">
                           <div className="flex items-center gap-2">
-                            {calendarProvider ? (
+                            {isLocked ? (
+                              <button
+                                onClick={() => navigate("/billing")}
+                                className="p-1.5 rounded-md text-amber-500 hover:text-amber-700 hover:bg-amber-50 transition-colors"
+                                title="Upgrade to add to calendar"
+                              >
+                                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                                </svg>
+                              </button>
+                            ) : calendarProvider ? (
                               <>
                                 {calSyncedIds.has(event.id) ? (
                                   <button
@@ -754,12 +772,16 @@ export default function SearchResultsPage() {
                         </tr>
                       )}
                     </>
-                  ))}
+                  ); })}
                 </tbody>
               </table>
             </div>
           )}
         </div>
+      )}
+
+      {searched && !loading && !isPro && results.length > FREE_RESULT_LIMIT && (
+        <UpgradeBanner totalResults={results.length} freeLimit={FREE_RESULT_LIMIT} />
       )}
 
       {showMonitorModal && (

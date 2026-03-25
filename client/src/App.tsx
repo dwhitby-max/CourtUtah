@@ -18,6 +18,7 @@ import PrivacyPolicyPage from "@/pages/PrivacyPolicyPage";
 import TermsPage from "@/pages/TermsPage";
 import AcceptTermsPage from "@/pages/AcceptTermsPage";
 import PendingApprovalPage from "@/pages/PendingApprovalPage";
+import BillingPage from "@/pages/BillingPage";
 
 export default function App() {
   return (
@@ -49,6 +50,7 @@ export default function App() {
             <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/notification-settings" element={<NotificationSettingsPage />} />
             <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/billing" element={<BillingPage />} />
             <Route path="/admin" element={<AdminPage />} />
           </Route>
         </Routes>

@@ -268,7 +268,9 @@ router.get("/me", authenticateToken, async (req: Request, res: Response) => {
   const client = await pool.connect();
   try {
     const result = await client.query(
-      `SELECT id, email, phone, email_verified, google_id, is_admin, is_approved, notification_preferences, calendar_preferences, tos_agreed_at, created_at
+      `SELECT id, email, phone, email_verified, google_id, is_admin, is_approved,
+              notification_preferences, calendar_preferences, tos_agreed_at, created_at,
+              subscription_plan, subscription_status, subscription_current_period_end
        FROM users WHERE id = $1`,
       [req.user.userId]
     );
@@ -292,6 +294,9 @@ router.get("/me", authenticateToken, async (req: Request, res: Response) => {
         calendarPreferences: user.calendar_preferences || {},
         tosAgreedAt: user.tos_agreed_at || null,
         createdAt: user.created_at,
+        subscriptionPlan: user.subscription_plan || "free",
+        subscriptionStatus: user.subscription_status || "none",
+        subscriptionCurrentPeriodEnd: user.subscription_current_period_end || null,
       },
     });
   } catch (err) {

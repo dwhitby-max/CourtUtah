@@ -5,6 +5,9 @@
 
 // --- Auth ---
 
+export type SubscriptionPlan = "free" | "pro";
+export type SubscriptionStatus = "none" | "active" | "canceled" | "past_due" | "trialing";
+
 export interface UserPublic {
   id: number;
   email: string;
@@ -17,6 +20,9 @@ export interface UserPublic {
   calendarPreferences: CalendarPreferences;
   tosAgreedAt: string | null;
   createdAt: string;
+  subscriptionPlan: SubscriptionPlan;
+  subscriptionStatus: SubscriptionStatus;
+  subscriptionCurrentPeriodEnd: string | null;
 }
 
 export type NotificationFrequency = "immediate" | "daily_digest" | "weekly_digest";

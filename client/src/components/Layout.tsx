@@ -2,11 +2,13 @@ import { useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/store/authStore";
 import NotificationBell from "./NotificationBell";
+import SupportModal from "./SupportModal";
 
 export default function Layout() {
   const { user, logout } = useAuth();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [showSupport, setShowSupport] = useState(false);
 
   function navClass(path: string): string {
     const base = "px-3 py-2 rounded-md text-sm font-medium";
@@ -43,6 +45,21 @@ export default function Layout() {
             </div>
             <div className="flex items-center space-x-4">
               <NotificationBell />
+              <button
+                onClick={() => setShowSupport(true)}
+                className="hidden sm:inline-flex items-center gap-1 text-slate-200 hover:text-white text-sm transition-colors"
+                title="Contact Support"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Support
+              </button>
+              {user?.subscriptionPlan !== "pro" && (
+                <Link to="/billing" className="hidden sm:inline px-2 py-1 text-xs font-medium text-amber-900 bg-amber-400 hover:bg-amber-300 rounded-md transition-colors">
+                  Upgrade
+                </Link>
+              )}
               <Link to="/profile" className="hidden sm:inline text-slate-200 hover:text-white text-sm truncate max-w-32">
                 {user?.email}
               </Link>
@@ -75,6 +92,17 @@ export default function Layout() {
             <Link to="/calendar-settings" className={mobileNavClass("/calendar-settings")} onClick={() => setMobileMenuOpen(false)}>Calendar</Link>
             {user?.isAdmin && <Link to="/admin" className={mobileNavClass("/admin")} onClick={() => setMobileMenuOpen(false)}>Admin</Link>}
             <div className="border-t border-slate-600 pt-2 mt-2">
+              <button
+                onClick={() => { setShowSupport(true); setMobileMenuOpen(false); }}
+                className="block w-full text-left px-3 py-2 text-slate-200 hover:text-white text-sm"
+              >
+                Support
+              </button>
+              {user?.subscriptionPlan !== "pro" && (
+                <Link to="/billing" className="block px-3 py-2 text-amber-400 hover:text-amber-300 text-sm font-medium" onClick={() => setMobileMenuOpen(false)}>
+                  Upgrade to Pro
+                </Link>
+              )}
               <Link to="/profile" className="block px-3 py-2 text-slate-200 hover:text-white text-sm" onClick={() => setMobileMenuOpen(false)}>
                 {user?.email}
               </Link>
@@ -97,6 +125,8 @@ export default function Layout() {
           <Link to="/terms" className="hover:text-gray-600 underline">Terms and Conditions</Link>
         </div>
       </footer>
+
+      {showSupport && <SupportModal onClose={() => setShowSupport(false)} />}
     </div>
   );
 }

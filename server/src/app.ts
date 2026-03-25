@@ -55,6 +55,8 @@ const corsOrigin = config.nodeEnv === "production"
 app.use(cors({ origin: corsOrigin }));
 
 // 4. Body parsers
+// Stripe webhook needs raw body for signature verification — must be before express.json()
+app.use("/api/billing/webhook", express.raw({ type: "application/json" }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

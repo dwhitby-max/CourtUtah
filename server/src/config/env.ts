@@ -56,6 +56,12 @@ export const config = {
   sentryDsn: process.env.SENTRY_DSN || "",
 
   adminEmail: process.env.ADMIN_EMAIL || "",
+
+  stripe: {
+    secretKey: process.env.STRIPE_SECRET_KEY || "",
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || "",
+    priceId: process.env.STRIPE_PRICE_ID || "",
+  },
 };
 
 validateEnv();

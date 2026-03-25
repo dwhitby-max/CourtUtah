@@ -223,6 +223,26 @@ router.post("/events", authenticateToken, heavyLimiter, async (req: Request, res
 
     const connectionId = connResult.rows[0].id;
 
+    // Free tier limit: max 5 calendar entries
+    const userPlan = await client.query(
+      "SELECT subscription_plan FROM users WHERE id = $1",
+      [currentUser.userId]
+    );
+    const plan = userPlan.rows[0]?.subscription_plan || "free";
+    if (plan === "free") {
+      const entryCount = await client.query(
+        "SELECT COUNT(*) as cnt FROM calendar_entries WHERE user_id = $1",
+        [currentUser.userId]
+      );
+      if (parseInt(entryCount.rows[0].cnt, 10) >= 5) {
+        res.status(403).json({
+          error: "Free plan limited to 5 calendar syncs. Upgrade to Pro for unlimited access.",
+          upgradeRequired: true,
+        });
+        return;
+      }
+    }
+
     // Check if this event is already synced for this user
     const existingEntry = await client.query(
       `SELECT id, sync_status FROM calendar_entries
@@ -329,9 +349,38 @@ router.post("/events/batch", authenticateToken, heavyLimiter, async (req: Reques
         return;
       }
     }
+    // Free tier limit: max 5 calendar entries
+    const userPlan = await client.query(
+      "SELECT subscription_plan FROM users WHERE id = $1",
+      [currentUser.userId]
+    );
+    const plan = userPlan.rows[0]?.subscription_plan || "free";
+    let remainingSlots = Infinity;
+    if (plan === "free") {
+      const entryCount = await client.query(
+        "SELECT COUNT(*) as cnt FROM calendar_entries WHERE user_id = $1",
+        [currentUser.userId]
+      );
+      const currentCount = parseInt(entryCount.rows[0].cnt, 10);
+      remainingSlots = Math.max(0, 5 - currentCount);
+      if (remainingSlots === 0) {
+        res.status(403).json({
+          error: "Free plan limited to 5 calendar syncs. Upgrade to Pro for unlimited access.",
+          upgradeRequired: true,
+        });
+        return;
+      }
+    }
+
     const results: Array<{ courtEventId: number; calendarEntryId: number; synced: boolean; error?: string }> = [];
+    let synced = 0;
 
     for (const courtEventId of courtEventIds) {
+      // Stop if free user hit limit
+      if (plan === "free" && synced >= remainingSlots) {
+        results.push({ courtEventId, calendarEntryId: 0, synced: false, error: "Free plan limit reached" });
+        continue;
+      }
       try {
         // Check if event exists
         const eventResult = await client.query(
@@ -369,6 +418,7 @@ router.post("/events/batch", authenticateToken, heavyLimiter, async (req: Reques
         }
 
         const success = await syncCalendarEntry(entryId);
+        if (success) synced++;
         results.push({ courtEventId, calendarEntryId: entryId, synced: success });
       } catch (err) {
         results.push({ courtEventId, calendarEntryId: 0, synced: false, error: err instanceof Error ? err.message : "Sync failed" });
