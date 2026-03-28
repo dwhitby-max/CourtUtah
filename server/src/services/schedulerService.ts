@@ -37,8 +37,16 @@ function watchedCaseToLiveParams(wc: WatchedCaseRow): LiveSearchParams | null {
       return { caseNumber: wc.search_value };
     case "judge_name":
       return { judgeName: wc.search_value };
-    case "attorney":
-      return { attorneyLastName: wc.search_value };
+    case "attorney": {
+      const parts = wc.search_value.trim().split(/\s+/);
+      if (parts.length >= 2) {
+        return {
+          attorneyFirstName: parts.slice(0, -1).join(" "),
+          attorneyLastName: parts[parts.length - 1],
+        };
+      }
+      return { attorneyLastName: parts[0] };
+    }
     default:
       // court_name, court_date, defendant_otn, citation_number
       // can't be directly searched via utcourts — need a primary search field

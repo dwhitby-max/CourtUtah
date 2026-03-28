@@ -626,7 +626,7 @@ export default function SearchResultsPage() {
             <div className="p-6 text-gray-500 text-center">
               No court events match your search criteria. Try broadening your search.
             </div>
-          ) : (existingResults.length > 0 || newResults.length === 0) && (
+          ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
@@ -642,7 +642,7 @@ export default function SearchResultsPage() {
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {(() => {
-                    const allEvents = newResults.length > 0 ? existingResults : results;
+                    const allEvents = results;
                     const totalPages = Math.ceil(allEvents.length / RESULTS_PER_PAGE);
                     const pageEvents = allEvents.slice((currentPage - 1) * RESULTS_PER_PAGE, currentPage * RESULTS_PER_PAGE);
                     const globalOffset = (currentPage - 1) * RESULTS_PER_PAGE;
@@ -836,9 +836,9 @@ export default function SearchResultsPage() {
               </table>
               <Pagination
                 currentPage={currentPage}
-                totalPages={Math.ceil((newResults.length > 0 ? existingResults : results).length / RESULTS_PER_PAGE)}
+                totalPages={Math.ceil((results).length / RESULTS_PER_PAGE)}
                 onPageChange={(p) => { setCurrentPage(p); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                totalItems={(newResults.length > 0 ? existingResults : results).length}
+                totalItems={(results).length}
                 pageSize={RESULTS_PER_PAGE}
               />
             </div>

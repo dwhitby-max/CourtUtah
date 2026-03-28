@@ -91,7 +91,19 @@ function toLiveSearchBase(params: Record<string, string | undefined>): LiveSearc
   if (params.caseNumber) return { caseNumber: params.caseNumber };
   if (params.defendantName) return { partyName: params.defendantName };
   if (params.judgeName) return { judgeName: params.judgeName };
-  if (params.attorney) return { attorneyLastName: params.attorney };
+  if (params.attorney) {
+    // utcourts.gov has separate first/last name fields for attorney search.
+    // Split "Ryan Robinson" into first="Ryan" last="Robinson".
+    // If single word, treat as last name only.
+    const parts = params.attorney.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      return {
+        attorneyFirstName: parts.slice(0, -1).join(" "),
+        attorneyLastName: parts[parts.length - 1],
+      };
+    }
+    return { attorneyLastName: parts[0] };
+  }
   return null;
 }
 
