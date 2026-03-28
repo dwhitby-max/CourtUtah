@@ -374,10 +374,29 @@ export async function liveSearchUtcourts(params: LiveSearchParams): Promise<stri
     qs.loc = params.locationCode;
   }
 
-  const queryString = new URLSearchParams(qs).toString();
-  const url = `${COURT_CALENDARS_BASE}/search.php?${queryString}`;
-  console.log(`🔍 Live search GET: ${url}`);
+  // Fetch all pages — utcourts.gov paginates at ~100 results per page via &start= param
+  const MAX_PAGES = 20; // Safety cap: 20 pages = ~2000 results max
+  const allHtmlParts: string[] = [];
 
-  const buffer = await fetchUrl(url);
-  return buffer.toString("utf-8");
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const pageQs = { ...qs, start: String(page * 100) };
+    const queryString = new URLSearchParams(pageQs).toString();
+    const url = `${COURT_CALENDARS_BASE}/search.php?${queryString}`;
+    if (page === 0) console.log(`🔍 Live search GET: ${url}`);
+    else console.log(`  📄 Fetching page ${page + 1}: ${url}`);
+
+    const buffer = await fetchUrl(url);
+    const html = buffer.toString("utf-8");
+    allHtmlParts.push(html);
+
+    // Check if there's a next page link — utcourts uses "start=N" links for pagination
+    // Look for a link with a higher start value than current
+    const nextStart = (page + 1) * 100;
+    if (!html.includes(`start=${nextStart}`) && !html.includes(`start=${nextStart}&`)) {
+      break; // No more pages
+    }
+  }
+
+  // Combine all page HTML so the parser sees all results
+  return allHtmlParts.join("\n");
 }

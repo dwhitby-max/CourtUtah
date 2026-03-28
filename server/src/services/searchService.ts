@@ -103,7 +103,7 @@ export async function searchCourtEvents(params: SearchRequest): Promise<CourtEve
     FROM court_events
     WHERE ${whereClause}
     ORDER BY event_date DESC, event_time ASC
-    LIMIT 200
+    LIMIT 2000
   `;
 
   const client = await pool.connect();

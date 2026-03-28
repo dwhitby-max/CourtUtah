@@ -105,6 +105,40 @@ export default function SearchResultsPage() {
     }
   }, [searched, loading, results, fetchUpdates]);
 
+  function exportResultsCsv() {
+    if (results.length === 0) return;
+    const headers = [
+      "Date", "Time", "Court", "Court Room", "Location", "Judge",
+      "Case Number", "Case Type", "Hearing Type", "Defendant",
+      "OTN", "DOB", "Citation Number", "Sheriff Number", "LEA Number",
+      "Prosecuting Attorney", "Defense Attorney", "Charges", "Virtual",
+    ];
+    const escCsv = (val: string | null | undefined): string => {
+      if (val == null) return "";
+      const s = String(val);
+      if (s.includes(",") || s.includes('"') || s.includes("\n")) {
+        return `"${s.replace(/"/g, '""')}"`;
+      }
+      return s;
+    };
+    const rows = results.map((e) => [
+      e.eventDate, e.eventTime, e.courtName, e.courtRoom, e.hearingLocation, e.judgeName,
+      e.caseNumber, e.caseType, e.hearingType, e.defendantName,
+      e.defendantOtn, e.defendantDob, e.citationNumber, e.sheriffNumber, e.leaNumber,
+      e.prosecutingAttorney, e.defenseAttorney,
+      e.charges?.join("; "),
+      e.isVirtual ? "Yes" : "No",
+    ].map(escCsv).join(","));
+    const csv = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `court-search-results-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function handleAddToCalendar(event: CourtEvent) {
     setCalSyncingIds((prev) => new Set(prev).add(event.id));
     try {
@@ -565,6 +599,16 @@ export default function SearchResultsPage() {
                     : allSynced
                       ? "All Added"
                       : "Add All Only"}
+                </button>
+                <button
+                  onClick={exportResultsCsv}
+                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md bg-gray-600 text-white hover:bg-gray-700 transition-colors"
+                  title="Export all results to CSV"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Export CSV
                 </button>
               </div>
             )}

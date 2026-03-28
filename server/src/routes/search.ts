@@ -357,7 +357,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     const extraLive = filteredLive.filter(
       (e) => !dbKeys.has(`${e.caseNumber}|${e.eventDate}`)
     );
-    const merged = [...dbResults, ...extraLive].slice(0, 200);
+    const merged = [...dbResults, ...extraLive].slice(0, 2000);
 
     const { savedSearchId, previousRunAt } = await saveSearch(userId, searchParams, pKey, merged.length);
     markNewEvents(merged, previousRunAt);

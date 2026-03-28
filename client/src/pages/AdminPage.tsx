@@ -13,7 +13,26 @@ interface UserRow {
   is_approved: boolean;
   created_at: string;
   watched_count: string;
+  search_count: string;
+  last_search_at: string | null;
   calendar_count: string;
+  last_sync_at: string | null;
+  subscription_plan: string | null;
+  subscription_status: string | null;
+  subscription_id: string | null;
+  subscription_current_period_end: string | null;
+  stripe_customer_id: string | null;
+}
+
+interface Payment {
+  id: string;
+  date: string | null;
+  amount: number;
+  currency: string;
+  status: string | null;
+  invoiceUrl: string | null;
+  periodStart: string | null;
+  periodEnd: string | null;
 }
 
 export default function AdminPage() {
@@ -189,8 +208,31 @@ function PendingTab() {
 
 // ─── Users Tab ───
 
+function PlanBadge({ plan, status }: { plan: string | null; status: string | null }) {
+  const p = plan || "free";
+  const s = status || "none";
+
+  if (s === "grandfathered") {
+    return <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-800">Grandfathered</span>;
+  }
+  if (p === "pro" && s === "active") {
+    return <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-800">Pro</span>;
+  }
+  if (p === "pro" && s === "canceled") {
+    return <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-800">Pro (Canceling)</span>;
+  }
+  if (s === "past_due") {
+    return <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-800">Past Due</span>;
+  }
+  return <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">Free</span>;
+}
+
 function UsersTab() {
   const [users, setUsers] = useState<UserRow[]>([]);
+  const [historyUserId, setHistoryUserId] = useState<number | null>(null);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [cancelingId, setCancelingId] = useState<number | null>(null);
 
   useEffect(() => {
     apiFetch("/admin/users").then((r) => r.ok ? r.json() : null).then((d) => { if (d) setUsers(d.users); });
@@ -216,57 +258,210 @@ function UsersTab() {
     }
   }
 
+  async function downgradeUser(userId: number, hasStripeSubscription: boolean) {
+    const msg = hasStripeSubscription
+      ? "Downgrade this user to free? Their Pro access continues until the current billing period ends, then reverts to the free plan."
+      : "Downgrade this user to free immediately?";
+    if (!confirm(msg)) return;
+    setCancelingId(userId);
+    const res = await apiFetch(`/admin/users/${userId}/cancel-subscription`, { method: "POST" });
+    setCancelingId(null);
+    if (res.ok) {
+      const updated = hasStripeSubscription
+        ? { subscription_status: "canceled" }
+        : { subscription_plan: "free", subscription_status: "canceled" };
+      setUsers((prev) => prev.map((u) => u.id === userId ? { ...u, ...updated } : u));
+    }
+  }
+
+  async function viewPaymentHistory(userId: number) {
+    setHistoryUserId(userId);
+    setHistoryLoading(true);
+    setPayments([]);
+    const res = await apiFetch(`/admin/users/${userId}/payment-history`);
+    if (res.ok) {
+      const data = await res.json();
+      setPayments(data.payments);
+    }
+    setHistoryLoading(false);
+  }
+
+  const historyUser = users.find((u) => u.id === historyUserId);
+
   return (
-    <div className="bg-white shadow rounded-lg overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Admin</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Watched</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Calendars</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Joined</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-200">
-            {users.map((u) => (
-              <tr key={u.id} className={!u.is_approved ? "bg-amber-50" : ""}>
-                <td className="px-4 py-3 font-medium">{u.email}</td>
-                <td className="px-4 py-3">
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${u.is_approved ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"}`}>
-                    {u.is_approved ? "Approved" : "Pending"}
-                  </span>
-                </td>
-                <td className="px-4 py-3">
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${u.is_admin ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-600"}`}>
-                    {u.is_admin ? "Admin" : "User"}
-                  </span>
-                </td>
-                <td className="px-4 py-3">{u.watched_count}</td>
-                <td className="px-4 py-3">{u.calendar_count}</td>
-                <td className="px-4 py-3 whitespace-nowrap">{new Date(u.created_at).toLocaleDateString()}</td>
-                <td className="px-4 py-3 space-x-2">
-                  <button
-                    onClick={() => toggleApproval(u.id, u.is_approved)}
-                    className={`text-sm font-medium ${u.is_approved ? "text-red-600 hover:text-red-800" : "text-green-600 hover:text-green-800"}`}
-                  >
-                    {u.is_approved ? "Revoke" : "Approve"}
-                  </button>
-                  <button
-                    onClick={() => toggleAdmin(u.id, u.is_admin)}
-                    className="text-amber-700 hover:text-slate-800 text-sm font-medium"
-                  >
-                    {u.is_admin ? "Remove Admin" : "Make Admin"}
-                  </button>
-                </td>
+    <>
+      <div className="bg-white shadow rounded-lg overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200 text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Admin</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Plan</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Renewal</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Watched</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Searches</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Last Search</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Calendars</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Last Sync</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Joined</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {users.map((u) => {
+                const isPaid = u.subscription_plan === "pro" && (u.subscription_status === "active" || u.subscription_status === "canceled" || u.subscription_status === "grandfathered");
+                return (
+                  <tr key={u.id} className={!u.is_approved ? "bg-amber-50" : ""}>
+                    <td className="px-4 py-3 font-medium">{u.email}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${u.is_approved ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"}`}>
+                        {u.is_approved ? "Approved" : "Pending"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${u.is_admin ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-600"}`}>
+                        {u.is_admin ? "Admin" : "User"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <PlanBadge plan={u.subscription_plan} status={u.subscription_status} />
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-gray-500 text-xs">
+                      {u.subscription_current_period_end
+                        ? new Date(u.subscription_current_period_end).toLocaleDateString()
+                        : "—"}
+                    </td>
+                    <td className="px-4 py-3">{u.watched_count}</td>
+                    <td className="px-4 py-3">{u.search_count}</td>
+                    <td className="px-4 py-3 whitespace-nowrap text-gray-500">{u.last_search_at ? new Date(u.last_search_at).toLocaleDateString() : "—"}</td>
+                    <td className="px-4 py-3">{u.calendar_count}</td>
+                    <td className="px-4 py-3 whitespace-nowrap text-gray-500">{u.last_sync_at ? new Date(u.last_sync_at).toLocaleDateString() : "—"}</td>
+                    <td className="px-4 py-3 whitespace-nowrap">{new Date(u.created_at).toLocaleDateString()}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-col gap-1">
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => toggleApproval(u.id, u.is_approved)}
+                            className={`text-sm font-medium ${u.is_approved ? "text-red-600 hover:text-red-800" : "text-green-600 hover:text-green-800"}`}
+                          >
+                            {u.is_approved ? "Revoke" : "Approve"}
+                          </button>
+                          <button
+                            onClick={() => toggleAdmin(u.id, u.is_admin)}
+                            className="text-amber-700 hover:text-slate-800 text-sm font-medium"
+                          >
+                            {u.is_admin ? "Remove Admin" : "Make Admin"}
+                          </button>
+                        </div>
+                        <div className="flex gap-2">
+                          {isPaid && u.subscription_status !== "canceled" && (
+                            <button
+                              onClick={() => downgradeUser(u.id, !!u.subscription_id)}
+                              disabled={cancelingId === u.id}
+                              className="text-red-600 hover:text-red-800 text-sm font-medium disabled:opacity-50"
+                            >
+                              {cancelingId === u.id ? "Downgrading..." : "Downgrade"}
+                            </button>
+                          )}
+                          {u.stripe_customer_id && (
+                            <button
+                              onClick={() => viewPaymentHistory(u.id)}
+                              className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                            >
+                              Payments
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
-    </div>
+
+      {/* Payment History Modal */}
+      {historyUserId !== null && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[80vh] overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <h2 className="text-lg font-semibold text-gray-900">
+                Payment History — {historyUser?.email}
+              </h2>
+              <button
+                onClick={() => setHistoryUserId(null)}
+                className="text-gray-400 hover:text-gray-600 text-xl leading-none"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="px-6 py-4 overflow-y-auto max-h-[60vh]">
+              {historyLoading ? (
+                <p className="text-gray-500 text-sm py-4">Loading payment history...</p>
+              ) : payments.length === 0 ? (
+                <p className="text-gray-500 text-sm py-4">No payments found.</p>
+              ) : (
+                <table className="min-w-full divide-y divide-gray-200 text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Period</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Invoice</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {payments.map((p) => (
+                      <tr key={p.id}>
+                        <td className="px-4 py-2 whitespace-nowrap">
+                          {p.date ? new Date(p.date).toLocaleDateString() : "—"}
+                        </td>
+                        <td className="px-4 py-2 whitespace-nowrap font-medium">
+                          ${p.amount.toFixed(2)} {p.currency}
+                        </td>
+                        <td className="px-4 py-2">
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${
+                            p.status === "paid" ? "bg-green-100 text-green-800" :
+                            p.status === "open" ? "bg-amber-100 text-amber-800" :
+                            "bg-gray-100 text-gray-600"
+                          }`}>
+                            {p.status || "unknown"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 whitespace-nowrap text-gray-500 text-xs">
+                          {p.periodStart && p.periodEnd
+                            ? `${new Date(p.periodStart).toLocaleDateString()} - ${new Date(p.periodEnd).toLocaleDateString()}`
+                            : "—"}
+                        </td>
+                        <td className="px-4 py-2">
+                          {p.invoiceUrl ? (
+                            <a href={p.invoiceUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 text-sm">
+                              View
+                            </a>
+                          ) : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div className="px-6 py-3 border-t bg-gray-50 flex justify-end">
+              <button
+                onClick={() => setHistoryUserId(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
