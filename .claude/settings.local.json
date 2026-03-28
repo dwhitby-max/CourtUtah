@@ -26,7 +26,8 @@
       "Bash(find /home/runner/workspace/client -type f \\\\\\(-name *.ts -o -name *.tsx -o -name *.js -o -name *.jsx \\\\\\))",
       "Bash(find /home/runner/workspace/server -type f \\\\\\(-name *.ts -o -name *.tsx -o -name *.js -o -name *.jsx \\\\\\))",
       "Bash(find /home/runner/workspace/client -type f \\\\\\(-name *.ts -o -name *.tsx \\\\\\))",
-      "Bash(xargs ls:*)"
+      "Bash(xargs ls:*)",
+      "Bash(psql:*)"
     ]
   }
 }
