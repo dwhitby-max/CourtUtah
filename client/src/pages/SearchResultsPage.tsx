@@ -9,6 +9,7 @@ import NewEntriesSection from "@/components/NewEntriesSection";
 import MonitorModal from "@/components/MonitorModal";
 import UpgradeBanner from "@/components/UpgradeBanner";
 import Pagination from "@/components/Pagination";
+import { exportCourtEventsCsv } from "@/utils/formatters";
 import { CourtEvent } from "@shared/types";
 import { ChangeRecord } from "@/components/UpdatesSection";
 
@@ -110,37 +111,7 @@ export default function SearchResultsPage() {
   }, [searched, loading, results, fetchUpdates]);
 
   function exportResultsCsv() {
-    if (results.length === 0) return;
-    const headers = [
-      "Date", "Time", "Court", "Court Room", "Location", "Judge",
-      "Case Number", "Case Type", "Hearing Type", "Defendant",
-      "OTN", "DOB", "Citation Number", "Sheriff Number", "LEA Number",
-      "Prosecuting Attorney", "Defense Attorney", "Charges", "Virtual",
-    ];
-    const escCsv = (val: string | null | undefined): string => {
-      if (val == null) return "";
-      const s = String(val);
-      if (s.includes(",") || s.includes('"') || s.includes("\n")) {
-        return `"${s.replace(/"/g, '""')}"`;
-      }
-      return s;
-    };
-    const rows = results.map((e) => [
-      e.eventDate, e.eventTime, e.courtName, e.courtRoom, e.hearingLocation, e.judgeName,
-      e.caseNumber, e.caseType, e.hearingType, e.defendantName,
-      e.defendantOtn, e.defendantDob, e.citationNumber, e.sheriffNumber, e.leaNumber,
-      e.prosecutingAttorney, e.defenseAttorney,
-      e.charges?.join("; "),
-      e.isVirtual ? "Yes" : "No",
-    ].map(escCsv).join(","));
-    const csv = [headers.join(","), ...rows].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `court-search-results-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    exportCourtEventsCsv(results);
   }
 
   async function handleAddToCalendar(event: CourtEvent) {
@@ -521,46 +492,15 @@ export default function SearchResultsPage() {
         onDismissUpdate={handleDismissUpdate}
       />
 
-      {searched && !loading && newResults.length > 0 && (
-        <NewEntriesSection
-          events={newResults}
-          formatDate={formatDate}
-          onAddToCalendar={calendarProvider ? handleAddToCalendar : undefined}
-          onAddAllNewToCalendar={calendarProvider ? async () => {
-            const newUnsyncedIds = newResults.filter(e => !calSyncedIds.has(e.id)).map(e => e.id);
-            if (newUnsyncedIds.length === 0) return;
-            setBatchAdding(true);
-            setBatchProgress(`Adding ${newUnsyncedIds.length} new events...`);
-            try {
-              const data = await addAllEventsToCalendar(newUnsyncedIds);
-              const ns = new Set(calSyncedIds);
-              const nm = { ...calEntryMap };
-              for (const r of data.results) { if (r.synced) { ns.add(r.courtEventId); nm[r.courtEventId] = r.calendarEntryId; } }
-              setCalSyncedIds(ns);
-              setCalEntryMap(nm);
-              setWatchSuccess(`Added ${data.results.filter((r: { synced: boolean }) => r.synced).length} new events to ${calLabel}`);
-            } catch (err) {
-              setWatchError(err instanceof Error ? err.message : "Failed to add new events");
-            } finally {
-              setBatchAdding(false);
-              setBatchProgress("");
-            }
-          } : undefined}
-          calSyncedIds={calSyncedIds}
-          calSyncingIds={calSyncingIds}
-          calLabel={calLabel}
-          batchAdding={batchAdding}
-        />
-      )}
-
       {searched && !loading && (
         <div className="bg-white shadow rounded-lg overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-200">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <h2 className="text-lg font-semibold text-gray-900">
-                {existingResults.length > 0 && newResults.length > 0
-                  ? `${existingResults.length} Previous Result${existingResults.length !== 1 ? "s" : ""}`
-                  : `${results.length} Result${results.length !== 1 ? "s" : ""} Found`}
+                {results.length} Result{results.length !== 1 ? "s" : ""} Found
+                {newResults.length > 0 && (
+                  <span className="ml-2 text-sm font-normal text-blue-600">({newResults.length} new)</span>
+                )}
               </h2>
               {results.length > 0 && (
                 <button
@@ -651,9 +591,14 @@ export default function SearchResultsPage() {
                     const isLocked = !isPro && globalIndex >= FREE_RESULT_LIMIT;
                     return (
                     <>
-                      <tr key={event.id} className="hover:bg-gray-50">
+                      <tr key={event.id} className={`hover:bg-gray-50 ${event.isNew ? "bg-blue-50" : ""}`}>
                         <td className="px-4 py-3 text-sm whitespace-nowrap">
                           <div className={isLocked ? "blur-sm select-none" : ""}>{formatDate(event.eventDate)}</div>
+                          {event.isNew && (
+                            <span className="inline-block mt-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+                              New
+                            </span>
+                          )}
                           {event.isVirtual && (
                             <span className={`inline-block mt-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full ${isLocked ? "blur-sm select-none" : ""}`}>
                               Virtual

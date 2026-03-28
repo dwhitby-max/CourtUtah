@@ -5,6 +5,7 @@ import { addEventToCalendar, addAllEventsToCalendar, getCalendarConnections, get
 import { apiFetch } from "@/api/client";
 import NewEntriesSection from "@/components/NewEntriesSection";
 import Pagination from "@/components/Pagination";
+import { exportCourtEventsCsv } from "@/utils/formatters";
 import { CourtEvent } from "@shared/types";
 
 interface SavedSearchRow {
@@ -489,37 +490,7 @@ export default function SearchPage() {
   }
 
   function exportResultsCsv() {
-    if (results.length === 0) return;
-    const headers = [
-      "Date", "Time", "Court", "Court Room", "Location", "Judge",
-      "Case Number", "Case Type", "Hearing Type", "Defendant",
-      "OTN", "DOB", "Citation Number", "Sheriff Number", "LEA Number",
-      "Prosecuting Attorney", "Defense Attorney", "Charges", "Virtual",
-    ];
-    const escCsv = (val: string | null | undefined): string => {
-      if (val == null) return "";
-      const s = String(val);
-      if (s.includes(",") || s.includes('"') || s.includes("\n")) {
-        return `"${s.replace(/"/g, '""')}"`;
-      }
-      return s;
-    };
-    const rows = results.map((e) => [
-      e.eventDate, e.eventTime, e.courtName, e.courtRoom, e.hearingLocation, e.judgeName,
-      e.caseNumber, e.caseType, e.hearingType, e.defendantName,
-      e.defendantOtn, e.defendantDob, e.citationNumber, e.sheriffNumber, e.leaNumber,
-      e.prosecutingAttorney, e.defenseAttorney,
-      e.charges?.join("; "),
-      e.isVirtual ? "Yes" : "No",
-    ].map(escCsv).join(","));
-    const csv = [headers.join(","), ...rows].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `court-search-results-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    exportCourtEventsCsv(results);
   }
 
   const calLabel = calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar";
@@ -595,25 +566,12 @@ export default function SearchPage() {
       {error && <div className="bg-red-50 text-red-700 p-4 rounded-md text-sm">{error}</div>}
       {watchSuccess && <div className="bg-green-50 text-green-700 p-4 rounded-md text-sm">{watchSuccess}</div>}
 
-      {searched && !loading && newResults.length > 0 && (
-        <NewEntriesSection
-          events={newResults}
-          formatDate={formatDate}
-          onAddToCalendar={hasCalendarConnection ? handleAddToCalendar : undefined}
-          calSyncedIds={calSyncedIds}
-          calSyncingIds={calSyncingIds}
-          calLabel={calLabel}
-        />
-      )}
-
       {searched && !loading && (
         <div className="bg-white shadow rounded-lg overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-200">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <h2 className="text-lg font-semibold text-gray-900">
-                {existingResults.length > 0 && newResults.length > 0
-                  ? `${existingResults.length} Previous Result${existingResults.length !== 1 ? "s" : ""}`
-                  : `${results.length} Result${results.length !== 1 ? "s" : ""} Found`}
+                {results.length} Result{results.length !== 1 ? "s" : ""} Found
               </h2>
               <div className="flex items-center gap-2">
                 {results.length > 0 && (
@@ -694,9 +652,14 @@ export default function SearchPage() {
                     .slice((currentPage - 1) * RESULTS_PER_PAGE, currentPage * RESULTS_PER_PAGE)
                     .map((event) => (
                     <>
-                      <tr key={event.id} className="hover:bg-gray-50">
+                      <tr key={event.id} className={`hover:bg-gray-50 ${event.isNew ? "bg-blue-50" : ""}`}>
                         <td className="px-4 py-3 text-sm whitespace-nowrap">
                           <div>{formatDate(event.eventDate)}</div>
+                          {event.isNew && (
+                            <span className="inline-block mt-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+                              New
+                            </span>
+                          )}
                           {event.isVirtual && (
                             <span className="inline-block mt-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
                               Virtual
