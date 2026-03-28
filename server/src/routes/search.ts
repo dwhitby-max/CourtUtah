@@ -331,18 +331,20 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       return;
     }
 
-    // Single request to utcourts.gov with loc=all — works for all search types
-    // (party name, case number, judge, attorney)
-    console.log("🌐 Running live search on utcourts.gov...");
-    const html = await liveSearchUtcourts({ ...liveBase, date: "all", locationCode: "all" });
+    // Run live search and DB search concurrently
+    console.log("🌐 Running live search + DB search concurrently...");
+    const [html, dbResults] = await Promise.all([
+      liveSearchUtcourts({ ...liveBase, date: "all", locationCode: "all" }),
+      searchCourtEvents(searchParams),
+    ]);
+
     const allParsed = parseHtmlCalendarResults(html);
-    console.log(`  📋 Live search returned ${allParsed.length} events`);
+    console.log(`  📋 Live: ${allParsed.length} events, DB: ${dbResults.length} events`);
 
-    // Persist live results to court_events so DB stays up to date
-    await persistLiveResults(allParsed);
-
-    // Now query the DB which has both old and newly-persisted results
-    const dbResults = await searchCourtEvents(searchParams);
+    // Persist live results in background (don't block response)
+    persistLiveResults(allParsed).catch((err) =>
+      console.warn("⚠️ Failed to persist live results:", err instanceof Error ? err.message : err)
+    );
 
     // Convert live-parsed results to CourtEvent format and apply filters
     const liveEvents = allParsed.map((event) => toCourtEvent(event));
@@ -350,8 +352,6 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
 
     // Merge: use DB results as the base (they have richer data from reports.php),
     // then add any live results whose case_number+date aren't already in the DB set.
-    // This ensures we return all results the court website shows, even when the DB
-    // attorney field doesn't match (e.g. case has multiple attorneys).
     const dbKeys = new Set(
       dbResults.map((r) => `${r.caseNumber}|${r.eventDate}|${r.eventTime || ""}`)
     );

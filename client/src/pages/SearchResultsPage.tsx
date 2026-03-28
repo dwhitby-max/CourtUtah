@@ -8,6 +8,7 @@ import UpdatesSection from "@/components/UpdatesSection";
 import NewEntriesSection from "@/components/NewEntriesSection";
 import MonitorModal from "@/components/MonitorModal";
 import UpgradeBanner from "@/components/UpgradeBanner";
+import Pagination from "@/components/Pagination";
 import { CourtEvent } from "@shared/types";
 import { ChangeRecord } from "@/components/UpdatesSection";
 
@@ -19,6 +20,7 @@ const providerLabels: Record<string, string> = {
 };
 
 const FREE_RESULT_LIMIT = 5;
+const RESULTS_PER_PAGE = 50;
 
 export default function SearchResultsPage() {
   const location = useLocation();
@@ -27,6 +29,7 @@ export default function SearchResultsPage() {
   const { results, searched, loading, error, previousRunAt, search } = useSearch();
   const isPro = user?.subscriptionPlan === "pro" && (user?.subscriptionStatus === "active" || user?.subscriptionStatus === "grandfathered");
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
   const [watchSuccess, setWatchSuccess] = useState("");
   const [watchError, setWatchError] = useState("");
   const [calSyncingIds, setCalSyncingIds] = useState<Set<number>>(new Set());
@@ -55,6 +58,7 @@ export default function SearchResultsPage() {
     });
     if (Object.keys(searchParams).length > 0) {
       search(searchParams);
+      setCurrentPage(1);
     }
   }, [location.search]);
 
@@ -637,8 +641,14 @@ export default function SearchResultsPage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {(newResults.length > 0 ? existingResults : results).map((event, index) => {
-                    const isLocked = !isPro && index >= FREE_RESULT_LIMIT;
+                  {(() => {
+                    const allEvents = newResults.length > 0 ? existingResults : results;
+                    const totalPages = Math.ceil(allEvents.length / RESULTS_PER_PAGE);
+                    const pageEvents = allEvents.slice((currentPage - 1) * RESULTS_PER_PAGE, currentPage * RESULTS_PER_PAGE);
+                    const globalOffset = (currentPage - 1) * RESULTS_PER_PAGE;
+                    return pageEvents.map((event, index) => {
+                    const globalIndex = globalOffset + index;
+                    const isLocked = !isPro && globalIndex >= FREE_RESULT_LIMIT;
                     return (
                     <>
                       <tr key={event.id} className="hover:bg-gray-50">
@@ -820,9 +830,17 @@ export default function SearchResultsPage() {
                         </tr>
                       )}
                     </>
-                  ); })}
+                  ); });
+                  })()}
                 </tbody>
               </table>
+              <Pagination
+                currentPage={currentPage}
+                totalPages={Math.ceil((newResults.length > 0 ? existingResults : results).length / RESULTS_PER_PAGE)}
+                onPageChange={(p) => { setCurrentPage(p); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                totalItems={(newResults.length > 0 ? existingResults : results).length}
+                pageSize={RESULTS_PER_PAGE}
+              />
             </div>
           )}
         </div>

@@ -328,24 +328,69 @@ export async function refreshAllWatchedCases(): Promise<{
     let totalNewEntries = 0;
     let totalChanges = 0;
 
-    // Shuffle the order so the same cases don't always run first
-    const shuffled = [...watchedCases].sort(() => Math.random() - 0.5);
+    // Deduplicate: group watched cases by search key so we only hit utcourts.gov
+    // once per unique search (e.g. multiple users watching the same defendant)
+    const deduped = new Map<string, WatchedCaseRow[]>();
+    for (const wc of watchedCases) {
+      const key = `${wc.search_type}:${wc.search_value.toUpperCase().trim()}`;
+      const group = deduped.get(key) || [];
+      group.push(wc);
+      deduped.set(key, group);
+    }
 
-    for (const wc of shuffled) {
-      try {
-        const result = await runWatchedCaseSearch(wc.id);
-        totalEvents += result.eventsFound;
-        totalNewEntries += result.newEntries;
-        totalChanges += result.changes;
+    const uniqueSearches = [...deduped.values()].map((group) => group[0]);
+    console.log(`  📊 ${watchedCases.length} watched cases → ${uniqueSearches.length} unique searches`);
 
-        // Random delay between 3-15s per search to spread load on utcourts.gov
-        const gap = 3000 + Math.floor(Math.random() * 12000);
-        await new Promise((r) => setTimeout(r, gap));
-      } catch (err) {
-        console.error(`❌ Refresh failed for watched case ${wc.id} (${wc.label}):`, err instanceof Error ? err.message : err);
-        captureException(err instanceof Error ? err : new Error(String(err)), {
-          tags: { service: "scheduler", watchedCaseId: String(wc.id) },
-        });
+    // Run searches concurrently in batches of 5
+    const BATCH_SIZE = 5;
+    const shuffled = [...uniqueSearches].sort(() => Math.random() - 0.5);
+
+    for (let i = 0; i < shuffled.length; i += BATCH_SIZE) {
+      const batch = shuffled.slice(i, i + BATCH_SIZE);
+      const results = await Promise.allSettled(
+        batch.map(async (wc) => {
+          const result = await runWatchedCaseSearch(wc.id);
+          // Also update last_refreshed_at for duplicate watched cases
+          const key = `${wc.search_type}:${wc.search_value.toUpperCase().trim()}`;
+          const group = deduped.get(key) || [];
+          if (group.length > 1) {
+            const otherIds = group.filter((g) => g.id !== wc.id).map((g) => g.id);
+            if (otherIds.length > 0) {
+              const pool2 = getPool();
+              if (pool2) {
+                const c = await pool2.connect();
+                try {
+                  await c.query(
+                    `UPDATE watched_cases SET last_refreshed_at = NOW(), updated_at = NOW()
+                     WHERE id = ANY($1)`,
+                    [otherIds]
+                  );
+                } finally {
+                  c.release();
+                }
+              }
+            }
+          }
+          return result;
+        })
+      );
+
+      for (const r of results) {
+        if (r.status === "fulfilled") {
+          totalEvents += r.value.eventsFound;
+          totalNewEntries += r.value.newEntries;
+          totalChanges += r.value.changes;
+        } else {
+          console.error(`❌ Refresh failed:`, r.reason instanceof Error ? r.reason.message : r.reason);
+          captureException(r.reason instanceof Error ? r.reason : new Error(String(r.reason)), {
+            tags: { service: "scheduler" },
+          });
+        }
+      }
+
+      // Brief pause between batches to avoid overwhelming utcourts.gov
+      if (i + BATCH_SIZE < shuffled.length) {
+        await new Promise((r) => setTimeout(r, 2000));
       }
     }
 

@@ -4,6 +4,7 @@ import { searchCourtEvents } from "@/api/search";
 import { addEventToCalendar, addAllEventsToCalendar, getCalendarConnections, getSyncedEvents, removeEventFromCalendar } from "@/api/calendar";
 import { apiFetch } from "@/api/client";
 import NewEntriesSection from "@/components/NewEntriesSection";
+import Pagination from "@/components/Pagination";
 import { CourtEvent } from "@shared/types";
 
 interface SavedSearchRow {
@@ -61,6 +62,8 @@ function toQueryParams(params: Record<string, string>): Record<string, string> {
   return result;
 }
 
+const RESULTS_PER_PAGE = 50;
+
 export default function SearchPage() {
   const [results, setResults] = useState<CourtEvent[]>([]);
   const [searched, setSearched] = useState(false);
@@ -68,6 +71,7 @@ export default function SearchPage() {
   const [error, setError] = useState("");
   const [watchSuccess, setWatchSuccess] = useState("");
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
   const [savedSearches, setSavedSearches] = useState<SavedSearchRow[]>([]);
   const [loadingSaved, setLoadingSaved] = useState(false);
   const [calSyncingIds, setCalSyncingIds] = useState<Set<number>>(new Set());
@@ -139,6 +143,7 @@ export default function SearchPage() {
     setSearched(true);
     setWatchSuccess("");
     setExpandedId(null);
+    setCurrentPage(1);
 
     try {
       const data = await searchCourtEvents(searchParams);
@@ -483,6 +488,40 @@ export default function SearchPage() {
     );
   }
 
+  function exportResultsCsv() {
+    if (results.length === 0) return;
+    const headers = [
+      "Date", "Time", "Court", "Court Room", "Location", "Judge",
+      "Case Number", "Case Type", "Hearing Type", "Defendant",
+      "OTN", "DOB", "Citation Number", "Sheriff Number", "LEA Number",
+      "Prosecuting Attorney", "Defense Attorney", "Charges", "Virtual",
+    ];
+    const escCsv = (val: string | null | undefined): string => {
+      if (val == null) return "";
+      const s = String(val);
+      if (s.includes(",") || s.includes('"') || s.includes("\n")) {
+        return `"${s.replace(/"/g, '""')}"`;
+      }
+      return s;
+    };
+    const rows = results.map((e) => [
+      e.eventDate, e.eventTime, e.courtName, e.courtRoom, e.hearingLocation, e.judgeName,
+      e.caseNumber, e.caseType, e.hearingType, e.defendantName,
+      e.defendantOtn, e.defendantDob, e.citationNumber, e.sheriffNumber, e.leaNumber,
+      e.prosecutingAttorney, e.defenseAttorney,
+      e.charges?.join("; "),
+      e.isVirtual ? "Yes" : "No",
+    ].map(escCsv).join(","));
+    const csv = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `court-search-results-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   const calLabel = calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar";
   const anySynced = results.some(e => calSyncedIds.has(e.id));
 
@@ -569,49 +608,67 @@ export default function SearchPage() {
 
       {searched && !loading && (
         <div className="bg-white shadow rounded-lg overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-900">
-              {existingResults.length > 0 && newResults.length > 0
-                ? `${existingResults.length} Previous Result${existingResults.length !== 1 ? "s" : ""}`
-                : `${results.length} Result${results.length !== 1 ? "s" : ""} Found`}
-            </h2>
-            <div className="flex items-center gap-3">
-              {results.length > 0 && !hasCalendarConnection && (
-                <button
-                  onClick={connectGoogleCalendar}
-                  className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md"
-                >
-                  Connect Google Calendar
-                </button>
-              )}
-              {results.length > 0 && hasCalendarConnection && anySynced && (
-                <button
-                  onClick={handleRemoveAllFromCalendar}
-                  disabled={removingAll || addingAll}
-                  className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md disabled:opacity-50"
-                >
-                  {removingAll ? "Removing..." : `Remove all from ${calLabel}`}
-                </button>
-              )}
-              {results.length > 0 && hasCalendarConnection && (
-                <button
-                  onClick={handleAddAllToCalendar}
-                  disabled={addingAll || addedAll || removingAll}
-                  className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-amber-700 hover:bg-amber-800 rounded-md disabled:opacity-50"
-                >
-                  {addingAll
-                    ? `Adding ${results.length} to ${calLabel}...`
-                    : addedAll
-                      ? `All added to ${calLabel}`
-                      : `Add all ${results.length} to ${calLabel}`}
-                </button>
-              )}
-              {lastSearchSavedId && (
-                <span className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-green-700 bg-green-50 rounded-md">
-                  Search saved
-                </span>
-              )}
+          <div className="px-6 py-4 border-b border-gray-200">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <h2 className="text-lg font-semibold text-gray-900">
+                {existingResults.length > 0 && newResults.length > 0
+                  ? `${existingResults.length} Previous Result${existingResults.length !== 1 ? "s" : ""}`
+                  : `${results.length} Result${results.length !== 1 ? "s" : ""} Found`}
+              </h2>
+              <div className="flex items-center gap-2">
+                {results.length > 0 && (
+                  <button
+                    onClick={exportResultsCsv}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md bg-gray-600 text-white hover:bg-gray-700 transition-colors"
+                    title="Export all results to CSV"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Export CSV
+                  </button>
+                )}
+                {lastSearchSavedId && (
+                  <span className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-green-700 bg-green-50 rounded-md">
+                    Search saved
+                  </span>
+                )}
+              </div>
             </div>
+            {results.length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap mt-3">
+                {!hasCalendarConnection && (
+                  <button
+                    onClick={connectGoogleCalendar}
+                    className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md"
+                  >
+                    Connect Google Calendar
+                  </button>
+                )}
+                {hasCalendarConnection && anySynced && (
+                  <button
+                    onClick={handleRemoveAllFromCalendar}
+                    disabled={removingAll || addingAll}
+                    className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md disabled:opacity-50"
+                  >
+                    {removingAll ? "Removing..." : `Remove all from ${calLabel}`}
+                  </button>
+                )}
+                {hasCalendarConnection && (
+                  <button
+                    onClick={handleAddAllToCalendar}
+                    disabled={addingAll || addedAll || removingAll}
+                    className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-amber-700 hover:bg-amber-800 rounded-md disabled:opacity-50"
+                  >
+                    {addingAll
+                      ? `Adding ${results.length} to ${calLabel}...`
+                      : addedAll
+                        ? `All added to ${calLabel}`
+                        : `Add all ${results.length} to ${calLabel}`}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {results.length === 0 ? (
@@ -633,7 +690,9 @@ export default function SearchPage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {(newResults.length > 0 ? existingResults : results).map((event) => (
+                  {(newResults.length > 0 ? existingResults : results)
+                    .slice((currentPage - 1) * RESULTS_PER_PAGE, currentPage * RESULTS_PER_PAGE)
+                    .map((event) => (
                     <>
                       <tr key={event.id} className="hover:bg-gray-50">
                         <td className="px-4 py-3 text-sm whitespace-nowrap">
@@ -789,6 +848,13 @@ export default function SearchPage() {
                   ))}
                 </tbody>
               </table>
+              <Pagination
+                currentPage={currentPage}
+                totalPages={Math.ceil((newResults.length > 0 ? existingResults : results).length / RESULTS_PER_PAGE)}
+                onPageChange={(p) => { setCurrentPage(p); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                totalItems={(newResults.length > 0 ? existingResults : results).length}
+                pageSize={RESULTS_PER_PAGE}
+              />
             </div>
           )}
         </div>
