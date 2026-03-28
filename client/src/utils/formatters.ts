@@ -90,32 +90,17 @@ export function exportCourtEventsCsv(results: Array<{
   caseType: string | null;
   hearingType: string | null;
   defendantName: string | null;
-  defendantOtn: string | null;
-  defendantDob: string | null;
-  citationNumber: string | null;
-  sheriffNumber: string | null;
-  leaNumber: string | null;
-  prosecutingAttorney: string | null;
-  defenseAttorney: string | null;
-  charges?: string[];
-  isVirtual: boolean;
 }>): void {
   if (results.length === 0) return;
   const headers = [
     "Date", "Time", "Court", "Court Room", "Location", "Judge",
     "Case Number", "Case Type", "Hearing Type",
     "Defendant", "Defendant Last Name",
-    "OTN", "DOB", "Citation Number", "Sheriff Number", "LEA Number",
-    "Prosecuting Attorney", "Defense Attorney", "Charges", "Virtual",
   ];
   const rows = results.map((e) => [
     e.eventDate, e.eventTime, e.courtName, e.courtRoom, e.hearingLocation, e.judgeName,
     e.caseNumber, e.caseType, e.hearingType,
     e.defendantName, extractLastName(e.defendantName),
-    e.defendantOtn, e.defendantDob, e.citationNumber, e.sheriffNumber, e.leaNumber,
-    e.prosecutingAttorney, e.defenseAttorney,
-    e.charges?.join("; "),
-    e.isVirtual ? "Yes" : "No",
   ].map(csvCell).join(","));
   const csv = [headers.join(","), ...rows].join("\n");
   const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
