@@ -205,13 +205,13 @@ async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<void> {
   const client = await pool.connect();
   try {
     for (const event of parsed) {
-      // Upsert by case_number + event_date
+      // Upsert by case_number + event_date + event_time
       if (!event.caseNumber || !event.eventDate) continue;
       try {
         const existing = await client.query(
           `SELECT id, defense_attorney, prosecuting_attorney FROM court_events
-           WHERE case_number = $1 AND event_date = $2 LIMIT 1`,
-          [event.caseNumber, event.eventDate]
+           WHERE case_number = $1 AND event_date = $2 AND COALESCE(event_time, '') = COALESCE($3, '') LIMIT 1`,
+          [event.caseNumber, event.eventDate, event.eventTime]
         );
 
         if (existing.rows.length > 0) {
@@ -316,6 +316,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     // fall back to DB-only search
     if (!liveBase) {
       const dbResults = await searchCourtEvents(searchParams);
+      console.log(`  📊 DB-only search: ${dbResults.length} results`);
       const { savedSearchId, previousRunAt } = await saveSearch(userId, searchParams, pKey, dbResults.length);
       markNewEvents(dbResults, previousRunAt);
       res.json({
@@ -352,12 +353,14 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     // This ensures we return all results the court website shows, even when the DB
     // attorney field doesn't match (e.g. case has multiple attorneys).
     const dbKeys = new Set(
-      dbResults.map((r) => `${r.caseNumber}|${r.eventDate}`)
+      dbResults.map((r) => `${r.caseNumber}|${r.eventDate}|${r.eventTime || ""}`)
     );
     const extraLive = filteredLive.filter(
-      (e) => !dbKeys.has(`${e.caseNumber}|${e.eventDate}`)
+      (e) => !dbKeys.has(`${e.caseNumber}|${e.eventDate}|${e.eventTime || ""}`)
     );
     const merged = [...dbResults, ...extraLive].slice(0, 2000);
+
+    console.log(`  📊 Merge: ${dbResults.length} DB + ${extraLive.length} extra live = ${merged.length} total results`);
 
     const { savedSearchId, previousRunAt } = await saveSearch(userId, searchParams, pKey, merged.length);
     markNewEvents(merged, previousRunAt);
