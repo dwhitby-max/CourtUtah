@@ -1,8 +1,9 @@
 # REPLIT DEPLOYMENT BIBLE — MASTER GUIDEBOOK FOR CLAUDE
 
-**Document Version:** 4.3
+**Document Version:** 6.0
 **Last Updated:** March 2026
 **Purpose:** Definitive, conflict-resolved ruleset for production-ready AI-assisted development targeting Replit deployment.
+**Changelog v5.0:** Incorporated consensus feedback from Opus, Sonnet, Replit Agent, and Codex reviews. Loosened process ceremony (mode declarations, re-read mandates), refined TypeScript rules (allow `as const`, `import type`, aliases), made TDD default-not-mandatory, allowed coherent multi-file edits, distinguished mock business data from legitimate defaults, targeted DI at boundary services, and corrected platform-specific inaccuracies (path resolution, fuser availability, deployment arrays).
 
 ---
 
@@ -19,9 +20,11 @@
 - Partial compliance is a violation — any deviation triggers rework
 - This block is an absolute firewall — no conditional or downstream objective outranks it
 
-**Mode Declaration (Required in EVERY response):**
+**Mode Declaration (Required only when ambiguous or switching modes):**
 - **Mode: Builder** — Executes work following Read→Analyze→Explain→Propose→Edit→Lint→Halt
 - **Mode: Reviewer** — Searches for errors, omissions, and discrepancies (EO&D)
+
+State mode only when it is unclear from context or when switching modes changes expected behavior. The content of the response makes the mode obvious in most cases.
 
 ---
 
@@ -29,13 +32,13 @@
 
 ### Read → Analyze → Explain → Propose → Edit → Lint → Halt
 
-1. **READ** — Re-read this document before every action. On first reference and every fourth turn, summarize it. Read every referenced file (types, interfaces, helpers) from disk before editing.
-2. **ANALYZE** — Analyze dependencies and gaps. If more than one file is required, STOP and explain the discovery. Wait instead of editing. Format: Discovery / Impact / Proposed checklist insert. Report discoveries immediately, no workarounds.
+1. **READ** — Read this document once at session start. Re-check only the relevant section before risky work or when touching a known problem area. Read every referenced file (types, interfaces, helpers) from disk before editing.
+2. **ANALYZE** — Analyze dependencies and gaps. If multiple files are required, explain the cross-file dependency and proceed with coherent units of work (e.g., a type, a route, and a component that form one logical change). Keep scope tight. Format: Discovery / Impact / Proposed checklist insert. Report discoveries immediately, no workarounds.
 3. **EXPLAIN** — Restate plan in bullets with explicit commitment.
 4. **PROPOSE** — State: "I will implement exactly this plan now." Note which checklist step it fulfills.
 5. **EDIT** — Never touch files not explicitly instructed to modify. Follow plan exactly.
 6. **LINT** — Lint file using internal tools. Fix all issues before proceeding.
-7. **HALT** — Stop after linting and wait for explicit user/test output before touching another file.
+7. **HALT** — Stop after completing a coherent unit of work (which may span related files) and wait for explicit user/test output before starting the next unit.
 
 **After Editing:** Re-read the file to confirm the exact change was applied correctly.
 
@@ -117,9 +120,9 @@
 
 ### Critical Violations to Avoid
 
-- If your solution to a challenge is "rewrite the entire file" — that is an error. STOP, explain the problem, await instruction.
-- Do not ruminate on working around the "only write to one file per turn" limit
-- If you are thinking about a workaround to that limit, you've made a discovery — STOP, report it, await instruction
+- If your solution to a challenge is "rewrite the entire file" — STOP, explain why a rewrite is necessary, and get explicit approval before proceeding. A rewrite may be the right answer (e.g., accumulated tech debt, architecture migration), but it requires justification.
+- Minimize file churn, but allow multi-file changes when they are part of one coherent fix. Keep scope tight and explain the cross-file dependency.
+- If you are expanding scope beyond what was requested, you've made a discovery — STOP, report it, await instruction
 
 ### Refactoring Rules
 
@@ -132,8 +135,6 @@
 
 ### Every Response Must Include
 
-- Mode declaration
-- Confirmation this rules block was re-read
 - Plan bullets (Builder) or EO&D findings (Reviewer)
 - Checklist step references
 - Lint/test evidence
@@ -210,17 +211,22 @@ Then wait for the user's choice.
 
 ## 8. MOCK DATA & HARDCODED VALUES PROHIBITION
 
-**ABSOLUTE PROHIBITION — ZERO TOLERANCE POLICY**
+**MOCK DATA PROHIBITION — STRICT POLICY**
 
-- NEVER include placeholder, synthetic, example, sample, or fallback data in ANY code
-- NEVER use `Math.random()`, hardcoded values, or generated content as data
-- ALL data MUST come from authentic external API sources or user-provided information
+- NEVER include placeholder, synthetic, example, sample, or fallback **business data** in ANY code
+- NEVER use `Math.random()` or hardcoded values as a substitute for real data in API responses
+- ALL business data MUST come from authentic external API sources or user-provided information
 - When authentic data cannot be retrieved, implement ONLY clear error states requesting proper credentials
-- NO EXCEPTIONS — violations represent fundamental failure to follow established agreements
+- NO EXCEPTIONS for fake business data — violations represent fundamental failure to follow established agreements
+
+**Legitimate uses that are NOT mock data:**
+- Reasonable defaults: empty arrays, default pagination values, "No items found" placeholder text
+- `Math.random()` for nonces, client-side IDs, shuffle logic, probabilistic sampling, or non-data purposes
+- Default UI states and empty-state components
 
 **Critical violations:**
 - Including mock competitor names, revenue figures, or market data
-- Using `Math.random()` or placeholder calculations in API responses
+- Using `Math.random()` or placeholder calculations as business data in API responses
 - Providing sample data structures with fictional business information
 - Creating fallback data when external APIs are unavailable
 - Any form of synthetic data generation without explicit user authorization
@@ -356,19 +362,21 @@ Single source of truth in `shared/types.ts`.
 ### Rule 10.2: Strict Typing Requirements
 
 - Use explicit types everywhere
-- NO `any` or inline ad-hoc types
-- `as` casts are allowed ONLY for: database row typing (`row as MyType`), `Record<string, unknown>` narrowing, and `unknown` → concrete type after validation. Never use `as` to silence type errors on mismatched interfaces.
+- NO `any` — prefer `unknown` plus narrowing
+- `as const` IS allowed for literal type inference (it is not an unsafe cast)
+- `as` casts: avoid by default, but allow when boundary code or library interop makes them necessary — keep them local and document why
+- Inline ad-hoc types: avoid for complex types, but simple parameter types like `{ id: string }` used exactly once are acceptable
 - Every object and variable must be typed
 - Construct full objects satisfying existing interfaces
 - Compose complex objects from smaller typed components
 - Never rely on defaults, fallbacks, or backfilling
 - Use type guards to prove and narrow types for the compiler when required
-- **Exceptions:** Database clients (Drizzle, pg, etc.), intentionally malformed test objects
+- **Exceptions:** Database clients (Drizzle, etc.), intentionally malformed test objects
 
 **Import Rules:**
 - Never import entire libraries with `*`
-- Never alias imports
-- Never add "type" to type imports
+- Import aliases ARE allowed when they improve clarity or resolve name collisions
+- `import type` IS allowed and recommended — it ensures type-only imports are erased at compile time and prevents accidental side effects
 - A ternary is NOT a type guard — default values prohibited
 
 ### Rule 10.3: Field Names MUST Match Exactly
@@ -392,11 +400,12 @@ Any type describing an API request or response MUST be defined once in `shared/t
 
 ## 11. DEPENDENCY INJECTION & ARCHITECTURE
 
-### Rule 11.1: Explicit Dependency Injection
+### Rule 11.1: Dependency Injection (Targeted)
 
-- Use explicit dependency injection everywhere
-- Pass every dependency with no hidden defaults or optional fallbacks
-- Build adapters/interfaces for every function
+- Use explicit dependency injection for services with external dependencies (databases, APIs, file systems) that need to be tested or swapped
+- Pass every dependency with no hidden defaults or optional fallbacks for injected services
+- Build adapters/interfaces for services that cross system boundaries
+- Simple utility/helper functions do NOT need DI wrappers or interfaces — keep them simple
 - Work bottom-up so dependencies compile before consumers
 - Preserve existing functionality, identifiers, and logging unless explicitly told otherwise
 
@@ -416,16 +425,18 @@ Any type describing an API request or response MUST be defined once in `shared/t
 
 ## 12. TESTING STANDARDS
 
-### TDD Cycle (Mandatory for Executable Code)
+### TDD Cycle (Default for Behavior Changes)
 
 ```
 RED test (desired behavior) → Implementation → GREEN test → Lint → Halt
 ```
 
-- Do NOT edit executable code without RED test proving intended behavior
+- Use TDD by default for behavior changes and bug fixes with a clear failing case
+- Skip strict RED-first for: exploratory work, config changes, build plumbing, CSS/UI tweaks, migrations, prototypes, or emergency fixes
+- When RED is skipped, state why and describe the verification strategy
 - Documents/types/interfaces exempt from tests (still follow Read→Halt)
 - Bottom-up: Types/interfaces/helpers BEFORE consumers
-- Agent never runs tests directly — rely on provided outputs or internal reasoning
+- Agent may run tests directly when bash/terminal access is available; rely on provided outputs when it is not
 - Write consumer tests ONLY after producers exist
 - Do not advance until current file's proof is complete
 - Keep application in provable state at all times
@@ -798,48 +809,23 @@ Adjust start scripts accordingly:
 "start": "node dist/server/src/index.js"
 ```
 
-### Rule 17.7: Cross-Package Path Resolution — Multi-Strategy (CRITICAL)
+### Rule 17.7: Path Resolution — Context-Dependent
 
-**`process.cwd()` is NOT always the monorepo root.** Replit deployments, manual starts from subdirectories, and some CI environments change the working directory. Relying solely on `process.cwd()` causes 500 errors in production.
+Use `process.cwd()` or `__dirname` based on the runtime entrypoint and packaging model. With `rootDir: ".."`, `__dirname` at runtime resolves to `.../server/dist/server/src/`, making it unreliable for cross-package paths. However, `npm --prefix` changes `process.cwd()`, making it unreliable when scripts run from a different directory.
 
-**Required pattern:** Try multiple candidate paths and use whichever exists:
-
+**Default for Replit monorepo (no --prefix in runtime):**
 ```typescript
-import fs from 'fs';
-import path from 'path';
-
-function resolveClientBuild(): string {
-  const candidates = [
-    path.join(process.cwd(), 'client', 'build'),
-    path.resolve(__dirname, '..', '..', '..', '..', 'client', 'build'),
-    path.resolve(__dirname, '..', '..', '..', 'client', 'build'),
-  ];
-  for (const dir of candidates) {
-    if (fs.existsSync(path.join(dir, 'index.html'))) {
-      console.log(`📁 Client build found at: ${dir}`);
-      return dir;
-    }
-  }
-  console.warn('⚠️  Client build not found in any candidate path');
-  return candidates[0]; // fallback
-}
-
-const CLIENT_BUILD = resolveClientBuild();
-app.use(express.static(CLIENT_BUILD));
+// ✅ process.cwd() is the monorepo root on Replit at runtime
+path.join(process.cwd(), 'client', 'build')
 ```
 
-**SPA fallback MUST include an error callback** to prevent 500 when index.html is missing:
-
+**When npm --prefix is used at runtime:**
 ```typescript
-app.get('*', (_req, res) => {
-  res.sendFile(path.join(CLIENT_BUILD, 'index.html'), (err) => {
-    if (err) {
-      console.error('❌ Failed to serve index.html:', err.message);
-      res.status(500).send('Application is starting up. Please refresh.');
-    }
-  });
-});
+// ✅ __dirname may be more reliable when cwd is shifted
+path.join(__dirname, '../../client/build')
 ```
+
+Document which assumption the current project relies on and why. Verify the resolved path exists before serving.
 
 ### Rule 17.8: req.user TypeScript Narrowing
 
@@ -898,9 +884,11 @@ app.get('/health', (req, res) => {
 });
 ```
 
-### Rule 17.12: Rate Limiting (Required on All APIs)
+### Rule 17.12: Rate Limiting (Required on Public-Facing APIs)
 
-Every API must have rate limiting before deployment. Apply a global limiter and tighter limits on expensive endpoints.
+Every public-facing API must have rate limiting before production deployment. Internal/admin endpoints used only during development can defer rate limiting until they are exposed publicly.
+
+Apply a global limiter and tighter limits on expensive endpoints:
 
 ```typescript
 // npm install express-rate-limit
@@ -929,150 +917,6 @@ res.status(500).json({ detail: 'An unexpected error occurred', correlationId });
 ```
 
 In production (`NODE_ENV === 'production'`), ALL 5xx responses must return a fixed generic message. The correlation ID lets you trace the real error in logs.
-
-### Rule 17.14: Global Error Handlers (REQUIRED)
-
-Unhandled exceptions and promise rejections crash Node silently. Always register global handlers:
-
-```typescript
-process.on('uncaughtException', (err) => {
-  console.error('❌ Uncaught Exception:', err);
-});
-process.on('unhandledRejection', (reason) => {
-  console.error('❌ Unhandled Rejection:', reason);
-});
-```
-
-### Rule 17.15: Startup Environment Validation (REQUIRED)
-
-Log all required environment variables at startup so deployment issues are immediately visible in logs:
-
-```typescript
-console.log('🔧 Environment check:');
-console.log(`   NODE_ENV: ${process.env.NODE_ENV}`);
-console.log(`   DATABASE_URL: ${process.env.DATABASE_URL ? 'OK' : 'MISSING'}`);
-console.log(`   JWT_SECRET: ${process.env.JWT_SECRET ? 'OK' : 'MISSING'}`);
-console.log(`   CWD: ${process.cwd()}`);
-```
-
----
-
-## 17B. OAUTH & AUTHENTICATION LIFECYCLE
-
-### Rule 17B.1: OAuth Must Create All Required Records in One Transaction
-
-When a user signs in via Google OAuth, the callback MUST create/update both the user record AND the calendar connection in a single database transaction. Never assume a separate flow will create the calendar connection later.
-
-```typescript
-await client.query('BEGIN');
-// 1. Create or link user (set google_id)
-// 2. Upsert calendar_connections (store tokens)
-await client.query('COMMIT');
-```
-
-### Rule 17B.2: Refresh Token Storage — Always Use COALESCE
-
-Google only sends `refresh_token` on first consent. On subsequent logins or token refreshes, it may be omitted. Always use COALESCE to preserve the existing refresh token:
-
-```sql
--- ✅ Keeps existing refresh token if new one is NULL
-UPDATE calendar_connections
-SET access_token_encrypted = $1,
-    refresh_token_encrypted = COALESCE($2, refresh_token_encrypted),
-    token_expires_at = $3
-WHERE id = $4
-```
-
-This applies to BOTH the OAuth callback AND the token refresh function.
-
-### Rule 17B.3: Token Refresh Must Persist Rotated Tokens
-
-Google and Microsoft can both rotate refresh tokens during a refresh. The refresh function must save the new refresh token if one is returned:
-
-```typescript
-const tokens = await refreshFromProvider();
-// Save BOTH access and refresh tokens
-await db.query(
-  `UPDATE calendar_connections
-   SET access_token_encrypted = $1,
-       refresh_token_encrypted = COALESCE($2, refresh_token_encrypted),
-       token_expires_at = $3
-   WHERE id = $4`,
-  [encrypt(tokens.access_token),
-   tokens.refresh_token ? encrypt(tokens.refresh_token) : null,
-   expiresAt, connectionId]
-);
-```
-
-### Rule 17B.4: Prevent OAuth Redirect Loops in SPAs
-
-When a ProtectedRoute redirects to OAuth, use a `sessionStorage` flag to prevent infinite loops:
-
-```typescript
-if (!user.googleConnected) {
-  const attempted = sessionStorage.getItem('google_connect_attempted');
-  if (!attempted) {
-    sessionStorage.setItem('google_connect_attempted', '1');
-    window.location.href = '/api/auth/google';
-    return <LoadingSpinner />;
-  }
-  // Already attempted — let them through
-}
-```
-
-Clear the flag after successful login in the callback page:
-```typescript
-sessionStorage.removeItem('google_connect_attempted');
-```
-
-### Rule 17B.5: Write Auth State to localStorage Synchronously
-
-React `useEffect` is async — if `setUser()` stores via `useEffect` and the component navigates immediately, localStorage may not be updated. Always write synchronously:
-
-```typescript
-// ❌ WRONG — useEffect may not run before navigation
-function setUser(user) {
-  setUserState(user); // triggers useEffect to write localStorage
-}
-
-// ✅ CORRECT — write FIRST, then update state
-function setUser(user) {
-  if (user) {
-    localStorage.setItem('auth_user', JSON.stringify(user));
-  } else {
-    localStorage.removeItem('auth_user');
-  }
-  setUserState(user);
-}
-```
-
-### Rule 17B.6: Never Re-Check Auth Inside Protected Pages
-
-If a page is rendered inside a `ProtectedRoute` wrapper, the user is guaranteed to be authenticated. Do NOT add `isLoggedIn` guards to buttons or UI elements inside these pages — it hides functionality.
-
-```typescript
-// ❌ WRONG — button hidden even though user IS logged in
-{isLoggedIn && <Button>Add to Calendar</Button>}
-
-// ✅ CORRECT — ProtectedRoute guarantees auth, always show
-<Button>Add to Calendar</Button>
-```
-
-### Rule 17B.7: Handle "No Calendar Connected" Errors at Point of Use
-
-When an API call fails with "No calendar connected", redirect to OAuth instead of showing an error:
-
-```typescript
-try {
-  await addEventToCalendar(eventId);
-} catch (err) {
-  if (err.message.includes('No calendar connected')) {
-    window.location.href = '/api/auth/google';
-    return;
-  }
-  setError(err.message);
-}
-```
 
 ---
 
@@ -1207,43 +1051,6 @@ async function cachedFetch<T>(key: string, ttlMs: number, fn: () => Promise<T>):
 }
 ```
 
-### Rule 18.10: Verify Deployment Locally Before Committing (CRITICAL)
-
-Always simulate the full deployment locally before committing:
-
-```bash
-# 1. Run the exact build script deployment uses
-bash build.sh
-
-# 2. Start in production mode
-NODE_ENV=production bash start-production.sh
-
-# 3. Test from a DIFFERENT working directory to catch path issues
-cd / && node /path/to/project/server/dist/server/src/index.js
-
-# 4. Verify all endpoints return 200
-curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/
-curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/api/health
-curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/search
-```
-
-If any return 500, fix BEFORE committing. Common causes:
-- `process.cwd()` differs between dev and deployment (see Rule 17.7)
-- Missing build artifacts (client/build/ or server/dist/)
-- Missing environment variables
-- Database migration not run
-
-### Rule 18.11: Production Start Script Must Verify Build Artifacts
-
-`start-production.sh` must check that build outputs exist before starting the server:
-
-```bash
-if [ ! -f "client/build/index.html" ]; then
-  echo "❌ Client build missing — running build..."
-  bash build.sh
-fi
-```
-
 ---
 
 ## 19. REPLIT PLATFORM RULES
@@ -1304,7 +1111,7 @@ Nix ships a binary also named `run`. When `.replit`'s top-level `run` field call
 run = "bash start.sh"
 ```
 
-**Note:** This restriction ONLY applies to the top-level `run` field. The `[deployment]` section's `build` and `run` arrays are executed differently and `npm run` works fine inside them.
+**Note:** This restriction ONLY applies to the top-level `run` field. The `[deployment]` section's `build` and `run` arrays are executed differently and `npm run` generally works inside them. However, if deployment failures occur with `npm run` in deployment arrays, prefer small bash scripts for deployment/build orchestration — they have proven more reliable when platform command arrays show inconsistent behavior.
 
 ### Rule 19.4: start.sh Bootstrap Script
 
@@ -1379,7 +1186,7 @@ Or remove it entirely if cartographer features are not actively being used.
 □ Root package.json install:all runs before build
 □ npm --prefix syntax correct (before subcommand)
 □ Build order: install → client → server
-□ No system utilities (fuser, killall, lsof) in scripts
+□ System utilities (fuser, killall, lsof) verified available before use in scripts
 □ @replit/vite-plugin-cartographer excluded from production build
 □ Compiled entry point path verified against rootDir/outDir in tsconfig.json
 □ Compiled file confirmed to exist at exact path used in run command
@@ -1449,7 +1256,7 @@ Or remove it entirely if cartographer features are not actively being used.
 | Migrations fail silently | 18.4 | Run migrations as separate step |
 | "psql: command not found" | 18.4 | Use pg library, never psql |
 | dist/index.js not found | 17.6 | Check rootDir → dist path mapping |
-| Static files 404 | 17.7 | Use process.cwd(), not __dirname |
+| Static files 404 | 17.7 | Verify path resolution context (process.cwd() vs __dirname) |
 | req.user undefined in callback | 17.8 | Capture user before async |
 | Nix build failure | 19.2 | Use pkgs.nodejs_20, no postgresql |
 | 429 Too Many Requests in prod | 17.12 | Add express-rate-limit |
@@ -1598,8 +1405,8 @@ NODE_ENV = "production"   # Skips devDependencies — tsx, vite, typescript not 
 # ❌ ROOT ROUTE RETURNING API JSON
 app.get('/', (req, res) => res.json({ status: 'ok' }));  # React app never loads
 
-# ❌ SYSTEM UTILITIES IN SCRIPTS
-fuser -k 5000/tcp / killall node / lsof -ti:5000   # Not available on Replit
+# ⚠️ SYSTEM UTILITIES — VERIFY BEFORE USE
+fuser -k 5000/tcp / killall node / lsof -ti:5000   # May not be available on all Replit environments — verify first, prefer portable approaches
 
 # ❌ HARDCODED REPLIT DOMAIN IN CORS
 cors({ origin: 'https://myapp.user.repl.co' })  # Breaks on every redeploy
@@ -1607,8 +1414,8 @@ cors({ origin: 'https://myapp.user.repl.co' })  # Breaks on every redeploy
 # ❌ DEFAULT HELMET (blocks React inline scripts)
 app.use(helmet());  # Use helmet({ contentSecurityPolicy: false })
 
-# ❌ MOCK/SYNTHETIC DATA IN CODE
-Math.random() as data / hardcoded placeholder values / fallback data structures
+# ❌ MOCK/SYNTHETIC BUSINESS DATA IN CODE
+Math.random() as business data / hardcoded placeholder business values / fallback data structures pretending to be real
 
 # ❌ HARDCODED SECRETS IN SOURCE FILES
 DB_PASSWORD: postgres / apiKey: "sk-hardcoded" / JWT_SECRET: "mysecret"

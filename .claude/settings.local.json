@@ -22,7 +22,11 @@
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(''''DB:'''', d[''''database'''']\\)\")",
       "Bash(node -e \"console.log\\(require\\(''stripe/package.json''\\).version\\)\")",
       "Bash(echo $DATABASE_URL:0:50...)",
-      "Bash(grep -r DATABASE_URL /home/runner/workspace/.env /home/runner/workspace/.env.* /home/runner/workspace/.replit)"
+      "Bash(grep -r DATABASE_URL /home/runner/workspace/.env /home/runner/workspace/.env.* /home/runner/workspace/.replit)",
+      "Bash(find /home/runner/workspace/client -type f \\\\\\(-name *.ts -o -name *.tsx -o -name *.js -o -name *.jsx \\\\\\))",
+      "Bash(find /home/runner/workspace/server -type f \\\\\\(-name *.ts -o -name *.tsx -o -name *.js -o -name *.jsx \\\\\\))",
+      "Bash(find /home/runner/workspace/client -type f \\\\\\(-name *.ts -o -name *.tsx \\\\\\))",
+      "Bash(xargs ls:*)"
     ]
   }
 }
