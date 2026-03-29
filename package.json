@@ -9,7 +9,9 @@
     "start": "node server/dist/server/src/index.js",
     "dev:client": "npm --prefix client run dev",
     "dev:server": "npm --prefix server run dev",
-    "migrate": "node server/dist/server/src/db/migrate.js"
+    "migrate": "node server/dist/server/src/db/migrate.js",
+    "backup": "node server/scripts/backup.js",
+    "backup:local": "node server/scripts/backup.js --local"
   },
   "dependencies": {
     "adm-zip": "^0.5.16"

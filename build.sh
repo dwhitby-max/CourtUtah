@@ -19,3 +19,6 @@ cd server && npm run build && cd ..
 
 echo "=== Build complete ==="
 ls -la client/build/index.html server/dist/server/src/index.js
+
+echo "=== Running pre-deploy backup ==="
+node server/scripts/backup.js --local || echo "⚠️  Backup failed (non-fatal) — continuing deploy"
