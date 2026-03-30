@@ -87,8 +87,8 @@ router.get("/users", async (_req: Request, res: Response) => {
       `SELECT id, email, phone, email_verified, is_admin, is_approved, created_at,
               subscription_plan, subscription_status, subscription_id, subscription_current_period_end, stripe_customer_id,
               (SELECT COUNT(*) FROM watched_cases wc WHERE wc.user_id = u.id AND wc.is_active = true) as watched_count,
-              (SELECT COUNT(*) FROM saved_searches ss WHERE ss.user_id = u.id AND ss.is_active = true) as search_count,
-              (SELECT MAX(ss2.last_run_at) FROM saved_searches ss2 WHERE ss2.user_id = u.id) as last_search_at,
+              (SELECT COUNT(*) FROM watched_cases wc2 WHERE wc2.user_id = u.id AND wc2.source = 'auto_search' AND wc2.is_active = true) as search_count,
+              (SELECT MAX(wc3.last_refreshed_at) FROM watched_cases wc3 WHERE wc3.user_id = u.id AND wc3.source = 'auto_search') as last_search_at,
               (SELECT COUNT(*) FROM calendar_connections cc WHERE cc.user_id = u.id AND cc.is_active = true) as calendar_count,
               (SELECT MAX(ce.updated_at) FROM calendar_entries ce WHERE ce.user_id = u.id AND ce.sync_status = 'synced') as last_sync_at
        FROM users u ORDER BY created_at DESC`

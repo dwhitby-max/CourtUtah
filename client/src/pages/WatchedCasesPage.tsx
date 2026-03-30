@@ -19,6 +19,10 @@ interface WatchedCaseRow {
   updated_at: string;
   last_refreshed_at: string | null;
   matching_events_count: string;
+  search_params: Record<string, string> | null;
+  source: string;
+  results_count: number;
+  auto_add_new: boolean;
 }
 
 function formatSearchType(type: string): string {
@@ -274,6 +278,11 @@ export default function WatchedCasesPage() {
                         <span className="inline-flex items-center text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded">
                           {formatSearchType(wc.search_type)}: <span className="font-medium ml-1">{wc.search_value}</span>
                         </span>
+                        {wc.results_count > 0 && (
+                          <span className="inline-flex items-center text-xs bg-gray-50 text-gray-500 px-2 py-1 rounded">
+                            {wc.results_count} result{wc.results_count !== 1 ? "s" : ""}
+                          </span>
+                        )}
                         <button
                           onClick={() => toggleExpand(wc.id)}
                           className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${

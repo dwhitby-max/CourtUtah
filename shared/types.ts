@@ -126,6 +126,7 @@ export interface SearchResponse {
   resultsCount: number;
   searchParams: SearchRequest;
   source?: "live" | "database";
+  /** ID of the auto-saved watched case for this search */
   savedSearchId?: number | null;
   previousRunAt?: string | null;
   processedAt: string;

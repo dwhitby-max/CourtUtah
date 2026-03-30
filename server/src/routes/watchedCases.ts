@@ -21,8 +21,8 @@ router.get("/", async (req: Request, res: Response) => {
       `SELECT wc.*,
         (SELECT COUNT(*) FROM calendar_entries ce WHERE ce.watched_case_id = wc.id) as matching_events_count
        FROM watched_cases wc
-       WHERE wc.user_id = $1
-       ORDER BY wc.created_at DESC`,
+       WHERE wc.user_id = $1 AND wc.is_active = true
+       ORDER BY wc.last_refreshed_at DESC NULLS LAST, wc.created_at DESC`,
       [currentUser.userId]
     );
 
@@ -85,6 +85,74 @@ router.post("/", async (req: Request, res: Response) => {
     ...watchedCase,
     initialSearch: searchResult,
   });
+});
+
+// PATCH /api/watched-cases/:id — update watched case settings (autoAddNew, monitorChanges)
+router.patch("/:id", async (req: Request, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const currentUser = req.user;
+  const pool = getPool();
+  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
+
+  const watchedCaseId = parseInt(req.params.id, 10);
+  if (isNaN(watchedCaseId)) { res.status(400).json({ error: "Invalid ID" }); return; }
+
+  const { autoAddNew, monitorChanges, autoAddToCalendar } = req.body;
+  const client = await pool.connect();
+  try {
+    const existing = await client.query(
+      `SELECT id, search_params FROM watched_cases WHERE id = $1 AND user_id = $2 AND is_active = true`,
+      [watchedCaseId, currentUser.userId]
+    );
+    if (existing.rows.length === 0) {
+      res.status(404).json({ error: "Watched case not found" });
+      return;
+    }
+
+    const updates: string[] = [];
+    const values: unknown[] = [];
+    let paramIdx = 1;
+
+    if (autoAddNew !== undefined || autoAddToCalendar !== undefined) {
+      const val = autoAddNew !== undefined ? autoAddNew : autoAddToCalendar;
+      updates.push(`auto_add_new = $${paramIdx++}`);
+      values.push(!!val);
+
+      // Also update search_params._autoAddToCalendar for backward compat
+      const params = existing.rows[0].search_params || {};
+      if (val) {
+        params._autoAddToCalendar = "true";
+      } else {
+        delete params._autoAddToCalendar;
+      }
+      updates.push(`search_params = $${paramIdx++}`);
+      values.push(JSON.stringify(params));
+    }
+
+    if (monitorChanges !== undefined) {
+      updates.push(`monitor_changes = $${paramIdx++}`);
+      values.push(!!monitorChanges);
+    }
+
+    if (updates.length === 0) {
+      res.json({ message: "Nothing to update" });
+      return;
+    }
+
+    updates.push(`updated_at = NOW()`);
+    values.push(watchedCaseId, currentUser.userId);
+    await client.query(
+      `UPDATE watched_cases SET ${updates.join(", ")} WHERE id = $${paramIdx++} AND user_id = $${paramIdx}`,
+      values
+    );
+
+    res.json({ message: "Watched case updated" });
+  } catch (err) {
+    console.error("❌ PATCH /api/watched-cases/:id failed:", err);
+    res.status(500).json({ error: "Failed to update watched case" });
+  } finally {
+    client.release();
+  }
 });
 
 // DELETE /api/watched-cases/calendar-entries/all — remove ALL synced calendar entries for the user

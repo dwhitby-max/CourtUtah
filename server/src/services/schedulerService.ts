@@ -18,6 +18,8 @@ interface WatchedCaseRow {
   label: string;
   monitor_changes: boolean;
   auto_add_new: boolean;
+  search_params: Record<string, string> | null;
+  source: string;
 }
 
 /**
@@ -72,7 +74,7 @@ export async function runWatchedCaseSearch(watchedCaseId: number): Promise<{
   try {
     // Load the watched case
     const wcResult = await client.query<WatchedCaseRow>(
-      `SELECT id, user_id, search_type, search_value, label, monitor_changes, auto_add_new
+      `SELECT id, user_id, search_type, search_value, label, monitor_changes, auto_add_new, search_params, COALESCE(source, 'manual') as source
        FROM watched_cases WHERE id = $1`,
       [watchedCaseId]
     );
@@ -316,7 +318,7 @@ export async function refreshAllWatchedCases(): Promise<{
     let watchedCases: WatchedCaseRow[];
     try {
       const result = await client.query<WatchedCaseRow>(
-        `SELECT id, user_id, search_type, search_value, label, monitor_changes, auto_add_new
+        `SELECT id, user_id, search_type, search_value, label, monitor_changes, auto_add_new, search_params, COALESCE(source, 'manual') as source
          FROM watched_cases WHERE is_active = true`
       );
       watchedCases = result.rows;

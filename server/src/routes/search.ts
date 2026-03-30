@@ -142,19 +142,18 @@ function buildSearchLabel(params: Record<string, string | undefined>): string {
 }
 
 /**
- * Check if a saved search already exists for this user with matching params.
+ * Check if a watched case (auto-saved search) already exists for this user with matching params.
  */
-async function findExistingSavedSearch(
+async function findExistingAutoSearch(
   userId: number,
   paramsKey: string
-): Promise<{ id: number; last_run_at: string | null } | null> {
+): Promise<{ id: number; last_refreshed_at: string | null } | null> {
   const pool = getPool();
   if (!pool) return null;
   const client = await pool.connect();
   try {
-    // Compare by canonical key stored in search_params JSONB
     const result = await client.query(
-      `SELECT id, last_run_at FROM saved_searches
+      `SELECT id, last_refreshed_at FROM watched_cases
        WHERE user_id = $1 AND search_params->>'_key' = $2 AND is_active = true
        LIMIT 1`,
       [userId, paramsKey]
@@ -166,7 +165,8 @@ async function findExistingSavedSearch(
 }
 
 /**
- * Save or update a saved search record for the user.
+ * Save or update a watched case record for the user (replaces saved_searches).
+ * Derives search_type/search_value from the primary searchable field.
  */
 async function saveSearch(
   userId: number,
@@ -178,17 +178,28 @@ async function saveSearch(
   if (!pool) return { savedSearchId: -1, previousRunAt: null };
   const client = await pool.connect();
   try {
-    const existing = await findExistingSavedSearch(userId, paramsKey);
+    const existing = await findExistingAutoSearch(userId, paramsKey);
     const paramsWithKey = { ...params, _key: paramsKey };
     const label = buildSearchLabel(params);
 
+    // Derive search_type and search_value from the primary field
+    let searchType = "defendant_name";
+    let searchValue = "unknown";
+    if (params.defendantName) { searchType = "defendant_name"; searchValue = params.defendantName; }
+    else if (params.caseNumber) { searchType = "case_number"; searchValue = params.caseNumber; }
+    else if (params.judgeName) { searchType = "judge_name"; searchValue = params.judgeName; }
+    else if (params.attorney) { searchType = "attorney"; searchValue = params.attorney; }
+    else if (params.courtName) { searchType = "court_name"; searchValue = params.courtName; }
+    else if (params.defendantOtn) { searchType = "defendant_otn"; searchValue = params.defendantOtn; }
+    else if (params.citationNumber) { searchType = "citation_number"; searchValue = params.citationNumber; }
+
     if (existing) {
-      const previousRunAt = existing.last_run_at
-        ? new Date(existing.last_run_at).toISOString()
+      const previousRunAt = existing.last_refreshed_at
+        ? new Date(existing.last_refreshed_at).toISOString()
         : null;
       await client.query(
-        `UPDATE saved_searches
-         SET results_count = $1, last_run_at = NOW(), updated_at = NOW()
+        `UPDATE watched_cases
+         SET results_count = $1, last_refreshed_at = NOW(), updated_at = NOW()
          WHERE id = $2`,
         [resultsCount, existing.id]
       );
@@ -196,10 +207,10 @@ async function saveSearch(
     }
 
     const result = await client.query(
-      `INSERT INTO saved_searches (user_id, search_params, label, results_count, last_run_at)
-       VALUES ($1, $2, $3, $4, NOW())
+      `INSERT INTO watched_cases (user_id, search_type, search_value, label, search_params, results_count, last_refreshed_at, source)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW(), 'auto_search')
        RETURNING id`,
-      [userId, JSON.stringify(paramsWithKey), label, resultsCount]
+      [userId, searchType, searchValue, label, JSON.stringify(paramsWithKey), resultsCount]
     );
     return { savedSearchId: result.rows[0].id, previousRunAt: null };
   } finally {

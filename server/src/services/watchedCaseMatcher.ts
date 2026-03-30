@@ -11,6 +11,8 @@ interface WatchedCaseRow {
   label: string;
   monitor_changes: boolean;
   auto_add_new: boolean;
+  search_params: Record<string, string> | null;
+  source: string;
 }
 
 interface CalendarConnectionRow {
@@ -63,7 +65,7 @@ export async function matchWatchedCases(): Promise<MatchResult> {
   try {
     // Get all active watched cases
     const watchedResult = await client.query<WatchedCaseRow>(
-      `SELECT id, user_id, search_type, search_value, label, monitor_changes, auto_add_new
+      `SELECT id, user_id, search_type, search_value, label, monitor_changes, auto_add_new, search_params, COALESCE(source, 'manual') as source
        FROM watched_cases
        WHERE is_active = true`
     );

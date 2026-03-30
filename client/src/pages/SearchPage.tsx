@@ -13,8 +13,9 @@ interface SavedSearchRow {
   search_params: Record<string, string>;
   label: string;
   results_count: number;
-  last_run_at: string;
+  last_refreshed_at: string | null;
   created_at: string;
+  source: string;
 }
 
 function timeAgo(dateStr: string): string {
@@ -121,10 +122,14 @@ export default function SearchPage() {
   async function fetchSavedSearches() {
     setLoadingSaved(true);
     try {
-      const res = await apiFetch("/saved-searches");
+      const res = await apiFetch("/watched-cases");
       if (res.ok) {
         const data = await res.json();
-        setSavedSearches(data.savedSearches || []);
+        // Filter to only show auto-saved searches (not manual watched cases)
+        const autoSearches = (data.watchedCases || []).filter(
+          (wc: SavedSearchRow) => wc.source === "auto_search" && wc.search_params
+        );
+        setSavedSearches(autoSearches);
       }
     } catch {
       // non-fatal
@@ -263,10 +268,10 @@ export default function SearchPage() {
         }
       }
 
-      // Update saved search to remember auto-add preference
+      // Update watched case to remember auto-add preference
       if (savedSearchId && savedSearchId > 0) {
         try {
-          await apiFetch(`/saved-searches/${savedSearchId}`, {
+          await apiFetch(`/watched-cases/${savedSearchId}`, {
             method: "PATCH",
             body: JSON.stringify({ autoAddToCalendar: true }),
           });
@@ -303,7 +308,7 @@ export default function SearchPage() {
   async function handleToggleSavedAutoAdd(saved: SavedSearchRow) {
     const newValue = !saved.search_params._autoAddToCalendar;
     try {
-      const res = await apiFetch(`/saved-searches/${saved.id}`, {
+      const res = await apiFetch(`/watched-cases/${saved.id}`, {
         method: "PATCH",
         body: JSON.stringify({ autoAddToCalendar: newValue }),
       });
@@ -321,7 +326,7 @@ export default function SearchPage() {
 
   async function handleDeleteSavedSearch(id: number) {
     try {
-      const res = await apiFetch(`/saved-searches/${id}`, { method: "DELETE" });
+      const res = await apiFetch(`/watched-cases/${id}`, { method: "DELETE" });
       if (res.ok) {
         setSavedSearches(prev => prev.filter(s => s.id !== id));
       }
@@ -524,7 +529,7 @@ export default function SearchPage() {
                   <div className="font-medium text-gray-900 truncate">{saved.label}</div>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400 mt-1">
                     <span>{saved.results_count} result{saved.results_count !== 1 ? "s" : ""}</span>
-                    <span>Last run {timeAgo(saved.last_run_at)}</span>
+                    {saved.last_refreshed_at && <span>Last run {timeAgo(saved.last_refreshed_at)}</span>}
                   </div>
                 </button>
                 <div className="flex items-center gap-3 shrink-0">
