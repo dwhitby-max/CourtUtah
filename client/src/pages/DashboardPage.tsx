@@ -118,7 +118,7 @@ export default function DashboardPage() {
         <Link to="/watched-cases"
           className="bg-white shadow rounded-lg p-6 hover:shadow-md transition-shadow">
           <div className="text-3xl font-bold text-amber-700">{stats.watchedCases}</div>
-          <div className="text-gray-600 mt-1">Watched Cases</div>
+          <div className="text-gray-600 mt-1">Saved Searches</div>
         </Link>
 
         <Link to="/calendar-settings"
@@ -147,7 +147,7 @@ export default function DashboardPage() {
           </div>
           <div className="flex items-start space-x-3">
             <span className="font-bold text-gray-400">3.</span>
-            <span>Add results to your <Link to="/watched-cases" className="text-amber-700 hover:underline">watched cases</Link> to auto-sync to your calendar</span>
+            <span>Enable auto-sync on your <Link to="/watched-cases" className="text-amber-700 hover:underline">saved searches</Link> to keep your calendar updated</span>
           </div>
           <div className="flex items-start space-x-3">
             <span className="font-bold text-gray-400">4.</span>

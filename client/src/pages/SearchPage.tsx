@@ -361,9 +361,9 @@ export default function SearchPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setWatchSuccess(`Added "${label}" to watched cases`);
+      setWatchSuccess(`Added "${label}" to saved searches`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add watched case");
+      setError(err instanceof Error ? err.message : "Failed to save search");
     }
   }
 
@@ -786,7 +786,7 @@ export default function SearchPage() {
                             onClick={() => handleWatch(event)}
                             className="text-gray-500 hover:text-gray-700 text-xs block"
                           >
-                            Watch & Auto-Sync
+                            Save & Auto-Sync
                           </button>
                           {hasDetails(event) && (
                             <button
