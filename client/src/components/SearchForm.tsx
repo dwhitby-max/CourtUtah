@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { apiFetch } from "@/api/client";
+import { useAuth } from "@/store/authStore";
 import CourtPicker from "./CourtPicker";
 
 interface SearchFormProps {
@@ -10,9 +11,12 @@ interface SearchFormProps {
 }
 
 export default function SearchForm({ onSearch, loading, hasCalendarConnection, initialAutoAdd }: SearchFormProps) {
+  const { user } = useAuth();
   const [defendantName, setDefendantName] = useState("");
   const [caseNumber, setCaseNumber] = useState("");
-  const [selectedCourts, setSelectedCourts] = useState<string[]>([]);
+  const [selectedCourts, setSelectedCourts] = useState<string[]>(
+    () => user?.searchPreferences?.defaultCourts ?? []
+  );
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [defendantOtn, setDefendantOtn] = useState("");

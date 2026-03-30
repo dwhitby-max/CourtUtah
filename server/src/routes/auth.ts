@@ -502,7 +502,7 @@ router.get("/me", authenticateToken, async (req: Request, res: Response) => {
   try {
     const result = await client.query(
       `SELECT id, email, phone, email_verified, google_id, microsoft_id, is_admin, is_approved,
-              notification_preferences, calendar_preferences, tos_agreed_at, created_at,
+              notification_preferences, calendar_preferences, search_preferences, tos_agreed_at, created_at,
               subscription_plan, subscription_status, subscription_current_period_end
        FROM users WHERE id = $1`,
       [req.user.userId]
@@ -526,6 +526,7 @@ router.get("/me", authenticateToken, async (req: Request, res: Response) => {
         isApproved: user.is_approved !== false,
         notificationPreferences: user.notification_preferences,
         calendarPreferences: user.calendar_preferences || {},
+        searchPreferences: user.search_preferences || { defaultCourts: [] },
         tosAgreedAt: user.tos_agreed_at || null,
         createdAt: user.created_at,
         subscriptionPlan: user.subscription_plan || "free",
@@ -593,7 +594,7 @@ router.patch("/profile", authenticateToken, async (req: Request, res: Response) 
   const pool = getPool();
   if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
 
-  const { phone, notificationPreferences, calendarPreferences } = req.body;
+  const { phone, notificationPreferences, calendarPreferences, searchPreferences } = req.body;
 
   const client = await pool.connect();
   try {
@@ -614,6 +615,10 @@ router.patch("/profile", authenticateToken, async (req: Request, res: Response) 
       setClauses.push(`calendar_preferences = $${paramIdx++}`);
       values.push(JSON.stringify(calendarPreferences));
     }
+    if (searchPreferences !== undefined) {
+      setClauses.push(`search_preferences = $${paramIdx++}`);
+      values.push(JSON.stringify(searchPreferences));
+    }
 
     values.push(req.user.userId);
     await client.query(
@@ -622,7 +627,7 @@ router.patch("/profile", authenticateToken, async (req: Request, res: Response) 
     );
 
     const result = await client.query(
-      `SELECT id, email, phone, email_verified, google_id, is_admin, is_approved, notification_preferences, calendar_preferences, tos_agreed_at, created_at FROM users WHERE id = $1`,
+      `SELECT id, email, phone, email_verified, google_id, is_admin, is_approved, notification_preferences, calendar_preferences, search_preferences, tos_agreed_at, created_at FROM users WHERE id = $1`,
       [req.user.userId]
     );
 
@@ -643,6 +648,7 @@ router.patch("/profile", authenticateToken, async (req: Request, res: Response) 
         isApproved: user.is_approved !== false,
         notificationPreferences: user.notification_preferences,
         calendarPreferences: user.calendar_preferences || {},
+        searchPreferences: user.search_preferences || { defaultCourts: [] },
         tosAgreedAt: user.tos_agreed_at || null,
         createdAt: user.created_at,
       },

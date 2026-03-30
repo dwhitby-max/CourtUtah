@@ -18,6 +18,7 @@ export interface UserPublic {
   isApproved: boolean;
   notificationPreferences: NotificationPreferences;
   calendarPreferences: CalendarPreferences;
+  searchPreferences: SearchPreferences;
   tosAgreedAt: string | null;
   createdAt: string;
   subscriptionPlan: SubscriptionPlan;
@@ -37,6 +38,10 @@ export interface NotificationPreferences {
 export interface CalendarPreferences {
   eventTag: string;
   eventColorId: string;
+}
+
+export interface SearchPreferences {
+  defaultCourts: string[];
 }
 
 // --- Calendar Connections ---

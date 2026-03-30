@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAuth } from "@/store/authStore";
 import { apiFetch } from "@/api/client";
+import CourtPicker from "@/components/CourtPicker";
 
 export default function ProfilePage() {
   const { user, setUser } = useAuth();
@@ -9,6 +10,7 @@ export default function ProfilePage() {
   const [smsEnabled, setSmsEnabled] = useState(user?.notificationPreferences?.smsEnabled ?? false);
   const [inAppEnabled, setInAppEnabled] = useState(user?.notificationPreferences?.inAppEnabled ?? true);
   const [frequency, setFrequency] = useState(user?.notificationPreferences?.frequency ?? "immediate");
+  const [defaultCourts, setDefaultCourts] = useState<string[]>(user?.searchPreferences?.defaultCourts ?? []);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -23,6 +25,7 @@ export default function ProfilePage() {
         body: JSON.stringify({
           phone: phone || null,
           notificationPreferences: { emailEnabled, smsEnabled, inAppEnabled, frequency },
+          searchPreferences: { defaultCourts },
         }),
       });
 
@@ -33,6 +36,7 @@ export default function ProfilePage() {
             ...user,
             phone: phone || null,
             notificationPreferences: { emailEnabled, smsEnabled, inAppEnabled, frequency },
+            searchPreferences: { defaultCourts },
           });
         }
         setMessage("Profile updated successfully");
@@ -106,6 +110,14 @@ export default function ProfilePage() {
               In-app and Socket.io notifications are always immediate. This setting controls email and SMS delivery timing.
             </p>
           </div>
+        </div>
+
+        <div>
+          <h3 className="text-sm font-medium text-gray-900 mb-3">Search Defaults</h3>
+          <p className="text-xs text-gray-500 mb-3">
+            Pre-select court locations that will be automatically filled in every new search. You can still change them per search.
+          </p>
+          <CourtPicker selected={defaultCourts} onChange={setDefaultCourts} />
         </div>
 
         <button type="submit" disabled={saving}
