@@ -18,9 +18,10 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
     return <Navigate to="/pending-approval" replace />;
   }
 
-  // If user hasn't connected Google (old password-based account), force Google OAuth.
+  // If user hasn't connected any calendar provider, redirect to connect one.
   // Use sessionStorage flag to prevent redirect loops — only attempt once per session.
-  if (!user.googleConnected) {
+  const hasCalendarProvider = user.googleConnected || user.microsoftConnected;
+  if (!hasCalendarProvider) {
     const attempted = sessionStorage.getItem("google_connect_attempted");
     if (!attempted) {
       sessionStorage.setItem("google_connect_attempted", "1");
@@ -29,7 +30,7 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
         <div className="min-h-screen flex items-center justify-center bg-gray-50">
           <div className="text-center">
             <div className="animate-spin h-8 w-8 border-4 border-amber-700 border-t-transparent rounded-full mx-auto mb-4" />
-            <p className="text-gray-600">Connecting your Google Calendar...</p>
+            <p className="text-gray-600">Connecting your calendar...</p>
           </div>
         </div>
       );

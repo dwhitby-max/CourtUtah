@@ -14,6 +14,7 @@ export interface UserPublic {
   phone: string | null;
   emailVerified: boolean;
   googleConnected: boolean;
+  microsoftConnected: boolean;
   isAdmin: boolean;
   isApproved: boolean;
   notificationPreferences: NotificationPreferences;

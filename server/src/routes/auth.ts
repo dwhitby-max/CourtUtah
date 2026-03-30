@@ -562,7 +562,9 @@ router.post("/accept-terms", authenticateToken, async (req: Request, res: Respon
     );
 
     const result = await client.query(
-      `SELECT id, email, phone, email_verified, google_id, is_admin, is_approved, notification_preferences, calendar_preferences, tos_agreed_at, created_at
+      `SELECT id, email, phone, email_verified, google_id, microsoft_id, is_admin, is_approved,
+              notification_preferences, calendar_preferences, search_preferences, tos_agreed_at, created_at,
+              subscription_plan, subscription_status, subscription_current_period_end
        FROM users WHERE id = $1`,
       [req.user.userId]
     );
@@ -575,12 +577,17 @@ router.post("/accept-terms", authenticateToken, async (req: Request, res: Respon
         phone: user.phone,
         emailVerified: user.email_verified,
         googleConnected: !!user.google_id,
+        microsoftConnected: !!user.microsoft_id,
         isAdmin: user.is_admin || false,
         isApproved: user.is_approved !== false,
         notificationPreferences: user.notification_preferences,
         calendarPreferences: user.calendar_preferences || {},
+        searchPreferences: user.search_preferences || { defaultCourts: [] },
         tosAgreedAt: user.tos_agreed_at,
         createdAt: user.created_at,
+        subscriptionPlan: user.subscription_plan || "free",
+        subscriptionStatus: user.subscription_status || "none",
+        subscriptionCurrentPeriodEnd: user.subscription_current_period_end || null,
       },
     });
   } catch (err) {
@@ -631,7 +638,10 @@ router.patch("/profile", authenticateToken, async (req: Request, res: Response) 
     );
 
     const result = await client.query(
-      `SELECT id, email, phone, email_verified, google_id, is_admin, is_approved, notification_preferences, calendar_preferences, search_preferences, tos_agreed_at, created_at FROM users WHERE id = $1`,
+      `SELECT id, email, phone, email_verified, google_id, microsoft_id, is_admin, is_approved,
+              notification_preferences, calendar_preferences, search_preferences, tos_agreed_at, created_at,
+              subscription_plan, subscription_status, subscription_current_period_end
+       FROM users WHERE id = $1`,
       [req.user.userId]
     );
 
@@ -648,6 +658,7 @@ router.patch("/profile", authenticateToken, async (req: Request, res: Response) 
         phone: user.phone,
         emailVerified: user.email_verified,
         googleConnected: !!user.google_id,
+        microsoftConnected: !!user.microsoft_id,
         isAdmin: user.is_admin || false,
         isApproved: user.is_approved !== false,
         notificationPreferences: user.notification_preferences,
