@@ -686,13 +686,17 @@ export async function deleteCalendarEntry(
             const accessToken = await getGoogleAccessToken(entry as CalendarSyncRow);
             const calendarId = entry.calendar_id || "primary";
             const url = `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(entry.external_event_id)}`;
+            console.log(`🗑️ Deleting Google Calendar event: ${entry.external_event_id} from calendar ${calendarId}`);
             const response = await fetch(url, {
               method: "DELETE",
               headers: { Authorization: `Bearer ${accessToken}` },
             });
             if (!response.ok && response.status !== 404 && response.status !== 410) {
-              console.error(`❌ Google Calendar DELETE failed (${response.status})`);
+              const body = await response.text();
+              console.error(`❌ Google Calendar DELETE failed (${response.status}): ${body}`);
+              throw new Error(`Google Calendar DELETE failed: ${response.status}`);
             }
+            console.log(`✅ Google Calendar event deleted (${response.status})`);
             break;
           }
           case "microsoft": {
@@ -726,12 +730,18 @@ export async function deleteCalendarEntry(
           }
         }
       } catch (err) {
-        // Log but don't fail — still remove the DB row
         console.error(`⚠️  Failed to delete event from provider:`, err);
+        // Mark as error instead of deleting — event still exists on provider
+        await client.query(
+          `UPDATE calendar_entries SET sync_status = 'error', sync_error = $1, updated_at = NOW()
+           WHERE id = $2 AND user_id = $3`,
+          [err instanceof Error ? err.message : String(err), calendarEntryId, userId]
+        );
+        return false;
       }
     }
 
-    // Remove the calendar entry row
+    // Only remove the DB row after successful provider deletion (or if never synced)
     await client.query("DELETE FROM calendar_entries WHERE id = $1 AND user_id = $2", [calendarEntryId, userId]);
 
     return true;

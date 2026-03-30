@@ -83,6 +83,8 @@ export default function WatchedCasesPage() {
   const [entriesMap, setEntriesMap] = useState<Record<number, WatchedCaseCalendarEntry[]>>({});
   const [loadingEntries, setLoadingEntries] = useState<Set<number>>(new Set());
   const [removingEntryIds, setRemovingEntryIds] = useState<Set<number>>(new Set());
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; label: string; eventCount: number } | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
   async function fetchCases() {
     try {
@@ -122,17 +124,35 @@ export default function WatchedCasesPage() {
     }
   }
 
-  async function handleDelete(id: number) {
+  function handleDelete(id: number) {
+    const wc = cases.find(c => c.id === id);
+    const eventCount = wc ? parseInt(wc.matching_events_count || "0", 10) : 0;
+
+    if (eventCount > 0) {
+      setDeleteConfirm({ id, label: wc?.label || "this search", eventCount });
+    } else {
+      executeDelete(id, false);
+    }
+  }
+
+  async function executeDelete(id: number, removeFromCalendar: boolean) {
+    setDeleteConfirm(null);
+    setDeletingId(id);
     try {
+      if (removeFromCalendar) {
+        await removeCalendarEntriesForCase(id);
+      }
       const res = await apiFetch(`/watched-cases/${id}`, { method: "DELETE" });
       if (!res.ok) { const d = await res.json(); throw new Error(d.error); }
       setCases((prev) => prev.filter((c) => c.id !== id));
       setEntriesMap((prev) => { const next = { ...prev }; delete next[id]; return next; });
       if (expandedId === id) setExpandedId(null);
-      setActionMsg("Watched case removed");
+      setActionMsg(removeFromCalendar ? "Search removed and calendar events deleted" : "Search removed");
       setTimeout(() => setActionMsg(""), 3000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -255,6 +275,41 @@ export default function WatchedCasesPage() {
       {error && <div className="bg-red-50 text-red-700 p-4 rounded-md text-sm">{error}</div>}
       {actionMsg && <div className="bg-green-50 text-green-700 p-4 rounded-md text-sm">{actionMsg}</div>}
 
+      {/* Delete confirmation modal */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Delete Search</h3>
+            <p className="text-sm text-gray-600 mb-1">
+              You are deleting <span className="font-medium">"{deleteConfirm.label}"</span>.
+            </p>
+            <p className="text-sm text-gray-600 mb-5">
+              This search has {deleteConfirm.eventCount} event{deleteConfirm.eventCount !== 1 ? "s" : ""} synced to your calendar. What would you like to do?
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => executeDelete(deleteConfirm.id, true)}
+                className="w-full px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md"
+              >
+                Delete search and remove from calendar
+              </button>
+              <button
+                onClick={() => executeDelete(deleteConfirm.id, false)}
+                className="w-full px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md"
+              >
+                Delete search but keep calendar events
+              </button>
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                className="w-full px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {cases.length === 0 ? (
         <div className="bg-white shadow rounded-lg p-8 text-center text-gray-500">
           <p>No saved searches yet.</p>
@@ -336,9 +391,10 @@ export default function WatchedCasesPage() {
                       )}
                       <button
                         onClick={() => handleDelete(wc.id)}
-                        className="text-red-600 hover:text-red-800 text-sm font-medium"
+                        disabled={deletingId === wc.id}
+                        className="text-red-600 hover:text-red-800 text-sm font-medium disabled:opacity-50"
                       >
-                        Remove
+                        {deletingId === wc.id ? "Deleting..." : "Remove"}
                       </button>
                     </div>
                   </div>

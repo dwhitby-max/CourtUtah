@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import SearchForm from "@/components/SearchForm";
 import { searchCourtEvents } from "@/api/search";
-import { addEventToCalendar, addAllEventsToCalendar, getCalendarConnections, getSyncedEvents, removeEventFromCalendar } from "@/api/calendar";
+import { addEventToCalendar, addAllEventsToCalendar, getCalendarConnections, getSyncedEvents, removeEventFromCalendar, removeCalendarEntriesForCase } from "@/api/calendar";
 import { apiFetch } from "@/api/client";
 import NewEntriesSection from "@/components/NewEntriesSection";
 import Pagination from "@/components/Pagination";
@@ -88,6 +88,7 @@ export default function SearchPage() {
   const [addedAll, setAddedAll] = useState(false);
   const [removingAll, setRemovingAll] = useState(false);
   const [previousRunAt, setPreviousRunAt] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; label: string } | null>(null);
 
   // Load saved searches and calendar provider on mount
   useEffect(() => {
@@ -324,8 +325,21 @@ export default function SearchPage() {
     }
   }
 
-  async function handleDeleteSavedSearch(id: number) {
+  function handleDeleteSavedSearch(id: number) {
+    const saved = savedSearches.find(s => s.id === id);
+    if (saved && saved.results_count > 0) {
+      setDeleteConfirm({ id, label: saved.label });
+    } else {
+      executeDeleteSearch(id, false);
+    }
+  }
+
+  async function executeDeleteSearch(id: number, removeFromCalendar: boolean) {
+    setDeleteConfirm(null);
     try {
+      if (removeFromCalendar) {
+        await removeCalendarEntriesForCase(id);
+      }
       const res = await apiFetch(`/watched-cases/${id}`, { method: "DELETE" });
       if (res.ok) {
         setSavedSearches(prev => prev.filter(s => s.id !== id));
@@ -564,6 +578,38 @@ export default function SearchPage() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Delete Search</h3>
+            <p className="text-sm text-gray-600 mb-5">
+              You are deleting <span className="font-medium">"{deleteConfirm.label}"</span>. Do you want to remove the synced events from your calendar as well?
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => executeDeleteSearch(deleteConfirm.id, true)}
+                className="w-full px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md"
+              >
+                Delete search and remove from calendar
+              </button>
+              <button
+                onClick={() => executeDeleteSearch(deleteConfirm.id, false)}
+                className="w-full px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md"
+              >
+                Delete search but keep calendar events
+              </button>
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                className="w-full px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}

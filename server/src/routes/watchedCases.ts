@@ -242,14 +242,12 @@ router.delete("/:id", async (req: Request, res: Response) => {
       return;
     }
 
-    // Clean up synced calendar entries from providers before deleting the watched case
-    const entries = await client.query(
-      `SELECT id FROM calendar_entries WHERE watched_case_id = $1 AND user_id = $2`,
+    // Detach calendar entries but leave them on the user's calendar
+    await client.query(
+      `UPDATE calendar_entries SET watched_case_id = NULL, updated_at = NOW()
+       WHERE watched_case_id = $1 AND user_id = $2`,
       [watchedCaseId, currentUser.userId]
     );
-    for (const row of entries.rows) {
-      await deleteCalendarEntry(row.id, currentUser.userId);
-    }
 
     await client.query(
       `DELETE FROM watched_cases WHERE id = $1 AND user_id = $2`,
