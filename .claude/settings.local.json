@@ -28,7 +28,8 @@
       "Bash(find /home/runner/workspace/client -type f \\\\\\(-name *.ts -o -name *.tsx \\\\\\))",
       "Bash(xargs ls:*)",
       "Bash(psql:*)",
-      "Bash(find /home/runner/workspace -type f -name *backup*)"
+      "Bash(find /home/runner/workspace -type f -name *backup*)",
+      "Bash(grep -r MICROSOFT .env* server/.env*)"
     ]
   }
 }
