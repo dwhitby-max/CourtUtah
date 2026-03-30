@@ -35,6 +35,7 @@ export const config = {
     clientId: process.env.MICROSOFT_CLIENT_ID || "",
     clientSecret: process.env.MICROSOFT_CLIENT_SECRET || "",
     redirectUri: process.env.MICROSOFT_REDIRECT_URI || "",
+    authRedirectUri: process.env.MICROSOFT_AUTH_REDIRECT_URI || process.env.MICROSOFT_REDIRECT_URI || "",
   },
 
   smtp: {

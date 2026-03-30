@@ -4,6 +4,8 @@ import { Link, useSearchParams } from "react-router-dom";
 const errorMessages: Record<string, string> = {
   google_denied: "Google sign-in was cancelled.",
   google_failed: "Google sign-in failed. Please try again.",
+  microsoft_denied: "Microsoft sign-in was cancelled.",
+  microsoft_failed: "Microsoft sign-in failed. Please try again.",
   missing_params: "Sign-in failed — missing parameters.",
   invalid_state: "Sign-in session expired. Please try again.",
   db_unavailable: "Service temporarily unavailable. Please try again later.",
@@ -47,8 +49,21 @@ export default function LoginPage() {
             Sign in with Google
           </button>
 
+          <button
+            onClick={() => { window.location.href = "/api/auth/microsoft"; }}
+            className="w-full flex items-center justify-center gap-3 bg-white border-2 border-gray-300 rounded-md px-4 py-3 font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors"
+          >
+            <svg className="w-5 h-5" viewBox="0 0 23 23">
+              <path fill="#f35325" d="M1 1h10v10H1z" />
+              <path fill="#81bc06" d="M12 1h10v10H12z" />
+              <path fill="#05a6f0" d="M1 12h10v10H1z" />
+              <path fill="#ffba08" d="M12 12h10v10H12z" />
+            </svg>
+            Sign in with Microsoft
+          </button>
+
           <p className="text-xs text-center text-gray-500">
-            Signing in connects your Google Calendar automatically.
+            Signing in connects your calendar automatically.
           </p>
         </div>
 
