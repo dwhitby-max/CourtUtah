@@ -282,6 +282,7 @@ router.get("/microsoft", heavyLimiter, (req: Request, res: Response) => {
     "openid",
     "email",
     "profile",
+    "User.Read",
     "Calendars.ReadWrite",
     "offline_access",
   ];
@@ -327,22 +328,25 @@ router.get("/microsoft/callback", async (req: Request, res: Response) => {
     console.log(`🔑 Microsoft OAuth callback, redirect_uri=${redirectUri}`);
 
     // Exchange authorization code for tokens
+    const tokenBody = new URLSearchParams({
+      code: String(code),
+      client_id: config.microsoft.clientId,
+      client_secret: config.microsoft.clientSecret,
+      redirect_uri: redirectUri,
+      grant_type: "authorization_code",
+    });
+    console.log(`🔑 Microsoft token exchange: redirect_uri=${redirectUri}, client_id=${config.microsoft.clientId ? config.microsoft.clientId.substring(0, 8) + '...' : 'MISSING'}`);
+
     const tokenResponse = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        code: String(code),
-        client_id: config.microsoft.clientId,
-        client_secret: config.microsoft.clientSecret,
-        redirect_uri: redirectUri,
-        grant_type: "authorization_code",
-      }),
+      body: tokenBody,
     });
 
     const tokens = await tokenResponse.json();
 
     if (tokens.error) {
-      console.error("❌ Microsoft token exchange failed:", tokens.error_description || tokens.error);
+      console.error("❌ Microsoft token exchange failed:", tokens.error, tokens.error_description);
       res.redirect("/login?error=microsoft_failed");
       return;
     }
@@ -357,7 +361,7 @@ router.get("/microsoft/callback", async (req: Request, res: Response) => {
     const userinfo = await userinfoResponse.json();
 
     if (!userinfo.id) {
-      console.error("❌ Microsoft userinfo missing id");
+      console.error("❌ Microsoft userinfo missing id, response:", JSON.stringify(userinfo));
       res.redirect("/login?error=microsoft_failed");
       return;
     }
