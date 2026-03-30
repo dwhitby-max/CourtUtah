@@ -15,10 +15,18 @@ async function runMigrations(): Promise<void> {
     connectionTimeoutMillis: 8000,
   });
 
-  // Compiled JS: server/dist/server/src/db/migrate.js
-  // Migrations:  server/migrations/
-  // Path: __dirname (db/) → ../../../../migrations
-  const migrationsDir = path.resolve(__dirname, "..", "..", "..", "..", "migrations");
+  // Try multiple candidate paths for the migrations directory
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "..", "..", "migrations"),  // from dist/server/src/db/
+    path.resolve(__dirname, "..", "..", "..", "migrations"),        // fallback: fewer levels
+    path.resolve(process.cwd(), "migrations"),                     // from server/ working dir
+    path.resolve(process.cwd(), "server", "migrations"),           // from project root working dir
+  ];
+  const migrationsDir = candidates.find((dir) => fs.existsSync(dir));
+  if (!migrationsDir) {
+    console.error("❌ Could not find migrations directory. Tried:", candidates);
+    return;
+  }
 
   console.log("🔄 Running migrations from:", migrationsDir);
 
