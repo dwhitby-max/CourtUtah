@@ -1,6 +1,29 @@
 import { getPool } from "../db/pool";
 import { SearchRequest, CourtEvent } from "../../../shared/types";
 
+/**
+ * Extract location-matching patterns from a court picker name.
+ * e.g. "Third District Court - Salt Lake" → ["THIRD DISTRICT COURT - SALT LAKE", "SALT LAKE"]
+ * e.g. "Provo Justice Court" → ["PROVO JUSTICE COURT", "PROVO"]
+ */
+function extractCourtLocationPatterns(name: string): string[] {
+  const upper = name.toUpperCase().trim();
+  const patterns = [upper];
+  const dashIdx = upper.indexOf(" - ");
+  if (dashIdx !== -1) {
+    const loc = upper.slice(dashIdx + 3).trim();
+    if (loc.length >= 2) patterns.push(loc);
+  }
+  const courtSuffix = upper.match(/^(.+?)\s+(JUSTICE|DISTRICT)\s+COURT/);
+  if (courtSuffix) {
+    const prefix = courtSuffix[1].trim();
+    if (prefix.length >= 2 && !/^(FIRST|SECOND|THIRD|FOURTH|FIFTH|SIXTH|SEVENTH|EIGHTH)\b/.test(prefix)) {
+      patterns.push(prefix);
+    }
+  }
+  return [...new Set(patterns)];
+}
+
 export async function searchCourtEvents(params: SearchRequest): Promise<CourtEvent[]> {
   const pool = getPool();
   if (!pool) {
@@ -26,15 +49,20 @@ export async function searchCourtEvents(params: SearchRequest): Promise<CourtEve
   if (params.courtNames) {
     const names = params.courtNames.split(",").map((n) => n.trim()).filter(Boolean);
     if (names.length > 0) {
-      const orClauses = names.map((_, i) => `UPPER(court_name) LIKE $${paramIndex + i} OR UPPER(hearing_location) LIKE $${paramIndex + i}`);
+      // Court picker names like "Third District Court - Salt Lake" don't match
+      // DB values like "Salt Lake City", so extract location keywords too.
+      const patterns = names.flatMap(extractCourtLocationPatterns);
+      const orClauses = patterns.map((_, i) => `UPPER(court_name) LIKE $${paramIndex + i} OR UPPER(hearing_location) LIKE $${paramIndex + i}`);
       conditions.push(`(${orClauses.join(" OR ")})`);
-      names.forEach((n) => values.push(`%${n.toUpperCase()}%`));
-      paramIndex += names.length;
+      patterns.forEach((p) => values.push(`%${p}%`));
+      paramIndex += patterns.length;
     }
   } else if (params.courtName) {
-    conditions.push(`(UPPER(court_name) LIKE $${paramIndex} OR UPPER(hearing_location) LIKE $${paramIndex})`);
-    values.push(`%${params.courtName.toUpperCase()}%`);
-    paramIndex++;
+    const patterns = extractCourtLocationPatterns(params.courtName);
+    const orClauses = patterns.map((_, i) => `UPPER(court_name) LIKE $${paramIndex + i} OR UPPER(hearing_location) LIKE $${paramIndex + i}`);
+    conditions.push(`(${orClauses.join(" OR ")})`);
+    patterns.forEach((p) => values.push(`%${p}%`));
+    paramIndex += patterns.length;
   }
 
   if (params.courtDate) {

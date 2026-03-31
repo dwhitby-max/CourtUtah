@@ -35,6 +35,10 @@ export interface ParsedCourtEvent {
   hearingLocation: string | null;
   isVirtual: boolean;
   contentHash: string;
+  /** Full court name from the court list (e.g. "Third District Court - Salt Lake"). Set by caller, not parser. */
+  courtName?: string | null;
+  /** Court location code used for the live search (e.g. "1868D"). Set by caller, not parser. */
+  courtLocationCode?: string | null;
 }
 
 /**

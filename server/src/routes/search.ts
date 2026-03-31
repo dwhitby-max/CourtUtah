@@ -333,19 +333,20 @@ async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<DetectedC
             // Update the DB record with all live-scraped fields
             await client.query(
               `UPDATE court_events SET
-                court_room = COALESCE(NULLIF($1, ''), court_room),
-                hearing_type = COALESCE(NULLIF($2, ''), hearing_type),
-                case_type = COALESCE(NULLIF($3, ''), case_type),
-                defendant_name = COALESCE(NULLIF($4, ''), defendant_name),
-                prosecuting_attorney = COALESCE(NULLIF($5, ''), prosecuting_attorney),
-                defense_attorney = COALESCE(NULLIF($6, ''), defense_attorney),
-                judge_name = COALESCE(NULLIF($7, ''), judge_name),
-                hearing_location = COALESCE(NULLIF($8, ''), hearing_location),
-                content_hash = COALESCE(NULLIF($9, ''), content_hash),
+                court_name = COALESCE(NULLIF($1, ''), court_name),
+                court_room = COALESCE(NULLIF($2, ''), court_room),
+                hearing_type = COALESCE(NULLIF($3, ''), hearing_type),
+                case_type = COALESCE(NULLIF($4, ''), case_type),
+                defendant_name = COALESCE(NULLIF($5, ''), defendant_name),
+                prosecuting_attorney = COALESCE(NULLIF($6, ''), prosecuting_attorney),
+                defense_attorney = COALESCE(NULLIF($7, ''), defense_attorney),
+                judge_name = COALESCE(NULLIF($8, ''), judge_name),
+                hearing_location = COALESCE(NULLIF($9, ''), hearing_location),
+                content_hash = COALESCE(NULLIF($10, ''), content_hash),
                 updated_at = NOW()
-              WHERE id = $10`,
+              WHERE id = $11`,
               [
-                event.courtRoom, event.hearingType, event.caseType,
+                event.courtName || "", event.courtRoom, event.hearingType, event.caseType,
                 event.defendantName, event.prosecutingAttorney,
                 event.defenseAttorney, event.judgeName,
                 event.hearingLocation, event.contentHash, row.id,
@@ -419,7 +420,7 @@ async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<DetectedC
             judge_name, hearing_location, is_virtual
           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
           [
-            "", event.hearingLocation || "", event.courtRoom, event.eventDate,
+            "", event.courtName || "", event.courtRoom, event.eventDate,
             event.eventTime, event.hearingType, event.caseNumber,
             event.caseType, event.defendantName, event.defendantOtn,
             event.defendantDob, event.prosecutingAttorney,
@@ -521,40 +522,46 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     const BATCH_SIZE = 15;
     console.log(`🌐 Live searching: ${courtCodes.length} court(s) × ${dates.length} date(s) = ${jobs.length} request(s)`);
 
+    // Build a lookup from location code → full court info so we can annotate parsed events
+    const courtByLoc = new Map(courts.map((c) => [c.locationCode, c]));
+
     const dbResultsPromise = searchCourtEvents(searchParams);
-    const liveHtmlParts: string[] = [];
+    const allParsed: ParsedCourtEvent[] = [];
     let failedJobs = 0;
     let emptyJobs = 0;
+    let totalHtmlLen = 0;
     for (let i = 0; i < jobs.length; i += BATCH_SIZE) {
       const batch = jobs.slice(i, i + BATCH_SIZE);
       const results = await Promise.all(
         batch.map((j) =>
-          liveSearchUtcourts({ ...liveBase, locationCode: j.loc, date: j.date }).catch((err) => {
-            failedJobs++;
-            console.warn(`⚠️ Search failed for loc=${j.loc} date=${j.date}:`, err instanceof Error ? err.message : err);
-            return "";
-          })
+          liveSearchUtcourts({ ...liveBase, locationCode: j.loc, date: j.date })
+            .then((html) => ({ html, loc: j.loc }))
+            .catch((err) => {
+              failedJobs++;
+              console.warn(`⚠️ Search failed for loc=${j.loc} date=${j.date}:`, err instanceof Error ? err.message : err);
+              return { html: "", loc: j.loc };
+            })
         )
       );
-      for (const r of results) {
-        if (r.length === 0) emptyJobs++;
+      // Parse each job's HTML separately and annotate with court metadata
+      for (const { html, loc } of results) {
+        totalHtmlLen += html.length;
+        if (html.length === 0) { emptyJobs++; continue; }
+        const courtInfo = courtByLoc.get(loc);
+        const parsed = parseHtmlCalendarResults(html);
+        for (const event of parsed) {
+          event.courtName = courtInfo?.name ?? null;
+          event.courtLocationCode = loc;
+        }
+        allParsed.push(...parsed);
       }
-      liveHtmlParts.push(...results);
     }
 
-    const html = liveHtmlParts.join("\n");
-    const allParsed = parseHtmlCalendarResults(html);
     const dbResults = await dbResultsPromise;
 
     // Diagnostic logging
-    const htmlLen = html.length;
-    const hasZeroResults = /\b0 results found\b/i.test(html);
-    const casehoverCount = (html.match(/casehover/gi) || []).length;
-    console.log(`  📋 Live: ${allParsed.length} parsed events from ${htmlLen} chars HTML (${casehoverCount} casehover divs, ${failedJobs} failed jobs, ${emptyJobs} empty responses, zeroResultsText=${hasZeroResults})`);
+    console.log(`  📋 Live: ${allParsed.length} parsed events from ${totalHtmlLen} chars HTML (${failedJobs} failed jobs, ${emptyJobs} empty responses)`);
     console.log(`  📋 DB: ${dbResults.length} events`);
-    if (allParsed.length === 0 && casehoverCount === 0 && htmlLen > 0) {
-      console.log(`  🔍 HTML preview (first 500 chars): ${html.slice(0, 500)}`);
-    }
 
     // Persist live results and detect changes (awaited so we can return changes)
     let detectedChanges: DetectedChange[] = [];
@@ -629,7 +636,7 @@ function toCourtEvent(event: ParsedCourtEvent): CourtEvent {
   return {
     id: liveIdCounter,
     courtType: "",
-    courtName: event.hearingLocation || "",
+    courtName: event.courtName || event.hearingLocation || "",
     courtRoom: event.courtRoom,
     eventDate: event.eventDate || "",
     eventTime: event.eventTime,
@@ -681,24 +688,30 @@ function applyAllFilters(
   }
 
   if (params.courtNames) {
-    // Multiple specific courts selected — match any
+    // Match against courtName (now set from court list) and hearingLocation.
+    // Check both directions for backward compat with old DB rows that only have city names.
     const names = params.courtNames.split(",").map((n) => n.trim().toUpperCase()).filter(Boolean);
     if (names.length > 0) {
-      filtered = filtered.filter((e) =>
-        names.some(
+      filtered = filtered.filter((e) => {
+        const cn = (e.courtName || "").toUpperCase();
+        const hl = (e.hearingLocation || "").toUpperCase();
+        return names.some(
           (name) =>
-            (e.courtName && e.courtName.toUpperCase().includes(name)) ||
-            (e.hearingLocation && e.hearingLocation.toUpperCase().includes(name))
-        )
-      );
+            cn.includes(name) || hl.includes(name) ||
+            (cn.length > 2 && name.includes(cn)) ||
+            (hl.length > 2 && name.includes(hl))
+        );
+      });
     }
   } else if (params.courtName) {
     const court = params.courtName.toUpperCase();
-    filtered = filtered.filter(
-      (e) =>
-        (e.courtName && e.courtName.toUpperCase().includes(court)) ||
-        (e.hearingLocation && e.hearingLocation.toUpperCase().includes(court))
-    );
+    filtered = filtered.filter((e) => {
+      const cn = (e.courtName || "").toUpperCase();
+      const hl = (e.hearingLocation || "").toUpperCase();
+      return cn.includes(court) || hl.includes(court) ||
+        (cn.length > 2 && court.includes(cn)) ||
+        (hl.length > 2 && court.includes(hl));
+    });
   }
 
   if (params.judgeName) {
