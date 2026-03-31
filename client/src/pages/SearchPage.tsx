@@ -6,7 +6,7 @@ import { apiFetch } from "@/api/client";
 import NewEntriesSection from "@/components/NewEntriesSection";
 import Pagination from "@/components/Pagination";
 import { exportCourtEventsCsv } from "@/utils/formatters";
-import { CourtEvent } from "@shared/types";
+import { CourtEvent, DetectedChange } from "@shared/types";
 
 interface SavedSearchRow {
   id: number;
@@ -45,6 +45,7 @@ function toQueryParams(params: Record<string, string>): Record<string, string> {
     defendantName: "defendant_name",
     caseNumber: "case_number",
     courtName: "court_name",
+    courtNames: "court_names",
     courtDate: "court_date",
     dateFrom: "date_from",
     dateTo: "date_to",
@@ -53,6 +54,7 @@ function toQueryParams(params: Record<string, string>): Record<string, string> {
     charges: "charges",
     judgeName: "judge_name",
     attorney: "attorney",
+    allCourts: "all_courts",
   };
   const result: Record<string, string> = {};
   for (const [key, val] of Object.entries(params)) {
@@ -89,6 +91,7 @@ export default function SearchPage() {
   const [removingAll, setRemovingAll] = useState(false);
   const [previousRunAt, setPreviousRunAt] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; label: string } | null>(null);
+  const [detectedChanges, setDetectedChanges] = useState<DetectedChange[]>([]);
 
   // Load saved searches and calendar provider on mount
   useEffect(() => {
@@ -158,6 +161,7 @@ export default function SearchPage() {
       setLastSearchParams(searchParams);
       setLastSearchSavedId(data.savedSearchId ?? null);
       setPreviousRunAt(data.previousRunAt ?? null);
+      setDetectedChanges(data.detectedChanges ?? []);
       setCalSyncingIds(new Set());
       setAddedAll(false);
       // Refresh saved searches list after search (it may have been auto-saved)
@@ -616,6 +620,39 @@ export default function SearchPage() {
 
       {error && <div className="bg-red-50 text-red-700 p-4 rounded-md text-sm">{error}</div>}
       {watchSuccess && <div className="bg-green-50 text-green-700 p-4 rounded-md text-sm">{watchSuccess}</div>}
+
+      {/* Schedule Changes Detected */}
+      {detectedChanges.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+          <h3 className="text-sm font-semibold text-amber-800 mb-2">
+            Schedule Changes Detected ({detectedChanges.length} event{detectedChanges.length !== 1 ? "s" : ""} updated)
+          </h3>
+          <p className="text-xs text-amber-600 mb-3">
+            These changes were found since your last search. Your calendar and notifications have been updated automatically.
+          </p>
+          <div className="space-y-2">
+            {detectedChanges.slice(0, 10).map((dc) => (
+              <div key={dc.courtEventId} className="bg-white rounded p-3 border border-amber-100">
+                <div className="font-medium text-sm text-gray-900">
+                  {dc.defendantName || "Unknown"} &mdash; Case {dc.caseNumber || "N/A"}
+                </div>
+                <div className="mt-1 space-y-0.5">
+                  {dc.changes.map((c, i) => (
+                    <div key={i} className="text-xs text-gray-600">
+                      <span className="font-medium text-gray-700">{c.field.replace(/_/g, " ")}:</span>{" "}
+                      <span className="line-through text-red-500">{c.oldValue || "(empty)"}</span>{" "}
+                      <span className="text-green-700">{c.newValue || "(empty)"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {detectedChanges.length > 10 && (
+              <p className="text-xs text-amber-600">...and {detectedChanges.length - 10} more changes</p>
+            )}
+          </div>
+        </div>
+      )}
 
       {searched && !loading && (
         <div className="bg-white shadow rounded-lg overflow-hidden">

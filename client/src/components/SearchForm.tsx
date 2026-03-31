@@ -26,6 +26,7 @@ export default function SearchForm({ onSearch, loading, hasCalendarConnection, i
   const [judgeName, setJudgeName] = useState("");
   const [attorney, setAttorney] = useState("");
   const [autoAddToCalendar, setAutoAddToCalendar] = useState(initialAutoAdd ?? false);
+  const [validationError, setValidationError] = useState("");
   const [coverage, setCoverage] = useState<{
     totalEvents: number;
     totalCourts: number;
@@ -42,6 +43,18 @@ export default function SearchForm({ onSearch, loading, hasCalendarConnection, i
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setValidationError("");
+
+    // At least one search field is required (courts and dates alone are not enough)
+    const hasSearchField = !!(
+      defendantName || caseNumber || defendantOtn ||
+      citationNumber || charges || judgeName || attorney
+    );
+    if (!hasSearchField) {
+      setValidationError("Please enter at least one search field (defendant name, case number, OTN, citation, charges, judge, or attorney).");
+      return;
+    }
+
     const params: Record<string, string> = {};
     if (defendantName) params.defendant_name = defendantName;
     if (caseNumber) params.case_number = caseNumber;
@@ -58,7 +71,6 @@ export default function SearchForm({ onSearch, loading, hasCalendarConnection, i
     if (judgeName) params.judge_name = judgeName;
     if (attorney) params.attorney = attorney;
 
-    if (Object.keys(params).length === 0) return;
     if (autoAddToCalendar) params._autoAddToCalendar = "true";
     onSearch(params);
   }
@@ -185,6 +197,10 @@ export default function SearchForm({ onSearch, loading, hasCalendarConnection, i
           />
         </div>
       </div>
+
+      {validationError && (
+        <p className="mt-3 text-sm text-red-600">{validationError}</p>
+      )}
 
       <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-4">
         <button

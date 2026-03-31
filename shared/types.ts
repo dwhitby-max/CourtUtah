@@ -122,6 +122,13 @@ export interface SearchRequest {
   attorney?: string;
 }
 
+export interface DetectedChange {
+  courtEventId: number;
+  caseNumber: string | null;
+  defendantName: string | null;
+  changes: Array<{ field: string; oldValue: string; newValue: string }>;
+}
+
 export interface SearchResponse {
   results: CourtEvent[];
   resultsCount: number;
@@ -131,6 +138,8 @@ export interface SearchResponse {
   savedSearchId?: number | null;
   previousRunAt?: string | null;
   processedAt: string;
+  /** Changes detected when comparing live results against DB (re-run only) */
+  detectedChanges?: DetectedChange[];
 }
 
 // --- Watched Cases ---

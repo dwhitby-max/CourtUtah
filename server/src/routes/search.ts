@@ -4,9 +4,12 @@ import { authenticateToken } from "../middleware/auth";
 import { searchCourtEvents } from "../services/searchService";
 import { liveSearchUtcourts, LiveSearchParams, fetchCourtList, CourtInfo } from "../services/courtScraper";
 import { parseHtmlCalendarResults, ParsedCourtEvent } from "../services/courtEventParser";
-import { CourtEvent } from "../../../shared/types";
+import { CourtEvent, DetectedChange } from "../../../shared/types";
 import { getPool } from "../db/pool";
 import { config } from "../config/env";
+import { detectChanges, processChanges } from "../services/changeDetector";
+import { notifyScheduleChange } from "../services/notificationService";
+import { syncCalendarEntry } from "../services/calendarSync";
 
 
 const router = Router();
@@ -261,11 +264,14 @@ async function saveSearch(
 
 /**
  * Persist live-scraped events into court_events table so future searches hit the DB.
+ * Detects changes against existing DB records, logs them, and notifies affected users.
+ * Returns array of detected changes for the API response.
  */
-async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<void> {
+async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<DetectedChange[]> {
   const pool = getPool();
-  if (!pool || parsed.length === 0) return;
+  if (!pool || parsed.length === 0) return [];
 
+  const allDetectedChanges: DetectedChange[] = [];
   const client = await pool.connect();
   try {
     for (const event of parsed) {
@@ -273,39 +279,124 @@ async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<void> {
       if (!event.caseNumber || !event.eventDate) continue;
       try {
         const existing = await client.query(
-          `SELECT id, defense_attorney, prosecuting_attorney FROM court_events
+          `SELECT id, court_room, event_date::text, event_time, hearing_type,
+                  case_number, case_type, defendant_name,
+                  prosecuting_attorney, defense_attorney,
+                  judge_name, hearing_location, content_hash
+           FROM court_events
            WHERE case_number = $1 AND event_date = $2 AND COALESCE(event_time, '') = COALESCE($3, '') LIMIT 1`,
           [event.caseNumber, event.eventDate, event.eventTime]
         );
 
         if (existing.rows.length > 0) {
-          // Update existing row with any new data from the live search
-          // (e.g. attorney names that the daily scraper doesn't capture)
           const row = existing.rows[0];
-          const updates: string[] = [];
-          const values: (string | null)[] = [];
-          let paramIdx = 1;
 
-          if (event.defenseAttorney && !row.defense_attorney) {
-            updates.push(`defense_attorney = $${paramIdx++}`);
-            values.push(event.defenseAttorney);
-          }
-          if (event.prosecutingAttorney && !row.prosecuting_attorney) {
-            updates.push(`prosecuting_attorney = $${paramIdx++}`);
-            values.push(event.prosecutingAttorney);
-          }
-          if (event.defendantName && updates.length > 0) {
-            // Also fill in defendant if we're updating
-            updates.push(`defendant_name = COALESCE(defendant_name, $${paramIdx++})`);
-            values.push(event.defendantName);
-          }
+          // Build incoming record in DB column format for change detection
+          const incoming: Record<string, unknown> = {
+            court_room: event.courtRoom || "",
+            event_date: event.eventDate || "",
+            event_time: event.eventTime || "",
+            hearing_type: event.hearingType || "",
+            case_number: event.caseNumber || "",
+            case_type: event.caseType || "",
+            defendant_name: event.defendantName || "",
+            prosecuting_attorney: event.prosecutingAttorney || "",
+            defense_attorney: event.defenseAttorney || "",
+            judge_name: event.judgeName || "",
+            hearing_location: event.hearingLocation || "",
+          };
 
-          if (updates.length > 0) {
-            updates.push(`updated_at = NOW()`);
+          // Detect field-level changes
+          const changes = detectChanges(row, incoming);
+
+          if (changes.length > 0) {
+            console.log(`🔄 Changes detected for case ${event.caseNumber} (event ${row.id}):`, changes.map(c => `${c.field}: "${c.oldValue}" → "${c.newValue}"`).join(", "));
+
+            // Log changes to change_log table
+            await processChanges(row.id, changes);
+
+            allDetectedChanges.push({
+              courtEventId: row.id,
+              caseNumber: event.caseNumber,
+              defendantName: event.defendantName || null,
+              changes,
+            });
+
+            // Update the DB record with all live-scraped fields
             await client.query(
-              `UPDATE court_events SET ${updates.join(", ")} WHERE id = $${paramIdx}`,
-              [...values, row.id]
+              `UPDATE court_events SET
+                court_room = COALESCE(NULLIF($1, ''), court_room),
+                hearing_type = COALESCE(NULLIF($2, ''), hearing_type),
+                case_type = COALESCE(NULLIF($3, ''), case_type),
+                defendant_name = COALESCE(NULLIF($4, ''), defendant_name),
+                prosecuting_attorney = COALESCE(NULLIF($5, ''), prosecuting_attorney),
+                defense_attorney = COALESCE(NULLIF($6, ''), defense_attorney),
+                judge_name = COALESCE(NULLIF($7, ''), judge_name),
+                hearing_location = COALESCE(NULLIF($8, ''), hearing_location),
+                content_hash = COALESCE(NULLIF($9, ''), content_hash),
+                updated_at = NOW()
+              WHERE id = $10`,
+              [
+                event.courtRoom, event.hearingType, event.caseType,
+                event.defendantName, event.prosecutingAttorney,
+                event.defenseAttorney, event.judgeName,
+                event.hearingLocation, event.contentHash, row.id,
+              ]
             );
+
+            // Notify all users who are watching this case + trigger calendar sync
+            const watchers = await client.query(
+              `SELECT DISTINCT wc.user_id
+               FROM watched_cases wc
+               WHERE wc.is_active = true
+                 AND (
+                   (wc.search_type = 'case_number' AND UPPER(wc.search_value) = UPPER($1))
+                   OR (wc.search_type = 'defendant_name' AND UPPER($2) LIKE '%' || UPPER(wc.search_value) || '%')
+                 )`,
+              [event.caseNumber, event.defendantName || ""]
+            );
+
+            for (const watcher of watchers.rows) {
+              await notifyScheduleChange(
+                watcher.user_id,
+                `${event.defendantName || "Unknown"} — Case ${event.caseNumber}`,
+                changes
+              );
+            }
+
+            // Re-sync any calendar entries linked to this court event
+            const calEntries = await client.query(
+              `SELECT id FROM calendar_entries
+               WHERE court_event_id = $1 AND sync_status IN ('synced', 'pending_update')`,
+              [row.id]
+            );
+            for (const ce of calEntries.rows) {
+              syncCalendarEntry(ce.id).catch((err) =>
+                console.warn(`⚠️ Calendar re-sync failed for entry ${ce.id}:`, err instanceof Error ? err.message : err)
+              );
+            }
+          } else {
+            // No tracked-field changes, but still fill in missing attorney data
+            const updates: string[] = [];
+            const values: (string | null)[] = [];
+            let paramIdx = 1;
+
+            if (event.defenseAttorney && !row.defense_attorney) {
+              updates.push(`defense_attorney = $${paramIdx++}`);
+              values.push(event.defenseAttorney);
+            }
+            if (event.prosecutingAttorney && !row.prosecuting_attorney) {
+              updates.push(`prosecuting_attorney = $${paramIdx++}`);
+              values.push(event.prosecutingAttorney);
+            }
+
+            if (updates.length > 0) {
+              updates.push(`updated_at = NOW()`);
+              await client.query(
+                `UPDATE court_events SET ${updates.join(", ")} WHERE id = $${paramIdx}`,
+                [...values, row.id]
+              );
+            }
           }
           continue;
         }
@@ -337,6 +428,7 @@ async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<void> {
   } finally {
     client.release();
   }
+  return allDetectedChanges;
 }
 
 // GET /api/search — supports: defendant_name, case_number, court_name, court_date,
@@ -364,9 +456,14 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     attorney: qp("attorney"),
   };
 
-  const hasParams = Object.values(searchParams).some((v) => v !== undefined && v !== "");
-  if (!hasParams) {
-    res.status(400).json({ error: "At least one search parameter is required" });
+  // Courts, dates, and allCourts are filters — at least one actual search field is required
+  const hasSearchField = !!(
+    searchParams.defendantName || searchParams.caseNumber ||
+    searchParams.defendantOtn || searchParams.citationNumber ||
+    searchParams.charges || searchParams.judgeName || searchParams.attorney
+  );
+  if (!hasSearchField) {
+    res.status(400).json({ error: "Please enter at least one search field (defendant name, case number, OTN, citation, charges, judge, or attorney)." });
     return;
   }
 
@@ -418,28 +515,49 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
 
     const dbResultsPromise = searchCourtEvents(searchParams);
     const liveHtmlParts: string[] = [];
+    let failedJobs = 0;
+    let emptyJobs = 0;
     for (let i = 0; i < jobs.length; i += BATCH_SIZE) {
       const batch = jobs.slice(i, i + BATCH_SIZE);
       const results = await Promise.all(
         batch.map((j) =>
           liveSearchUtcourts({ ...liveBase, locationCode: j.loc, date: j.date }).catch((err) => {
+            failedJobs++;
             console.warn(`⚠️ Search failed for loc=${j.loc} date=${j.date}:`, err instanceof Error ? err.message : err);
             return "";
           })
         )
       );
+      for (const r of results) {
+        if (r.length === 0) emptyJobs++;
+      }
       liveHtmlParts.push(...results);
     }
 
     const html = liveHtmlParts.join("\n");
     const allParsed = parseHtmlCalendarResults(html);
     const dbResults = await dbResultsPromise;
-    console.log(`  📋 Live: ${allParsed.length} events, DB: ${dbResults.length} events`);
 
-    // Persist live results in background (don't block response)
-    persistLiveResults(allParsed).catch((err) =>
-      console.warn("⚠️ Failed to persist live results:", err instanceof Error ? err.message : err)
-    );
+    // Diagnostic logging
+    const htmlLen = html.length;
+    const hasZeroResults = /\b0 results found\b/i.test(html);
+    const casehoverCount = (html.match(/casehover/gi) || []).length;
+    console.log(`  📋 Live: ${allParsed.length} parsed events from ${htmlLen} chars HTML (${casehoverCount} casehover divs, ${failedJobs} failed jobs, ${emptyJobs} empty responses, zeroResultsText=${hasZeroResults})`);
+    console.log(`  📋 DB: ${dbResults.length} events`);
+    if (allParsed.length === 0 && casehoverCount === 0 && htmlLen > 0) {
+      console.log(`  🔍 HTML preview (first 500 chars): ${html.slice(0, 500)}`);
+    }
+
+    // Persist live results and detect changes (awaited so we can return changes)
+    let detectedChanges: DetectedChange[] = [];
+    try {
+      detectedChanges = await persistLiveResults(allParsed);
+      if (detectedChanges.length > 0) {
+        console.log(`🔔 ${detectedChanges.length} event(s) with changes detected`);
+      }
+    } catch (err) {
+      console.warn("⚠️ Failed to persist live results:", err instanceof Error ? err.message : err);
+    }
 
     // Convert live-parsed results to CourtEvent format and apply filters
     const liveEvents = allParsed.map((event) => toCourtEvent(event));
@@ -467,6 +585,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       savedSearchId,
       previousRunAt,
       processedAt: new Date().toISOString(),
+      detectedChanges: detectedChanges.length > 0 ? detectedChanges : undefined,
     });
   } catch (err) {
     console.error("❌ Search failed:", err);

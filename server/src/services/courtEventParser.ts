@@ -157,12 +157,19 @@ function parseEventBlock(
   boxHtml: string
 ): ParsedCourtEvent | null {
   // 1. Extract time from the header — look for <strong>HH:MM AM/PM</strong>
-  const timeMatch = headerHtml.match(/(\d{1,2}:\d{2}\s*[AP]M)/i);
-  if (!timeMatch) return null;
-  const eventTime = timeMatch[1].trim();
+  //    Also check boxHtml for time if not in header (some formats embed it)
+  let timeMatch = headerHtml.match(/(\d{1,2}:\d{2}\s*[AP]M)/i);
+  if (!timeMatch) {
+    timeMatch = boxHtml.match(/(\d{1,2}:\d{2}\s*[AP]M)/i);
+  }
+  const eventTime = timeMatch ? timeMatch[1].trim() : null;
 
   // 2. Extract date from header — look for <strong>M/D/YYYY</strong>
-  const dateMatch = headerHtml.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  //    Also check boxHtml for date if not in header
+  let dateMatch = headerHtml.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (!dateMatch) {
+    dateMatch = boxHtml.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  }
   if (!dateMatch) return null;
   const month = dateMatch[1].padStart(2, "0");
   const day = dateMatch[2].padStart(2, "0");
