@@ -142,11 +142,19 @@ function expandDates(params: Record<string, string | undefined>): string[] {
 function resolveCourtCodes(params: Record<string, string | undefined>, courts: CourtInfo[]): string[] {
   if (params.allCourts === "true") return courts.map((c) => c.locationCode);
   if (!params.courtNames || courts.length === 0) return [];
-  const names = params.courtNames.split(",").map((n) => n.trim().toUpperCase()).filter(Boolean);
+  const names = params.courtNames.split(",").map((n) => n.trim().replace(/\s+/g, " ").toUpperCase()).filter(Boolean);
   const codes: string[] = [];
   for (const name of names) {
-    const match = courts.find((c) => c.name.toUpperCase() === name);
-    if (match) codes.push(match.locationCode);
+    // Try exact match first, then substring match (handles minor format differences)
+    const match = courts.find((c) => {
+      const normalized = c.name.trim().replace(/\s+/g, " ").toUpperCase();
+      return normalized === name || normalized.includes(name) || name.includes(normalized);
+    });
+    if (match) {
+      codes.push(match.locationCode);
+    } else {
+      console.warn(`  ⚠️ resolveCourtCodes: no match for "${name}" among ${courts.length} courts`);
+    }
   }
   return codes;
 }
