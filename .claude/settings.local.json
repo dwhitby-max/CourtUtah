@@ -29,7 +29,11 @@
       "Bash(xargs ls:*)",
       "Bash(psql:*)",
       "Bash(find /home/runner/workspace -type f -name *backup*)",
-      "Bash(grep -r MICROSOFT .env* server/.env*)"
+      "Bash(grep -r MICROSOFT .env* server/.env*)",
+      "Bash(pkill -f node.*server)",
+      "Bash(pkill -f node.*vite)",
+      "Bash(pkill -f tsx)",
+      "Bash(pkill -f start-production)"
     ]
   }
 }
