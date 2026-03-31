@@ -17,6 +17,7 @@ export default function SearchForm({ onSearch, loading, hasCalendarConnection, i
   const [selectedCourts, setSelectedCourts] = useState<string[]>(
     () => user?.searchPreferences?.defaultCourts ?? []
   );
+  const [allCourts, setAllCourts] = useState(false);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [defendantOtn, setDefendantOtn] = useState("");
@@ -44,7 +45,11 @@ export default function SearchForm({ onSearch, loading, hasCalendarConnection, i
     const params: Record<string, string> = {};
     if (defendantName) params.defendant_name = defendantName;
     if (caseNumber) params.case_number = caseNumber;
-    if (selectedCourts.length > 0) params.court_names = selectedCourts.join(",");
+    if (allCourts) {
+      params.all_courts = "true";
+    } else if (selectedCourts.length > 0) {
+      params.court_names = selectedCourts.join(",");
+    }
     if (dateFrom) params.date_from = dateFrom;
     if (dateTo) params.date_to = dateTo;
     if (defendantOtn) params.defendant_otn = defendantOtn;
@@ -95,7 +100,12 @@ export default function SearchForm({ onSearch, loading, hasCalendarConnection, i
         </div>
 
         <div>
-          <CourtPicker selected={selectedCourts} onChange={setSelectedCourts} />
+          <CourtPicker
+            selected={selectedCourts}
+            onChange={setSelectedCourts}
+            allCourts={allCourts}
+            onAllCourtsChange={setAllCourts}
+          />
         </div>
 
         <div>

@@ -87,47 +87,65 @@ router.use(heavyLimiter);
  * Map user search params to LiveSearchParams for utcourts.gov.
  * Returns null if no searchable field is provided (OTN, citation, charges are DB-only).
  *
- * Includes ALL filters utcourts.gov supports (search field + date + location)
- * so filtering happens server-side, not after fetching all results.
+ * IMPORTANT: utcourts.gov requires a location code (loc=) for all search types
+ * to return results. Without it, every search returns "No results found."
+ * The loc code is added separately per-court in the search route.
+ *
+ * This returns the base params WITHOUT date or location — those are
+ * expanded into individual requests (one per court × date combo).
  */
 function toLiveSearchBase(params: Record<string, string | undefined>): LiveSearchParams | null {
-  let base: LiveSearchParams | null = null;
-
-  if (params.caseNumber) {
-    base = { caseNumber: params.caseNumber };
-  } else if (params.defendantName) {
-    base = { partyName: params.defendantName };
-  } else if (params.judgeName) {
-    base = { judgeName: params.judgeName };
-  } else if (params.attorney) {
-    // utcourts.gov has separate first/last name fields for attorney search.
-    // Split "Ryan Robinson" into first="Ryan" last="Robinson".
-    // If single word, treat as last name only.
+  if (params.caseNumber) return { caseNumber: params.caseNumber };
+  if (params.defendantName) return { partyName: params.defendantName };
+  if (params.judgeName) return { judgeName: params.judgeName };
+  if (params.attorney) {
     const parts = params.attorney.trim().split(/\s+/);
     if (parts.length >= 2) {
-      base = {
+      return {
         attorneyFirstName: parts.slice(0, -1).join(" "),
         attorneyLastName: parts[parts.length - 1],
       };
-    } else {
-      base = { attorneyLastName: parts[0] };
     }
+    return { attorneyLastName: parts[0] };
   }
+  return null;
+}
 
-  if (!base) return null;
-
-  // Add location code if a single court is selected and we can resolve its code
-  if (params.courtNames) {
-    const names = params.courtNames.split(",").map((n) => n.trim()).filter(Boolean);
-    if (names.length === 1 && cachedCourts.length > 0) {
-      const match = cachedCourts.find(
-        (c) => c.name.toUpperCase() === names[0].toUpperCase()
-      );
-      if (match) base.locationCode = match.locationCode;
+/** Expand date params into individual YYYY-MM-DD strings (weekdays only). */
+function expandDates(params: Record<string, string | undefined>): string[] {
+  if (params.courtDate) return [params.courtDate];
+  const from = params.dateFrom;
+  const to = params.dateTo;
+  if (from && to) {
+    const dates: string[] = [];
+    const start = new Date(from + "T00:00:00");
+    const end = new Date(to + "T00:00:00");
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const dow = d.getDay();
+      if (dow !== 0 && dow !== 6) dates.push(d.toISOString().split("T")[0]);
     }
+    return dates.slice(0, 15);
   }
+  if (from) return [from];
+  if (to) return [to];
+  return ["all"];
+}
 
-  return base;
+/** Resolve court selection to location codes.
+ *  - allCourts=true → every court
+ *  - courtNames set  → only those courts
+ *  - neither         → empty (no live search)
+ */
+function resolveCourtCodes(params: Record<string, string | undefined>, courts: CourtInfo[]): string[] {
+  if (params.allCourts === "true") return courts.map((c) => c.locationCode);
+  if (!params.courtNames || courts.length === 0) return [];
+  const names = params.courtNames.split(",").map((n) => n.trim().toUpperCase()).filter(Boolean);
+  const codes: string[] = [];
+  for (const name of names) {
+    const match = courts.find((c) => c.name.toUpperCase() === name);
+    if (match) codes.push(match.locationCode);
+  }
+  return codes;
 }
 
 /**
@@ -335,6 +353,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     caseNumber: qp("case_number"),
     courtName: qp("court_name"),
     courtNames: qp("court_names"),
+    allCourts: qp("all_courts"),
     courtDate: qp("court_date"),
     dateFrom: qp("date_from"),
     dateTo: qp("date_to"),
@@ -357,11 +376,17 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
 
   try {
     const liveBase = toLiveSearchBase(searchParams);
+    const courts = await getCourts();
+    const courtCodes = resolveCourtCodes(searchParams, courts);
 
-    // Fields like OTN, citation, charges can't be searched directly on utcourts —
-    // fall back to DB-only search
-    if (!liveBase) {
+    // utcourts.gov REQUIRES a location code for searches to return results.
+    // If no courts selected or no live-searchable field, use DB only.
+    if (!liveBase || courtCodes.length === 0) {
       const dbResults = await searchCourtEvents(searchParams);
+      const source = !liveBase ? "database" : "database";
+      if (courtCodes.length === 0 && liveBase) {
+        console.log("  ⚠️ No courts selected — using DB only (utcourts.gov requires a court location)");
+      }
       console.log(`  📊 DB-only search: ${dbResults.length} results`);
       const { savedSearchId, previousRunAt } = await saveSearch(userId, searchParams, pKey, dbResults.length);
       markNewEvents(dbResults, previousRunAt);
@@ -369,7 +394,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
         results: dbResults,
         resultsCount: dbResults.length,
         searchParams,
-        source: "database",
+        source,
         savedSearchId,
         previousRunAt,
         processedAt: new Date().toISOString(),
@@ -377,42 +402,38 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       return;
     }
 
-    // Build date parameter(s) for utcourts.gov.
-    // The site only accepts a single YYYY-MM-DD date or "all".
-    // If the user specified a date range, query each date individually so
-    // utcourts.gov returns only relevant results (avoids pagination cutoff).
-    const liveDates: string[] = [];
-    if (searchParams.dateFrom && searchParams.dateTo) {
-      const start = new Date(searchParams.dateFrom + "T00:00:00");
-      const end = new Date(searchParams.dateTo + "T00:00:00");
-      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-        // Skip weekends — courts don't hold hearings on Sat/Sun
-        const dow = d.getDay();
-        if (dow !== 0 && dow !== 6) {
-          liveDates.push(d.toISOString().split("T")[0]);
-        }
+    // Build exact court × date combinations to query.
+    // Each request to utcourts.gov mirrors exactly what a user would do on
+    // the site: one search with a specific court, date, and search field.
+    const dates = expandDates(searchParams);
+    const jobs: { loc: string; date: string }[] = [];
+    for (const loc of courtCodes) {
+      for (const date of dates) {
+        jobs.push({ loc, date });
       }
-    } else if (searchParams.dateFrom) {
-      liveDates.push(searchParams.dateFrom);
-    } else if (searchParams.dateTo) {
-      liveDates.push(searchParams.dateTo);
-    } else if (searchParams.courtDate) {
-      liveDates.push(searchParams.courtDate);
     }
-    // Cap to 15 dates to avoid hammering utcourts.gov
-    const datesToQuery = liveDates.length > 0 ? liveDates.slice(0, 15) : ["all"];
 
-    // Run live search and DB search concurrently
-    console.log(`🌐 Running live search (${datesToQuery.length} date(s)) + DB search concurrently...`);
-    const [liveHtmlParts, dbResults] = await Promise.all([
-      Promise.all(
-        datesToQuery.map((d) => liveSearchUtcourts({ ...liveBase, date: d }))
-      ),
-      searchCourtEvents(searchParams),
-    ]);
+    const BATCH_SIZE = 15;
+    console.log(`🌐 Live searching: ${courtCodes.length} court(s) × ${dates.length} date(s) = ${jobs.length} request(s)`);
+
+    const dbResultsPromise = searchCourtEvents(searchParams);
+    const liveHtmlParts: string[] = [];
+    for (let i = 0; i < jobs.length; i += BATCH_SIZE) {
+      const batch = jobs.slice(i, i + BATCH_SIZE);
+      const results = await Promise.all(
+        batch.map((j) =>
+          liveSearchUtcourts({ ...liveBase, locationCode: j.loc, date: j.date }).catch((err) => {
+            console.warn(`⚠️ Search failed for loc=${j.loc} date=${j.date}:`, err instanceof Error ? err.message : err);
+            return "";
+          })
+        )
+      );
+      liveHtmlParts.push(...results);
+    }
 
     const html = liveHtmlParts.join("\n");
     const allParsed = parseHtmlCalendarResults(html);
+    const dbResults = await dbResultsPromise;
     console.log(`  📋 Live: ${allParsed.length} events, DB: ${dbResults.length} events`);
 
     // Persist live results in background (don't block response)

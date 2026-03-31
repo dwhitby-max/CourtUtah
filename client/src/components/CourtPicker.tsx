@@ -10,9 +10,11 @@ interface Court {
 interface CourtPickerProps {
   selected: string[];
   onChange: (selected: string[]) => void;
+  allCourts: boolean;
+  onAllCourtsChange: (checked: boolean) => void;
 }
 
-export default function CourtPicker({ selected, onChange }: CourtPickerProps) {
+export default function CourtPicker({ selected, onChange, allCourts, onAllCourtsChange }: CourtPickerProps) {
   const [courts, setCourts] = useState<Court[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -57,9 +59,19 @@ export default function CourtPicker({ selected, onChange }: CourtPickerProps) {
     onChange([]);
   }
 
-  const buttonLabel =
-    selected.length === 0
-      ? "All Courts"
+  function handleAllCourtsToggle() {
+    const next = !allCourts;
+    onAllCourtsChange(next);
+    if (next) {
+      // Clear individual selections when "All Courts" is checked
+      onChange([]);
+    }
+  }
+
+  const buttonLabel = allCourts
+    ? "All Courts"
+    : selected.length === 0
+      ? "Select courts..."
       : selected.length <= 2
         ? selected.join(", ")
         : `${selected.length} courts selected`;
@@ -69,12 +81,30 @@ export default function CourtPicker({ selected, onChange }: CourtPickerProps) {
       <label className="block text-sm font-medium text-gray-700 mb-1">
         Court Location
       </label>
+
+      {/* All Courts checkbox */}
+      <label className="flex items-center gap-2 mb-1.5 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={allCourts}
+          onChange={handleAllCourtsToggle}
+          className="rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+        />
+        <span className="text-sm text-gray-700">All Courts</span>
+      </label>
+
+      {/* Court picker dropdown — disabled when All Courts is checked */}
       <button
         type="button"
-        onClick={() => setOpen(!open)}
-        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-left bg-white hover:bg-gray-50 focus:ring-amber-500 focus:border-amber-500 flex items-center justify-between"
+        onClick={() => !allCourts && setOpen(!open)}
+        disabled={allCourts}
+        className={`w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-left flex items-center justify-between ${
+          allCourts
+            ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+            : "bg-white hover:bg-gray-50 focus:ring-amber-500 focus:border-amber-500"
+        }`}
       >
-        <span className={selected.length === 0 ? "text-gray-400" : "text-gray-900"}>
+        <span className={allCourts || selected.length === 0 ? "text-gray-400" : "text-gray-900"}>
           {buttonLabel}
         </span>
         <svg
@@ -87,7 +117,7 @@ export default function CourtPicker({ selected, onChange }: CourtPickerProps) {
         </svg>
       </button>
 
-      {selected.length > 0 && (
+      {!allCourts && selected.length > 0 && (
         <div className="flex flex-wrap gap-1 mt-1">
           {selected.map((name) => (
             <span
@@ -114,7 +144,7 @@ export default function CourtPicker({ selected, onChange }: CourtPickerProps) {
         </div>
       )}
 
-      {open && (
+      {open && !allCourts && (
         <div className="absolute z-50 mt-1 w-full bg-white border border-gray-300 rounded-md shadow-lg max-h-72 overflow-hidden flex flex-col">
           <div className="p-2 border-b border-gray-200">
             <input
