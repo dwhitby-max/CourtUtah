@@ -86,25 +86,48 @@ router.use(heavyLimiter);
 /**
  * Map user search params to LiveSearchParams for utcourts.gov.
  * Returns null if no searchable field is provided (OTN, citation, charges are DB-only).
+ *
+ * Includes ALL filters utcourts.gov supports (search field + date + location)
+ * so filtering happens server-side, not after fetching all results.
  */
 function toLiveSearchBase(params: Record<string, string | undefined>): LiveSearchParams | null {
-  if (params.caseNumber) return { caseNumber: params.caseNumber };
-  if (params.defendantName) return { partyName: params.defendantName };
-  if (params.judgeName) return { judgeName: params.judgeName };
-  if (params.attorney) {
+  let base: LiveSearchParams | null = null;
+
+  if (params.caseNumber) {
+    base = { caseNumber: params.caseNumber };
+  } else if (params.defendantName) {
+    base = { partyName: params.defendantName };
+  } else if (params.judgeName) {
+    base = { judgeName: params.judgeName };
+  } else if (params.attorney) {
     // utcourts.gov has separate first/last name fields for attorney search.
     // Split "Ryan Robinson" into first="Ryan" last="Robinson".
     // If single word, treat as last name only.
     const parts = params.attorney.trim().split(/\s+/);
     if (parts.length >= 2) {
-      return {
+      base = {
         attorneyFirstName: parts.slice(0, -1).join(" "),
         attorneyLastName: parts[parts.length - 1],
       };
+    } else {
+      base = { attorneyLastName: parts[0] };
     }
-    return { attorneyLastName: parts[0] };
   }
-  return null;
+
+  if (!base) return null;
+
+  // Add location code if a single court is selected and we can resolve its code
+  if (params.courtNames) {
+    const names = params.courtNames.split(",").map((n) => n.trim()).filter(Boolean);
+    if (names.length === 1 && cachedCourts.length > 0) {
+      const match = cachedCourts.find(
+        (c) => c.name.toUpperCase() === names[0].toUpperCase()
+      );
+      if (match) base.locationCode = match.locationCode;
+    }
+  }
+
+  return base;
 }
 
 /**
@@ -354,13 +377,41 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       return;
     }
 
+    // Build date parameter(s) for utcourts.gov.
+    // The site only accepts a single YYYY-MM-DD date or "all".
+    // If the user specified a date range, query each date individually so
+    // utcourts.gov returns only relevant results (avoids pagination cutoff).
+    const liveDates: string[] = [];
+    if (searchParams.dateFrom && searchParams.dateTo) {
+      const start = new Date(searchParams.dateFrom + "T00:00:00");
+      const end = new Date(searchParams.dateTo + "T00:00:00");
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        // Skip weekends — courts don't hold hearings on Sat/Sun
+        const dow = d.getDay();
+        if (dow !== 0 && dow !== 6) {
+          liveDates.push(d.toISOString().split("T")[0]);
+        }
+      }
+    } else if (searchParams.dateFrom) {
+      liveDates.push(searchParams.dateFrom);
+    } else if (searchParams.dateTo) {
+      liveDates.push(searchParams.dateTo);
+    } else if (searchParams.courtDate) {
+      liveDates.push(searchParams.courtDate);
+    }
+    // Cap to 15 dates to avoid hammering utcourts.gov
+    const datesToQuery = liveDates.length > 0 ? liveDates.slice(0, 15) : ["all"];
+
     // Run live search and DB search concurrently
-    console.log("🌐 Running live search + DB search concurrently...");
-    const [html, dbResults] = await Promise.all([
-      liveSearchUtcourts({ ...liveBase, date: "all", locationCode: "all" }),
+    console.log(`🌐 Running live search (${datesToQuery.length} date(s)) + DB search concurrently...`);
+    const [liveHtmlParts, dbResults] = await Promise.all([
+      Promise.all(
+        datesToQuery.map((d) => liveSearchUtcourts({ ...liveBase, date: d }))
+      ),
       searchCourtEvents(searchParams),
     ]);
 
+    const html = liveHtmlParts.join("\n");
     const allParsed = parseHtmlCalendarResults(html);
     console.log(`  📋 Live: ${allParsed.length} events, DB: ${dbResults.length} events`);
 
