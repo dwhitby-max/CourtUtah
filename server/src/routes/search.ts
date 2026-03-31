@@ -600,7 +600,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       savedSearchId,
       previousRunAt,
       processedAt: new Date().toISOString(),
-      detectedChanges: detectedChanges.length > 0 ? detectedChanges : undefined,
+      detectedChanges: detectedChanges.length > 0 && previousRunAt ? detectedChanges : undefined,
     });
   } catch (err) {
     console.error("❌ Search failed:", err);
