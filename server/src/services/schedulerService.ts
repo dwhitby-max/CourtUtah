@@ -157,6 +157,7 @@ async function createCalendarEntriesForWatchedCase(
   let created = 0;
   for (const calConn of calResult.rows) {
     for (const event of eventsResult.rows) {
+      // Check if entry already exists for this watched case
       const existing = await client.query<{ id: number }>(
         `SELECT id FROM calendar_entries
          WHERE watched_case_id = $1 AND court_event_id = $2 AND calendar_connection_id = $3`,
@@ -164,25 +165,46 @@ async function createCalendarEntriesForWatchedCase(
       );
       if (existing.rows.length > 0) continue;
 
-      const insertResult = await client.query<{ id: number }>(
-        `INSERT INTO calendar_entries (user_id, watched_case_id, court_event_id, calendar_connection_id)
-         VALUES ($1, $2, $3, $4) RETURNING id`,
-        [wc.user_id, wc.id, event.id, calConn.id]
+      // Check for orphaned entry (from a previously deleted watched case) —
+      // reconnect it instead of creating a duplicate calendar event
+      const orphaned = await client.query<{ id: number }>(
+        `SELECT id FROM calendar_entries
+         WHERE watched_case_id IS NULL AND court_event_id = $1 AND calendar_connection_id = $2 AND user_id = $3
+         LIMIT 1`,
+        [event.id, calConn.id, wc.user_id]
       );
+
+      let entryId: number;
+      if (orphaned.rows.length > 0) {
+        // Reconnect the orphaned entry to the new watched case
+        entryId = orphaned.rows[0].id;
+        await client.query(
+          `UPDATE calendar_entries SET watched_case_id = $1, updated_at = NOW() WHERE id = $2`,
+          [wc.id, entryId]
+        );
+      } else {
+        // Create a new calendar entry
+        const insertResult = await client.query<{ id: number }>(
+          `INSERT INTO calendar_entries (user_id, watched_case_id, court_event_id, calendar_connection_id)
+           VALUES ($1, $2, $3, $4) RETURNING id`,
+          [wc.user_id, wc.id, event.id, calConn.id]
+        );
+        entryId = insertResult.rows[0].id;
+      }
       created++;
 
       try {
-        await syncCalendarEntry(insertResult.rows[0].id);
+        await syncCalendarEntry(entryId);
       } catch (syncErr) {
         const syncErrMsg = syncErr instanceof Error ? syncErr.message : String(syncErr);
-        console.warn(`  ⚠️ Sync failed for entry ${insertResult.rows[0].id}: ${syncErrMsg}`);
+        console.warn(`  ⚠️ Sync failed for entry ${entryId}: ${syncErrMsg}`);
         await createNotification({
           userId: wc.user_id,
           type: "sync_error",
           title: `Calendar sync failed for "${wc.label}"`,
           message: `Failed to sync a court event to your calendar: ${syncErrMsg}`,
           metadata: {
-            calendarEntryId: insertResult.rows[0].id,
+            calendarEntryId: entryId,
             watchedCaseId: wc.id,
             error: syncErrMsg,
           },

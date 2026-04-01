@@ -36,7 +36,15 @@
       "Bash(pkill -f start-production)",
       "Bash(find:*)",
       "Bash(git stash:*)",
-      "Bash(npx --package=typescript tsc --noEmit --project server/tsconfig.json)"
+      "Bash(npx --package=typescript tsc --noEmit --project server/tsconfig.json)",
+      "Bash(grep -E \"\\\\.\\(sql|ts\\)$\")",
+      "Bash(grep:*)",
+      "Bash(npx --prefix server tsc --noEmit --project server/tsconfig.json)",
+      "Bash(nslookup helium:*)",
+      "Bash(echo \"PID: $!\" sleep 4 cat /tmp/server.log)",
+      "Bash(deployctl)",
+      "Read(//home/runner/.config/**)",
+      "Bash(replit deploy:*)"
     ]
   }
 }
