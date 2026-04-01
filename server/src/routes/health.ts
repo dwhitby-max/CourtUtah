@@ -41,7 +41,13 @@ router.get("/", async (_req: Request, res: Response) => {
           serverAddr: serverAddr.rows[0]?.ip,
           serverPort: serverAddr.rows[0]?.port,
           userCount: parseInt(userCount.rows[0]?.count || "0", 10),
-          dbUrl: dbUrl,
+          dbUrlParts: {
+            user: dbUrl.split("://")[1]?.split(":")[0],
+            passLen: (dbUrl.split("://")[1]?.split(":")[1]?.split("@")[0] || "").length,
+            host: dbHost,
+            dbName: dbUrl.split("/").pop()?.split("?")[0],
+            params: dbUrl.split("?")[1] || "",
+          },
         };
       } finally {
         client.release();
