@@ -41,7 +41,7 @@ router.get("/", async (_req: Request, res: Response) => {
           serverAddr: serverAddr.rows[0]?.ip,
           serverPort: serverAddr.rows[0]?.port,
           userCount: parseInt(userCount.rows[0]?.count || "0", 10),
-          dbUrl: dbUrl.replace(/\/\/([^:]+):([^@]+)@/, "//$1:***@"),
+          dbUrl: dbUrl,
         };
       } finally {
         client.release();
