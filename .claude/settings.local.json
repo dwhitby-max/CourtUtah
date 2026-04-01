@@ -33,7 +33,10 @@
       "Bash(pkill -f node.*server)",
       "Bash(pkill -f node.*vite)",
       "Bash(pkill -f tsx)",
-      "Bash(pkill -f start-production)"
+      "Bash(pkill -f start-production)",
+      "Bash(find:*)",
+      "Bash(git stash:*)",
+      "Bash(npx --package=typescript tsc --noEmit --project server/tsconfig.json)"
     ]
   }
 }
