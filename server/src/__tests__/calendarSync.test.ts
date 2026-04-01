@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildGoogleEventBody, buildMicrosoftEventBody, buildVCalendar } from "../services/calendarSync";
-import { CalendarEventData } from "../../../shared/types";
+import { CalendarEventData } from "@shared/types";
 
 const timedEvent: CalendarEventData = {
   title: "Court: SLC 261901234 - Arraignment",

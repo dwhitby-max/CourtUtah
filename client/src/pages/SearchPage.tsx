@@ -1,11 +1,14 @@
 import { useState, useEffect, useMemo } from "react";
 import SearchForm from "@/components/SearchForm";
 import { searchCourtEvents } from "@/api/search";
-import { addEventToCalendar, addAllEventsToCalendar, getCalendarConnections, getSyncedEvents, removeEventFromCalendar, removeCalendarEntriesForCase } from "@/api/calendar";
+import { addAllEventsToCalendar, removeCalendarEntriesForCase } from "@/api/calendar";
 import { apiFetch } from "@/api/client";
+import EventDetailRow from "@/components/EventDetailRow";
 import NewEntriesSection from "@/components/NewEntriesSection";
 import Pagination from "@/components/Pagination";
 import { exportCourtEventsCsv } from "@/utils/formatters";
+import { useCalendarActions } from "@/hooks/useCalendarActions";
+import { formatDate, hasDetails, timeAgo } from "@/utils/courtEventUtils";
 import { CourtEvent, DetectedChange } from "@shared/types";
 
 interface SavedSearchRow {
@@ -17,27 +20,6 @@ interface SavedSearchRow {
   created_at: string;
   source: string;
 }
-
-function timeAgo(dateStr: string): string {
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-  if (diffMins < 1) return "just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Denver" });
-}
-
-const providerLabels: Record<string, string> = {
-  google: "Google Calendar",
-  microsoft: "Outlook",
-  apple: "iCloud",
-  caldav: "CalDAV",
-};
 
 /** Convert camelCase search params to snake_case query params */
 function toQueryParams(params: Record<string, string>): Record<string, string> {
@@ -78,14 +60,8 @@ export default function SearchPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [savedSearches, setSavedSearches] = useState<SavedSearchRow[]>([]);
   const [loadingSaved, setLoadingSaved] = useState(false);
-  const [calSyncingIds, setCalSyncingIds] = useState<Set<number>>(new Set());
-  const [calSyncedIds, setCalSyncedIds] = useState<Set<number>>(new Set());
-  const [calEntryMap, setCalEntryMap] = useState<Record<number, number>>({});
-  const [calRemovingIds, setCalRemovingIds] = useState<Set<number>>(new Set());
   const [lastSearchParams, setLastSearchParams] = useState<Record<string, string> | null>(null);
   const [lastSearchSavedId, setLastSearchSavedId] = useState<number | null>(null);
-  const [calendarProvider, setCalendarProvider] = useState<string | null>(null);
-  const [hasCalendarConnection, setHasCalendarConnection] = useState(true);
   const [addingAll, setAddingAll] = useState(false);
   const [addedAll, setAddedAll] = useState(false);
   const [removingAll, setRemovingAll] = useState(false);
@@ -93,33 +69,14 @@ export default function SearchPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; label: string } | null>(null);
   const [detectedChanges, setDetectedChanges] = useState<DetectedChange[]>([]);
 
-  // Load saved searches and calendar provider on mount
+  const cal = useCalendarActions();
+
+  // Load saved searches on mount
   useEffect(() => {
     fetchSavedSearches();
-    fetchCalendarProvider();
   }, []);
 
-  async function fetchCalendarProvider() {
-    try {
-      const data = await getCalendarConnections();
-      const active = (data.connections as Array<{ provider: string; is_active: boolean }>)
-        .find(c => c.is_active);
-      setCalendarProvider(active?.provider ?? null);
-      setHasCalendarConnection(!!active);
-    } catch {
-      setHasCalendarConnection(false);
-    }
-    try {
-      const synced = await getSyncedEvents();
-      setCalEntryMap(synced);
-      setCalSyncedIds(new Set(Object.keys(synced).map(Number)));
-    } catch {
-      // non-fatal
-    }
-  }
-
   function connectGoogleCalendar() {
-    // Redirect through Google auth flow which creates both account link + calendar connection
     window.location.href = "/api/auth/google";
   }
 
@@ -129,7 +86,6 @@ export default function SearchPage() {
       const res = await apiFetch("/watched-cases");
       if (res.ok) {
         const data = await res.json();
-        // Filter to only show auto-saved searches (not manual watched cases)
         const autoSearches = (data.watchedCases || []).filter(
           (wc: SavedSearchRow) => wc.source === "auto_search" && wc.search_params
         );
@@ -143,7 +99,6 @@ export default function SearchPage() {
   }
 
   async function handleSearch(params: Record<string, string>) {
-    // Extract auto-add flag before passing to API
     const autoAdd = params._autoAddToCalendar === "true";
     const searchParams = { ...params };
     delete searchParams._autoAddToCalendar;
@@ -162,25 +117,13 @@ export default function SearchPage() {
       setLastSearchSavedId(data.savedSearchId ?? null);
       setPreviousRunAt(data.previousRunAt ?? null);
       setDetectedChanges(data.detectedChanges ?? []);
-      setCalSyncingIds(new Set());
       setAddedAll(false);
-      // Refresh saved searches list after search (it may have been auto-saved)
       fetchSavedSearches();
-      // Re-fetch synced events so previously-synced results show the remove button
-      let currentSynced: Set<number>;
-      try {
-        const synced = await getSyncedEvents();
-        setCalEntryMap(synced);
-        currentSynced = new Set(Object.keys(synced).map(Number));
-        setCalSyncedIds(currentSynced);
-      } catch {
-        currentSynced = new Set();
-        setCalSyncedIds(currentSynced);
-      }
 
-      // Auto-add to calendar if toggled on
-      if (autoAdd && hasCalendarConnection && data.results.length > 0) {
-        await autoAddResults(data.results, currentSynced, data.savedSearchId);
+      const currentSynced = await cal.refreshSyncedEvents();
+
+      if (autoAdd && cal.hasCalendarConnection && data.results.length > 0) {
+        await autoAddResults(data.results, currentSynced, data.savedSearchId ?? undefined);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Search failed";
@@ -210,10 +153,9 @@ export default function SearchPage() {
     setWatchSuccess("");
 
     try {
-      // Step 1: Batch add all unsynced events to calendar
       const data = await addAllEventsToCalendar(unsyncedIds);
       const newSyncedIds = new Set(currentSynced);
-      const newEntryMap = { ...calEntryMap };
+      const newEntryMap = { ...cal.calEntryMap };
 
       for (const r of data.results) {
         if (r.synced) {
@@ -222,10 +164,10 @@ export default function SearchPage() {
         }
       }
 
-      setCalSyncedIds(newSyncedIds);
-      setCalEntryMap(newEntryMap);
+      // Refresh to pick up the new entries
+      await cal.refreshSyncedEvents();
 
-      // Step 2: Create watched cases with monitorChanges + autoAddNew
+      // Create watched cases with monitorChanges + autoAddNew
       const seen = new Set<string>();
       let watchCount = 0;
 
@@ -273,7 +215,6 @@ export default function SearchPage() {
         }
       }
 
-      // Update watched case to remember auto-add preference
       if (savedSearchId && savedSearchId > 0) {
         try {
           await apiFetch(`/watched-cases/${savedSearchId}`, {
@@ -287,7 +228,7 @@ export default function SearchPage() {
 
       const added = data.results.filter(r => r.synced).length;
       const parts: string[] = [];
-      parts.push(`Auto-added ${added} event${added !== 1 ? "s" : ""} to ${calLabel}`);
+      parts.push(`Auto-added ${added} event${added !== 1 ? "s" : ""} to ${cal.calLabel}`);
       if (watchCount > 0) parts.push(`monitoring ${watchCount} case${watchCount !== 1 ? "s" : ""} for changes`);
       setWatchSuccess(parts.join(". ") + ". Your calendar will stay up to date automatically.");
       setAddedAll(true);
@@ -303,7 +244,6 @@ export default function SearchPage() {
 
   async function handleRunSavedSearch(saved: SavedSearchRow) {
     const queryParams = toQueryParams(saved.search_params);
-    // Carry over auto-add flag from saved search
     if (saved.search_params._autoAddToCalendar) {
       queryParams._autoAddToCalendar = "true";
     }
@@ -320,7 +260,7 @@ export default function SearchPage() {
       if (res.ok) {
         setSavedSearches(prev => prev.map(s =>
           s.id === saved.id
-            ? { ...s, search_params: { ...s.search_params, _autoAddToCalendar: newValue ? "true" : undefined } }
+            ? { ...s, search_params: { ...s.search_params, _autoAddToCalendar: newValue ? "true" : "" } }
             : s
         ));
       }
@@ -371,54 +311,25 @@ export default function SearchPage() {
     }
   }
 
-  async function handleAddToCalendar(event: CourtEvent) {
-    setCalSyncingIds((prev) => new Set(prev).add(event.id));
+  async function onAddToCalendar(event: CourtEvent) {
     try {
-      const data = await addEventToCalendar(event.id);
-      setCalSyncedIds((prev) => new Set(prev).add(event.id));
-      setCalEntryMap((prev) => ({ ...prev, [event.id]: data.calendarEntryId }));
+      const data = await cal.handleAddToCalendar(event.id);
       setWatchSuccess(data.message);
       setError("");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to add to calendar";
       setError(msg);
-    } finally {
-      setCalSyncingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(event.id);
-        return next;
-      });
     }
   }
 
-  async function handleRemoveFromCalendar(event: CourtEvent) {
-    const entryId = calEntryMap[event.id];
-    if (!entryId) return;
-
-    setCalRemovingIds((prev) => new Set(prev).add(event.id));
+  async function onRemoveFromCalendar(event: CourtEvent) {
     try {
-      await removeEventFromCalendar(entryId);
-      setCalSyncedIds((prev) => {
-        const next = new Set(prev);
-        next.delete(event.id);
-        return next;
-      });
-      setCalEntryMap((prev) => {
-        const next = { ...prev };
-        delete next[event.id];
-        return next;
-      });
+      await cal.handleRemoveFromCalendar(event.id);
       setWatchSuccess("Event removed from calendar");
       setError("");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to remove from calendar";
       setError(msg);
-    } finally {
-      setCalRemovingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(event.id);
-        return next;
-      });
     }
   }
 
@@ -429,10 +340,9 @@ export default function SearchPage() {
     let added = 0;
     let failed = 0;
     for (const event of results) {
-      if (calSyncedIds.has(event.id)) continue;
+      if (cal.calSyncedIds.has(event.id)) continue;
       try {
-        await addEventToCalendar(event.id);
-        setCalSyncedIds((prev) => new Set(prev).add(event.id));
+        await cal.handleAddToCalendar(event.id);
         added++;
       } catch {
         failed++;
@@ -441,14 +351,14 @@ export default function SearchPage() {
     setAddingAll(false);
     setAddedAll(true);
     if (failed > 0) {
-      setWatchSuccess(`Added ${added} event${added !== 1 ? "s" : ""} to ${calLabel}. ${failed} failed.`);
+      setWatchSuccess(`Added ${added} event${added !== 1 ? "s" : ""} to ${cal.calLabel}. ${failed} failed.`);
     } else {
-      setWatchSuccess(`Added all ${added} event${added !== 1 ? "s" : ""} to ${calLabel}`);
+      setWatchSuccess(`Added all ${added} event${added !== 1 ? "s" : ""} to ${cal.calLabel}`);
     }
   }
 
   async function handleRemoveAllFromCalendar() {
-    const syncedInResults = results.filter(e => calSyncedIds.has(e.id) && calEntryMap[e.id]);
+    const syncedInResults = results.filter(e => cal.calSyncedIds.has(e.id) && cal.calEntryMap[e.id]);
     if (syncedInResults.length === 0) return;
 
     setRemovingAll(true);
@@ -459,17 +369,7 @@ export default function SearchPage() {
 
     for (const event of syncedInResults) {
       try {
-        await removeEventFromCalendar(calEntryMap[event.id]);
-        setCalSyncedIds((prev) => {
-          const next = new Set(prev);
-          next.delete(event.id);
-          return next;
-        });
-        setCalEntryMap((prev) => {
-          const next = { ...prev };
-          delete next[event.id];
-          return next;
-        });
+        await cal.handleRemoveFromCalendar(event.id);
         removed++;
       } catch {
         failed++;
@@ -479,9 +379,9 @@ export default function SearchPage() {
     setRemovingAll(false);
     setAddedAll(false);
     if (failed > 0) {
-      setWatchSuccess(`Removed ${removed} event${removed !== 1 ? "s" : ""} from ${calLabel}. ${failed} failed.`);
+      setWatchSuccess(`Removed ${removed} event${removed !== 1 ? "s" : ""} from ${cal.calLabel}. ${failed} failed.`);
     } else {
-      setWatchSuccess(`Removed all ${removed} event${removed !== 1 ? "s" : ""} from ${calLabel}`);
+      setWatchSuccess(`Removed all ${removed} event${removed !== 1 ? "s" : ""} from ${cal.calLabel}`);
     }
   }
 
@@ -489,35 +389,11 @@ export default function SearchPage() {
     setExpandedId(expandedId === id ? null : id);
   }
 
-  function formatDate(dateStr: string): string {
-    if (!dateStr) return "N/A";
-    const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (match) {
-      const [, y, m, d] = match;
-      return `${parseInt(m)}/${parseInt(d)}/${y}`;
-    }
-    return dateStr;
-  }
-
-  function hasDetails(event: CourtEvent): boolean {
-    return !!(
-      event.prosecutingAttorney ||
-      event.defenseAttorney ||
-      event.defendantOtn ||
-      event.defendantDob ||
-      event.citationNumber ||
-      event.sheriffNumber ||
-      event.leaNumber ||
-      (event.charges && event.charges.length > 0)
-    );
-  }
-
   function exportResultsCsv() {
     exportCourtEventsCsv(results);
   }
 
-  const calLabel = calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar";
-  const anySynced = results.some(e => calSyncedIds.has(e.id));
+  const anySynced = results.some(e => cal.calSyncedIds.has(e.id));
 
   const { newResults, existingResults } = useMemo(() => {
     if (!previousRunAt) return { newResults: [], existingResults: results };
@@ -530,7 +406,7 @@ export default function SearchPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-gray-900">Search Court Calendars</h1>
 
-      <SearchForm onSearch={handleSearch} loading={loading} hasCalendarConnection={hasCalendarConnection} />
+      <SearchForm onSearch={handleSearch} loading={loading} hasCalendarConnection={cal.hasCalendarConnection} />
 
       {/* Saved Searches */}
       {savedSearches.length > 0 && (
@@ -551,7 +427,7 @@ export default function SearchPage() {
                   </div>
                 </button>
                 <div className="flex items-center gap-3 shrink-0">
-                  {hasCalendarConnection && (
+                  {cal.hasCalendarConnection && (
                     <label className="flex items-center gap-1.5 cursor-pointer select-none" title="Auto-add results to calendar when this search runs">
                       <div className="relative">
                         <input
@@ -683,7 +559,7 @@ export default function SearchPage() {
             </div>
             {results.length > 0 && (
               <div className="flex items-center gap-2 flex-wrap mt-3">
-                {!hasCalendarConnection && (
+                {!cal.hasCalendarConnection && (
                   <button
                     onClick={connectGoogleCalendar}
                     className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md"
@@ -691,26 +567,26 @@ export default function SearchPage() {
                     Connect Google Calendar
                   </button>
                 )}
-                {hasCalendarConnection && anySynced && (
+                {cal.hasCalendarConnection && anySynced && (
                   <button
                     onClick={handleRemoveAllFromCalendar}
                     disabled={removingAll || addingAll}
                     className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md disabled:opacity-50"
                   >
-                    {removingAll ? "Removing..." : `Remove all from ${calLabel}`}
+                    {removingAll ? "Removing..." : `Remove all from ${cal.calLabel}`}
                   </button>
                 )}
-                {hasCalendarConnection && (
+                {cal.hasCalendarConnection && (
                   <button
                     onClick={handleAddAllToCalendar}
                     disabled={addingAll || addedAll || removingAll}
                     className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-amber-700 hover:bg-amber-800 rounded-md disabled:opacity-50"
                   >
                     {addingAll
-                      ? `Adding ${results.length} to ${calLabel}...`
+                      ? `Adding ${results.length} to ${cal.calLabel}...`
                       : addedAll
-                        ? `All added to ${calLabel}`
-                        : `Add all ${results.length} to ${calLabel}`}
+                        ? `All added to ${cal.calLabel}`
+                        : `Add all ${results.length} to ${cal.calLabel}`}
                   </button>
                 )}
               </div>
@@ -781,34 +657,34 @@ export default function SearchPage() {
                         </td>
                         <td className="px-4 py-3 text-sm">{event.hearingType || "N/A"}</td>
                         <td className="px-4 py-3 text-sm space-y-1">
-                          {hasCalendarConnection ? (
-                            calSyncedIds.has(event.id) ? (
+                          {cal.hasCalendarConnection ? (
+                            cal.calSyncedIds.has(event.id) ? (
                               <button
-                                onClick={() => handleRemoveFromCalendar(event)}
-                                disabled={calRemovingIds.has(event.id)}
+                                onClick={() => onRemoveFromCalendar(event)}
+                                disabled={cal.calRemovingIds.has(event.id)}
                                 className="text-green-700 hover:text-red-600 text-sm font-medium block disabled:opacity-50 group"
                                 title="Click to remove from calendar"
                               >
-                                {calRemovingIds.has(event.id) ? (
+                                {cal.calRemovingIds.has(event.id) ? (
                                   "Removing..."
                                 ) : (
                                   <>
                                     <span className="group-hover:hidden">
-                                      &#10003; Added to {calLabel}
+                                      &#10003; Added to {cal.calLabel}
                                     </span>
                                     <span className="hidden group-hover:inline">
-                                      Remove from {calLabel}
+                                      Remove from {cal.calLabel}
                                     </span>
                                   </>
                                 )}
                               </button>
                             ) : (
                               <button
-                                onClick={() => handleAddToCalendar(event)}
-                                disabled={calSyncingIds.has(event.id)}
+                                onClick={() => onAddToCalendar(event)}
+                                disabled={cal.calSyncingIds.has(event.id)}
                                 className="text-amber-700 hover:text-slate-800 text-sm font-medium block disabled:opacity-50"
                               >
-                                {calSyncingIds.has(event.id) ? "Adding..." : `Add to ${calLabel}`}
+                                {cal.calSyncingIds.has(event.id) ? "Adding..." : `Add to ${cal.calLabel}`}
                               </button>
                             )
                           ) : (
@@ -837,62 +713,7 @@ export default function SearchPage() {
                       </tr>
                       {expandedId === event.id && (
                         <tr key={`${event.id}-detail`} className="bg-gray-50">
-                          <td colSpan={7} className="px-6 py-3">
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
-                              {event.prosecutingAttorney && (
-                                <div>
-                                  <span className="text-gray-500 text-xs block">Prosecuting Attorney</span>
-                                  <span className="font-medium">{event.prosecutingAttorney}</span>
-                                </div>
-                              )}
-                              {event.defenseAttorney && (
-                                <div>
-                                  <span className="text-gray-500 text-xs block">Defense Attorney</span>
-                                  <span className="font-medium">{event.defenseAttorney}</span>
-                                </div>
-                              )}
-                              {event.defendantOtn && (
-                                <div>
-                                  <span className="text-gray-500 text-xs block">OTN</span>
-                                  <span className="font-medium">{event.defendantOtn}</span>
-                                </div>
-                              )}
-                              {event.defendantDob && (
-                                <div>
-                                  <span className="text-gray-500 text-xs block">DOB</span>
-                                  <span className="font-medium">{event.defendantDob}</span>
-                                </div>
-                              )}
-                              {event.citationNumber && (
-                                <div>
-                                  <span className="text-gray-500 text-xs block">Citation #</span>
-                                  <span className="font-medium">{event.citationNumber}</span>
-                                </div>
-                              )}
-                              {event.sheriffNumber && (
-                                <div>
-                                  <span className="text-gray-500 text-xs block">Sheriff #</span>
-                                  <span className="font-medium">{event.sheriffNumber}</span>
-                                </div>
-                              )}
-                              {event.leaNumber && (
-                                <div>
-                                  <span className="text-gray-500 text-xs block">LEA #</span>
-                                  <span className="font-medium">{event.leaNumber}</span>
-                                </div>
-                              )}
-                              {event.charges && event.charges.length > 0 && (
-                                <div className="col-span-2 md:col-span-3">
-                                  <span className="text-gray-500 text-xs block">Charges</span>
-                                  <ul className="list-disc list-inside text-sm space-y-0.5 mt-0.5">
-                                    {event.charges.map((charge, i) => (
-                                      <li key={i} className="text-gray-800">{charge}</li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              )}
-                            </div>
-                          </td>
+                          <EventDetailRow event={event} />
                         </tr>
                       )}
                     </>

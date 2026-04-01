@@ -1,7 +1,7 @@
 import { getPool } from "../db/pool";
 import { sendEmail, sendScheduleChangeEmail } from "./emailService";
 import { sendScheduleChangeSms } from "./smsService";
-import { NotificationType, NotificationPreferences, Notification, ServerToClientEvents, ClientToServerEvents } from "../../../shared/types";
+import { NotificationType, NotificationPreferences, Notification, ServerToClientEvents, ClientToServerEvents } from "@shared/types";
 import type { Server as SocketIOServer } from "socket.io";
 
 let io: SocketIOServer<ClientToServerEvents, ServerToClientEvents> | null = null;

@@ -3,22 +3,17 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useSearch } from "@/hooks/useSearch";
 import { useAuth } from "@/store/authStore";
 import { apiFetch } from "@/api/client";
-import { addEventToCalendar, addAllEventsToCalendar, getCalendarConnections, getSyncedEvents, removeEventFromCalendar } from "@/api/calendar";
+import { useCalendarActions } from "@/hooks/useCalendarActions";
+import EventDetailRow from "@/components/EventDetailRow";
 import UpdatesSection from "@/components/UpdatesSection";
 import NewEntriesSection from "@/components/NewEntriesSection";
 import MonitorModal from "@/components/MonitorModal";
 import UpgradeBanner from "@/components/UpgradeBanner";
 import Pagination from "@/components/Pagination";
 import { exportCourtEventsCsv } from "@/utils/formatters";
+import { formatDate, hasDetails, providerLabels } from "@/utils/courtEventUtils";
 import { CourtEvent } from "@shared/types";
 import { ChangeRecord } from "@/components/UpdatesSection";
-
-const providerLabels: Record<string, string> = {
-  google: "Google Calendar",
-  microsoft: "Outlook",
-  apple: "iCloud",
-  caldav: "CalDAV",
-};
 
 const FREE_RESULT_LIMIT = 5;
 const RESULTS_PER_PAGE = 50;
@@ -33,11 +28,8 @@ export default function SearchResultsPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [watchSuccess, setWatchSuccess] = useState("");
   const [watchError, setWatchError] = useState("");
-  const [calSyncingIds, setCalSyncingIds] = useState<Set<number>>(new Set());
-  const [calSyncedIds, setCalSyncedIds] = useState<Set<number>>(new Set());
-  const [calEntryMap, setCalEntryMap] = useState<Record<number, number>>({});
-  const [calRemovingIds, setCalRemovingIds] = useState<Set<number>>(new Set());
-  const [calendarProvider, setCalendarProvider] = useState<string | null>(null);
+
+  const cal = useCalendarActions();
 
   // Batch add/remove state
   const [batchAdding, setBatchAdding] = useState(false);
@@ -62,21 +54,6 @@ export default function SearchResultsPage() {
       setCurrentPage(1);
     }
   }, [location.search]);
-
-  useEffect(() => {
-    getCalendarConnections()
-      .then(data => {
-        const active = data.connections.find(c => c.is_active);
-        setCalendarProvider(active?.provider ?? null);
-      })
-      .catch((err) => console.error("Failed to fetch calendar connections:", err));
-    getSyncedEvents()
-      .then(synced => {
-        setCalEntryMap(synced);
-        setCalSyncedIds(new Set(Object.keys(synced).map(Number)));
-      })
-      .catch((err) => console.error("Failed to fetch synced events:", err));
-  }, []);
 
   // Fetch updates (changes detected for events in current results)
   const fetchUpdates = useCallback(async () => {
@@ -115,11 +92,8 @@ export default function SearchResultsPage() {
   }
 
   async function handleAddToCalendar(event: CourtEvent) {
-    setCalSyncingIds((prev) => new Set(prev).add(event.id));
     try {
-      const data = await addEventToCalendar(event.id);
-      setCalSyncedIds((prev) => new Set(prev).add(event.id));
-      setCalEntryMap((prev) => ({ ...prev, [event.id]: data.calendarEntryId }));
+      const data = await cal.handleAddToCalendar(event.id);
       setWatchSuccess(data.message);
       setWatchError("");
     } catch (err) {
@@ -130,50 +104,24 @@ export default function SearchResultsPage() {
       }
       setWatchError(msg);
       setWatchSuccess("");
-    } finally {
-      setCalSyncingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(event.id);
-        return next;
-      });
     }
   }
 
   async function handleRemoveFromCalendar(event: CourtEvent) {
-    const entryId = calEntryMap[event.id];
-    if (!entryId) return;
-
-    setCalRemovingIds((prev) => new Set(prev).add(event.id));
     try {
-      await removeEventFromCalendar(entryId);
-      setCalSyncedIds((prev) => {
-        const next = new Set(prev);
-        next.delete(event.id);
-        return next;
-      });
-      setCalEntryMap((prev) => {
-        const next = { ...prev };
-        delete next[event.id];
-        return next;
-      });
+      await cal.handleRemoveFromCalendar(event.id);
       setWatchSuccess("Event removed from calendar");
       setWatchError("");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to remove from calendar";
       setWatchError(msg);
       setWatchSuccess("");
-    } finally {
-      setCalRemovingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(event.id);
-        return next;
-      });
     }
   }
 
   async function handleAddAllToCalendar() {
     const unsyncedIds = results
-      .filter(e => !calSyncedIds.has(e.id))
+      .filter(e => !cal.calSyncedIds.has(e.id))
       .map(e => e.id);
 
     if (unsyncedIds.length === 0) {
@@ -187,19 +135,7 @@ export default function SearchResultsPage() {
     setWatchSuccess("");
 
     try {
-      const data = await addAllEventsToCalendar(unsyncedIds);
-      const newSyncedIds = new Set(calSyncedIds);
-      const newEntryMap = { ...calEntryMap };
-
-      for (const r of data.results) {
-        if (r.synced) {
-          newSyncedIds.add(r.courtEventId);
-          newEntryMap[r.courtEventId] = r.calendarEntryId;
-        }
-      }
-
-      setCalSyncedIds(newSyncedIds);
-      setCalEntryMap(newEntryMap);
+      const data = await cal.handleBatchAdd(unsyncedIds);
       setWatchSuccess(data.message);
       setBatchProgress("");
 
@@ -220,7 +156,7 @@ export default function SearchResultsPage() {
 
   async function handleAddAllAndAutoUpdate() {
     const unsyncedIds = results
-      .filter(e => !calSyncedIds.has(e.id))
+      .filter(e => !cal.calSyncedIds.has(e.id))
       .map(e => e.id);
 
     setBatchAdding(true);
@@ -231,19 +167,7 @@ export default function SearchResultsPage() {
     try {
       // Step 1: Batch add all unsynced events to calendar
       if (unsyncedIds.length > 0) {
-        const data = await addAllEventsToCalendar(unsyncedIds);
-        const newSyncedIds = new Set(calSyncedIds);
-        const newEntryMap = { ...calEntryMap };
-
-        for (const r of data.results) {
-          if (r.synced) {
-            newSyncedIds.add(r.courtEventId);
-            newEntryMap[r.courtEventId] = r.calendarEntryId;
-          }
-        }
-
-        setCalSyncedIds(newSyncedIds);
-        setCalEntryMap(newEntryMap);
+        await cal.handleBatchAdd(unsyncedIds);
       }
 
       // Step 2: Create watched cases with both monitorChanges AND autoAddNew
@@ -297,7 +221,7 @@ export default function SearchResultsPage() {
 
       setBatchProgress("");
       const parts: string[] = [];
-      if (unsyncedIds.length > 0) parts.push(`Added ${unsyncedIds.length} events to ${calLabel}`);
+      if (unsyncedIds.length > 0) parts.push(`Added ${unsyncedIds.length} events to ${cal.calLabel}`);
       if (successCount > 0) parts.push(`monitoring ${successCount} case${successCount !== 1 ? "s" : ""} for changes and new hearings`);
       setWatchSuccess(parts.join(". ") + ". Your calendar will stay up to date automatically.");
 
@@ -316,7 +240,7 @@ export default function SearchResultsPage() {
   }
 
   async function handleRemoveAllFromCalendar() {
-    const syncedInResults = results.filter(e => calSyncedIds.has(e.id) && calEntryMap[e.id]);
+    const syncedInResults = results.filter(e => cal.calSyncedIds.has(e.id) && cal.calEntryMap[e.id]);
 
     if (syncedInResults.length === 0) {
       setWatchSuccess("No events to remove from your calendar.");
@@ -333,18 +257,8 @@ export default function SearchResultsPage() {
 
     for (const event of syncedInResults) {
       try {
-        await removeEventFromCalendar(calEntryMap[event.id]);
+        await cal.handleRemoveFromCalendar(event.id);
         removed++;
-        setCalSyncedIds((prev) => {
-          const next = new Set(prev);
-          next.delete(event.id);
-          return next;
-        });
-        setCalEntryMap((prev) => {
-          const next = { ...prev };
-          delete next[event.id];
-          return next;
-        });
       } catch {
         failed++;
       }
@@ -354,16 +268,15 @@ export default function SearchResultsPage() {
     setBatchProgress("");
 
     if (failed > 0) {
-      setWatchSuccess(`Removed ${removed} event${removed !== 1 ? "s" : ""} from ${calLabel}. ${failed} failed.`);
+      setWatchSuccess(`Removed ${removed} event${removed !== 1 ? "s" : ""} from ${cal.calLabel}. ${failed} failed.`);
     } else {
-      setWatchSuccess(`Removed all ${removed} event${removed !== 1 ? "s" : ""} from ${calLabel}`);
+      setWatchSuccess(`Removed all ${removed} event${removed !== 1 ? "s" : ""} from ${cal.calLabel}`);
     }
   }
 
   async function handleMonitorConfirm(options: { monitorChanges: boolean; autoAddNew: boolean }) {
     setMonitoringInProgress(true);
 
-    // Create watched cases for unique defendants and case numbers in results
     const seen = new Set<string>();
     const watchRequests: Array<{ searchType: string; searchValue: string; label: string; monitorChanges: boolean; autoAddNew: boolean }> = [];
 
@@ -422,7 +335,6 @@ export default function SearchResultsPage() {
       setWatchError("Failed to set up monitoring. Please try again.");
     }
 
-    // Re-fetch updates now that we have watched cases
     fetchUpdates();
   }
 
@@ -434,31 +346,8 @@ export default function SearchResultsPage() {
     setExpandedId(expandedId === id ? null : id);
   }
 
-  function hasDetails(event: CourtEvent): boolean {
-    return !!(
-      event.prosecutingAttorney ||
-      event.defenseAttorney ||
-      event.defendantOtn ||
-      event.defendantDob ||
-      event.citationNumber ||
-      event.sheriffNumber ||
-      event.leaNumber ||
-      (event.charges && event.charges.length > 0)
-    );
-  }
-
-  function formatDate(dateStr: string): string {
-    if (!dateStr) return "N/A";
-    const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (match) {
-      const [, y, m, d] = match;
-      return `${parseInt(m)}/${parseInt(d)}/${y}`;
-    }
-    return dateStr;
-  }
-
-  const allSynced = results.length > 0 && results.every(e => calSyncedIds.has(e.id));
-  const anySynced = results.some(e => calSyncedIds.has(e.id));
+  const allSynced = results.length > 0 && results.every(e => cal.calSyncedIds.has(e.id));
+  const anySynced = results.some(e => cal.calSyncedIds.has(e.id));
 
   const { newResults, existingResults } = useMemo(() => {
     if (!previousRunAt) return { newResults: [], existingResults: results };
@@ -466,8 +355,6 @@ export default function SearchResultsPage() {
     const existing = results.filter(e => !e.isNew);
     return { newResults: newOnes, existingResults: existing };
   }, [results, previousRunAt]);
-
-  const calLabel = calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar";
 
   return (
     <div className="space-y-6">
@@ -517,37 +404,37 @@ export default function SearchResultsPage() {
             </div>
             {results.length > 0 && (
               <div className="flex items-center gap-2 flex-wrap mt-3">
-                {anySynced && calendarProvider && (
+                {anySynced && cal.calendarProvider && (
                   <button
                     onClick={handleRemoveAllFromCalendar}
                     disabled={batchRemoving || batchAdding}
                     className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed bg-red-600 text-white hover:bg-red-700 transition-colors"
-                    title={`Remove all synced events from ${providerLabels[calendarProvider] || "Calendar"}`}
+                    title={`Remove all synced events from ${providerLabels[cal.calendarProvider] || "Calendar"}`}
                   >
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                     </svg>
-                    {batchRemoving ? batchProgress : `Remove All from ${providerLabels[calendarProvider] || "Calendar"}`}
+                    {batchRemoving ? batchProgress : `Remove All from ${providerLabels[cal.calendarProvider] || "Calendar"}`}
                   </button>
                 )}
                 <button
-                  onClick={calendarProvider ? handleAddAllAndAutoUpdate : () => navigate("/calendar-settings")}
+                  onClick={cal.calendarProvider ? handleAddAllAndAutoUpdate : () => navigate("/calendar-settings")}
                   disabled={batchAdding || batchRemoving}
                   className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed bg-green-600 text-white hover:bg-green-700 transition-colors"
-                  title={calendarProvider ? `Add all events to ${providerLabels[calendarProvider] || "Calendar"} and auto-update when changes are found` : "Connect a calendar first"}
+                  title={cal.calendarProvider ? `Add all events to ${providerLabels[cal.calendarProvider] || "Calendar"} and auto-update when changes are found` : "Connect a calendar first"}
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                   </svg>
                   {batchAdding
                     ? batchProgress
-                    : `Add All & Auto-Update ${calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar"}`}
+                    : `Add All & Auto-Update ${cal.calendarProvider ? providerLabels[cal.calendarProvider] || "Calendar" : "Calendar"}`}
                 </button>
                 <button
-                  onClick={calendarProvider ? handleAddAllToCalendar : () => navigate("/calendar-settings")}
+                  onClick={cal.calendarProvider ? handleAddAllToCalendar : () => navigate("/calendar-settings")}
                   disabled={batchAdding || allSynced || batchRemoving}
                   className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed bg-amber-600 text-white hover:bg-amber-700 transition-colors"
-                  title={allSynced ? "All events already added" : calendarProvider ? `Add all ${results.length} events to ${providerLabels[calendarProvider] || "Calendar"} (no auto-updates)` : "Connect a calendar to add events"}
+                  title={allSynced ? "All events already added" : cal.calendarProvider ? `Add all ${results.length} events to ${providerLabels[cal.calendarProvider] || "Calendar"} (no auto-updates)` : "Connect a calendar to add events"}
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -643,16 +530,16 @@ export default function SearchResultsPage() {
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                                 </svg>
                               </button>
-                            ) : calendarProvider ? (
+                            ) : cal.calendarProvider ? (
                               <>
-                                {calSyncedIds.has(event.id) ? (
+                                {cal.calSyncedIds.has(event.id) ? (
                                   <button
                                     onClick={() => handleRemoveFromCalendar(event)}
-                                    disabled={calRemovingIds.has(event.id)}
+                                    disabled={cal.calRemovingIds.has(event.id)}
                                     className="p-1.5 rounded-md text-green-600 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors group"
-                                    title={calRemovingIds.has(event.id) ? "Removing..." : `Remove from ${providerLabels[calendarProvider] || "Calendar"}`}
+                                    title={cal.calRemovingIds.has(event.id) ? "Removing..." : `Remove from ${providerLabels[cal.calendarProvider!] || "Calendar"}`}
                                   >
-                                    {calRemovingIds.has(event.id) ? (
+                                    {cal.calRemovingIds.has(event.id) ? (
                                       <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
                                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
@@ -666,11 +553,11 @@ export default function SearchResultsPage() {
                                 ) : (
                                   <button
                                     onClick={() => handleAddToCalendar(event)}
-                                    disabled={calSyncingIds.has(event.id)}
+                                    disabled={cal.calSyncingIds.has(event.id)}
                                     className="p-1.5 rounded-md text-gray-400 hover:text-amber-600 hover:bg-amber-50 disabled:opacity-50 transition-colors"
-                                    title={calSyncingIds.has(event.id) ? "Adding..." : `Add to ${providerLabels[calendarProvider] || "Calendar"}`}
+                                    title={cal.calSyncingIds.has(event.id) ? "Adding..." : `Add to ${providerLabels[cal.calendarProvider!] || "Calendar"}`}
                                   >
-                                    {calSyncingIds.has(event.id) ? (
+                                    {cal.calSyncingIds.has(event.id) ? (
                                       <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
                                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
@@ -716,62 +603,7 @@ export default function SearchResultsPage() {
                       </tr>
                       {expandedId === event.id && (
                         <tr key={`${event.id}-detail`} className="bg-gray-50">
-                          <td colSpan={7} className="px-6 py-3">
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
-                              {event.prosecutingAttorney && (
-                                <div>
-                                  <span className="text-gray-500 text-xs block">Prosecuting Attorney</span>
-                                  <span className="font-medium">{event.prosecutingAttorney}</span>
-                                </div>
-                              )}
-                              {event.defenseAttorney && (
-                                <div>
-                                  <span className="text-gray-500 text-xs block">Defense Attorney</span>
-                                  <span className="font-medium">{event.defenseAttorney}</span>
-                                </div>
-                              )}
-                              {event.defendantOtn && (
-                                <div>
-                                  <span className="text-gray-500 text-xs block">OTN</span>
-                                  <span className="font-medium">{event.defendantOtn}</span>
-                                </div>
-                              )}
-                              {event.defendantDob && (
-                                <div>
-                                  <span className="text-gray-500 text-xs block">DOB</span>
-                                  <span className="font-medium">{event.defendantDob}</span>
-                                </div>
-                              )}
-                              {event.citationNumber && (
-                                <div>
-                                  <span className="text-gray-500 text-xs block">Citation #</span>
-                                  <span className="font-medium">{event.citationNumber}</span>
-                                </div>
-                              )}
-                              {event.sheriffNumber && (
-                                <div>
-                                  <span className="text-gray-500 text-xs block">Sheriff #</span>
-                                  <span className="font-medium">{event.sheriffNumber}</span>
-                                </div>
-                              )}
-                              {event.leaNumber && (
-                                <div>
-                                  <span className="text-gray-500 text-xs block">LEA #</span>
-                                  <span className="font-medium">{event.leaNumber}</span>
-                                </div>
-                              )}
-                              {event.charges && event.charges.length > 0 && (
-                                <div className="col-span-2 md:col-span-3">
-                                  <span className="text-gray-500 text-xs block">Charges</span>
-                                  <ul className="list-disc list-inside text-sm space-y-0.5 mt-0.5">
-                                    {event.charges.map((charge, i) => (
-                                      <li key={i} className="text-gray-800">{charge}</li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              )}
-                            </div>
-                          </td>
+                          <EventDetailRow event={event} />
                         </tr>
                       )}
                     </>

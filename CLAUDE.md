@@ -2,15 +2,16 @@
 
 **Project:** Utah Court Calendar Tracker
 **Version:** 0.13.0
-**Last Updated:** 2026-03-15
+**Last Updated:** 2026-04-01
 **Platform:** Replit (Node.js 20, PostgreSQL, VM deployment)
+**Coding Standards:** `@file claudev7.md` — master coding guidebook (v7.0)
 
 ---
 
 ## DEVELOPMENT RULES (MUST FOLLOW)
 
 ### Deployment & File Paths
-- **Path resolution is context-dependent (see claudev6.md Rule 17.7).** Prefer `__dirname`-based resolution with existence checks. `process.cwd()` is acceptable when the Replit monorepo root is the working directory at runtime. Always verify the resolved path exists before serving.
+- **Path resolution is context-dependent (see claudev7.md §9 Project Structure).** Prefer `__dirname`-based resolution with existence checks. `process.cwd()` is acceptable when the Replit monorepo root is the working directory at runtime. Always verify the resolved path exists before serving.
 - **After any code change, both client AND server must be rebuilt** (`npm --prefix client run build && npm --prefix server run build`) before restarting. Stale builds are the #1 cause of "my change didn't work."
 - **`start-production.sh` must verify build artifacts exist** before starting the server. If `client/build/index.html` or `server/dist/server/src/index.js` is missing, rebuild.
 
@@ -372,7 +373,7 @@ SENTRY_DSN=
 | 2026-03-13 | 0.1.0 | Initial architecture, schema, and project plan |
 | 2026-03-13 | 0.2.0 | Full server scaffolding: all services, routes, middleware |
 | 2026-03-13 | 0.3.0 | Full client scaffolding: React + Tailwind, all pages and API layer |
-| 2026-03-13 | 0.4.0 | CLAUDEv6 compliance audit: requestLogger, graceful shutdown, heavyLimiter, typed pool.query() |
+| 2026-03-13 | 0.4.0 | Coding standards compliance audit: requestLogger, graceful shutdown, heavyLimiter, typed pool.query() |
 | 2026-03-13 | 0.5.0 | Google Calendar API v3: full CRUD, token refresh, typed sync functions |
 | 2026-03-13 | 0.6.0 | Microsoft Graph API, CalDAV/Apple iCloud, Socket.io notifications, email verification, AM/PM time fix, 33 tests |
 | 2026-03-13 | 0.7.0 | HTML scraper rewrite (search.php), court list parser, judge/location/virtual fields, 48 tests |
@@ -382,7 +383,7 @@ SENTRY_DSN=
 | 2026-03-13 | 0.10.0 | Watched case auto-matching (matchWatchedCases in scheduler post-scrape), 139 tests |
 | 2026-03-13 | 0.11.0 | Parser validated against real utcourts.gov HTML — pipe-delimiter fix for defendant/judge separation. Mobile responsive: hamburger nav, card layouts. Smoke test script. 139 tests |
 | 2026-03-13 | 0.12.0 | Full search parity with utcourts.gov: judge name + attorney search (9 fields total). Notification frequency: immediate/daily/weekly digest with digestService.ts + cron jobs. ProfilePage frequency selector UI. 139 tests |
-| 2026-03-15 | 0.13.0 | Auto-saved searches: live-first scraping on first run, persists results to DB, auto-saves for logged-in users. Saved searches UI with re-run/delete. Date/time display fixes. CLAUDEv6 compliance fixes (type guards, req.user capture, no Math.random IDs). 139 tests |
+| 2026-03-15 | 0.13.0 | Auto-saved searches: live-first scraping on first run, persists results to DB, auto-saves for logged-in users. Saved searches UI with re-run/delete. Date/time display fixes. Coding standards compliance fixes (type guards, req.user capture, no Math.random IDs). 139 tests |
 
 ---
 

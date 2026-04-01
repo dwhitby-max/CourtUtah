@@ -1,5 +1,5 @@
 import { getPool } from "../db/pool";
-import { SearchRequest, CourtEvent } from "../../../shared/types";
+import { SearchRequest, CourtEvent } from "@shared/types";
 
 /**
  * Extract location-matching patterns from a court picker name.

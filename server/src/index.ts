@@ -7,7 +7,7 @@ import { stopPoolMonitor } from "./db/pool";
 import { startScheduler } from "./services/schedulerService";
 import { setSocketServer } from "./services/notificationService";
 import { initSentry, flushSentry } from "./services/sentryService";
-import type { ServerToClientEvents, ClientToServerEvents } from "../../shared/types";
+import type { ServerToClientEvents, ClientToServerEvents } from "@shared/types";
 
 // Initialize Sentry early (lazy — noop if SENTRY_DSN not set, Rule 17.5)
 initSentry();

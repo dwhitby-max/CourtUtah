@@ -1,7 +1,7 @@
 import { getPool } from "../db/pool";
 import { sendEmail } from "./emailService";
 import { sendSms } from "./smsService";
-import { NotificationFrequency, NotificationPreferences } from "../../../shared/types";
+import { NotificationFrequency, NotificationPreferences } from "@shared/types";
 
 interface DigestUserRow {
   id: number;
