@@ -14,7 +14,7 @@ router.get("/me", authenticateToken, async (req: Request, res: Response) => {
   const client = await pool.connect();
   try {
     const result = await client.query(
-      `SELECT id, email, phone, email_verified, google_id, microsoft_id, is_admin, is_approved,
+      `SELECT id, email, first_name, last_name, phone, email_verified, google_id, microsoft_id, is_admin, is_approved,
               notification_preferences, calendar_preferences, search_preferences, tos_agreed_at, created_at,
               subscription_plan, subscription_status, subscription_current_period_end
        FROM users WHERE id = $1`,
@@ -31,6 +31,8 @@ router.get("/me", authenticateToken, async (req: Request, res: Response) => {
       user: {
         id: user.id,
         email: user.email,
+        firstName: user.first_name || null,
+        lastName: user.last_name || null,
         phone: user.phone,
         emailVerified: user.email_verified,
         googleConnected: !!user.google_id,
@@ -55,9 +57,22 @@ router.get("/me", authenticateToken, async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/auth/accept-terms — Record terms acceptance (requires JWT)
+// POST /api/auth/accept-terms — Record terms acceptance with name (requires JWT)
 router.post("/accept-terms", authenticateToken, async (req: Request, res: Response) => {
   if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
+
+  const { firstName, lastName } = req.body;
+  if (!firstName || !lastName || typeof firstName !== "string" || typeof lastName !== "string") {
+    res.status(400).json({ error: "First name and last name are required" });
+    return;
+  }
+
+  const trimmedFirst = firstName.trim();
+  const trimmedLast = lastName.trim();
+  if (!trimmedFirst || !trimmedLast) {
+    res.status(400).json({ error: "First name and last name cannot be empty" });
+    return;
+  }
 
   const pool = getPool();
   if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
@@ -66,12 +81,12 @@ router.post("/accept-terms", authenticateToken, async (req: Request, res: Respon
   try {
     const tosIp = req.ip || req.headers["x-forwarded-for"] || null;
     await client.query(
-      `UPDATE users SET tos_agreed_at = NOW(), tos_agreed_ip = $1, updated_at = NOW() WHERE id = $2`,
-      [tosIp, req.user.userId]
+      `UPDATE users SET first_name = $1, last_name = $2, tos_agreed_at = NOW(), tos_agreed_ip = $3, updated_at = NOW() WHERE id = $4`,
+      [trimmedFirst, trimmedLast, tosIp, req.user.userId]
     );
 
     const result = await client.query(
-      `SELECT id, email, phone, email_verified, google_id, microsoft_id, is_admin, is_approved,
+      `SELECT id, email, first_name, last_name, phone, email_verified, google_id, microsoft_id, is_admin, is_approved,
               notification_preferences, calendar_preferences, search_preferences, tos_agreed_at, created_at,
               subscription_plan, subscription_status, subscription_current_period_end
        FROM users WHERE id = $1`,
@@ -83,6 +98,8 @@ router.post("/accept-terms", authenticateToken, async (req: Request, res: Respon
       user: {
         id: user.id,
         email: user.email,
+        firstName: user.first_name || null,
+        lastName: user.last_name || null,
         phone: user.phone,
         emailVerified: user.email_verified,
         googleConnected: !!user.google_id,
@@ -147,7 +164,7 @@ router.patch("/profile", authenticateToken, async (req: Request, res: Response) 
     );
 
     const result = await client.query(
-      `SELECT id, email, phone, email_verified, google_id, microsoft_id, is_admin, is_approved,
+      `SELECT id, email, first_name, last_name, phone, email_verified, google_id, microsoft_id, is_admin, is_approved,
               notification_preferences, calendar_preferences, search_preferences, tos_agreed_at, created_at,
               subscription_plan, subscription_status, subscription_current_period_end
        FROM users WHERE id = $1`,
@@ -164,6 +181,8 @@ router.patch("/profile", authenticateToken, async (req: Request, res: Response) 
       user: {
         id: user.id,
         email: user.email,
+        firstName: user.first_name || null,
+        lastName: user.last_name || null,
         phone: user.phone,
         emailVerified: user.email_verified,
         googleConnected: !!user.google_id,

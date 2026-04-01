@@ -48,6 +48,31 @@ function toQueryParams(params: Record<string, string>): Record<string, string> {
   return result;
 }
 
+/** Build a params key matching the server's searchParamsKey format (camelCase, sorted, uppercased values) */
+function buildParamsKey(snakeCaseParams: Record<string, string>): string {
+  const snakeToCamel: Record<string, string> = {
+    defendant_name: "defendantName",
+    case_number: "caseNumber",
+    court_name: "courtName",
+    court_names: "courtNames",
+    court_date: "courtDate",
+    date_from: "dateFrom",
+    date_to: "dateTo",
+    defendant_otn: "defendantOtn",
+    citation_number: "citationNumber",
+    charges: "charges",
+    judge_name: "judgeName",
+    attorney: "attorney",
+    all_courts: "allCourts",
+  };
+  const entries = Object.entries(snakeCaseParams)
+    .map(([k, v]) => [snakeToCamel[k] || k, v] as [string, string])
+    .filter(([, v]) => v !== undefined && v !== "")
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${String(v).toUpperCase().trim()}`);
+  return entries.join("&");
+}
+
 const RESULTS_PER_PAGE = 50;
 
 export default function SearchPage() {
@@ -98,10 +123,20 @@ export default function SearchPage() {
     }
   }
 
-  async function handleSearch(params: Record<string, string>) {
+  async function handleSearch(params: Record<string, string>, opts?: { isRerun?: boolean }) {
     const autoAdd = params._autoAddToCalendar === "true";
     const searchParams = { ...params };
     delete searchParams._autoAddToCalendar;
+
+    // Block duplicate searches unless this is a "Run Again" from a saved search
+    if (!opts?.isRerun && savedSearches.length > 0) {
+      const key = buildParamsKey(searchParams);
+      const match = savedSearches.find(s => s.search_params._key === key);
+      if (match) {
+        setError(`This search already exists in your saved searches ("${match.label}"). Use "Run Again" on the saved search or change your search parameters.`);
+        return;
+      }
+    }
 
     setError("");
     setLoading(true);
@@ -247,7 +282,7 @@ export default function SearchPage() {
     if (saved.search_params._autoAddToCalendar) {
       queryParams._autoAddToCalendar = "true";
     }
-    await handleSearch(queryParams);
+    await handleSearch(queryParams, { isRerun: true });
   }
 
   async function handleToggleSavedAutoAdd(saved: SavedSearchRow) {
