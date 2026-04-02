@@ -11,7 +11,7 @@ import ChangesFeedSection from "@/components/ChangesFeedSection";
 import MonitorModal from "@/components/MonitorModal";
 import UpgradeBanner from "@/components/UpgradeBanner";
 import Pagination from "@/components/Pagination";
-import { exportCourtEventsCsv } from "@/utils/formatters";
+import { exportCourtEventsCsv, extractLastName } from "@/utils/formatters";
 import { formatDate, hasDetails, providerLabels } from "@/utils/courtEventUtils";
 import { CourtEvent } from "@shared/types";
 import { ChangeRecord } from "@/components/UpdatesSection";
@@ -467,6 +467,7 @@ export default function SearchResultsPage() {
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Defendant</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Court</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Hearing</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Attorneys</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
                   </tr>
                 </thead>
@@ -521,6 +522,14 @@ export default function SearchResultsPage() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-sm">{event.hearingType || "N/A"}</td>
+                        <td className={`px-4 py-3 text-sm ${isLocked ? "blur-sm select-none" : ""}`}>
+                          {extractLastName(event.prosecutingAttorney) && (
+                            <div><span className="text-gray-500 text-xs">P:</span> {extractLastName(event.prosecutingAttorney)}</div>
+                          )}
+                          {extractLastName(event.defenseAttorney) && (
+                            <div><span className="text-gray-500 text-xs">D:</span> {extractLastName(event.defenseAttorney)}</div>
+                          )}
+                        </td>
                         <td className="px-4 py-3 text-sm">
                           <div className="flex items-center gap-2">
                             {isLocked ? (

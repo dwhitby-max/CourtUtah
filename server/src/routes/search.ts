@@ -266,17 +266,18 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     const liveEvents = allParsed.map((event) => toCourtEvent(event));
     const filteredLive = applyAllFilters(liveEvents, searchParams);
 
-    // Merge: use DB results as the base (they have richer data from reports.php),
-    // then add any live results whose case_number+date aren't already in the DB set.
-    const dbKeys = new Set(
-      dbResults.map((r) => `${r.caseNumber}|${r.eventDate}|${r.eventTime || ""}`)
+    // Merge: live results are authoritative (most current from search.php),
+    // then backfill with any DB results not already covered by live data.
+    // Live results reflect the latest court schedule; DB may be stale.
+    const liveKeys = new Set(
+      filteredLive.map((e) => `${e.caseNumber}|${e.eventDate}`)
     );
-    const extraLive = filteredLive.filter(
-      (e) => !dbKeys.has(`${e.caseNumber}|${e.eventDate}|${e.eventTime || ""}`)
+    const extraDb = dbResults.filter(
+      (r) => !liveKeys.has(`${r.caseNumber}|${r.eventDate}`)
     );
-    const merged = [...dbResults, ...extraLive].slice(0, 2000);
+    const merged = [...filteredLive, ...extraDb].slice(0, 2000);
 
-    console.log(`  📊 Merge: ${dbResults.length} DB + ${extraLive.length} extra live = ${merged.length} total results`);
+    console.log(`  📊 Merge: ${filteredLive.length} live + ${extraDb.length} extra DB = ${merged.length} total results`);
 
     const { savedSearchId, previousRunAt, limitReached } = await saveSearch(userId, searchParams, pKey, merged.length, userPlan);
     markNewEvents(merged, previousRunAt);

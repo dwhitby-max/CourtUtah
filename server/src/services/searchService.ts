@@ -121,15 +121,18 @@ export async function searchCourtEvents(params: SearchRequest): Promise<CourtEve
 
   const whereClause = conditions.join(" AND ");
   const sql = `
-    SELECT
-      id, court_type, court_name, court_room, event_date, event_time,
-      hearing_type, case_number, case_type, defendant_name, defendant_otn,
-      defendant_dob, citation_number, sheriff_number, lea_number,
-      prosecuting_attorney, defense_attorney, source_pdf_url,
-      source_page_number, content_hash, scraped_at,
-      judge_name, hearing_location, is_virtual, source_url, charges, created_at
-    FROM court_events
-    WHERE ${whereClause}
+    SELECT * FROM (
+      SELECT DISTINCT ON (case_number, event_date)
+        id, court_type, court_name, court_room, event_date, event_time,
+        hearing_type, case_number, case_type, defendant_name, defendant_otn,
+        defendant_dob, citation_number, sheriff_number, lea_number,
+        prosecuting_attorney, defense_attorney, source_pdf_url,
+        source_page_number, content_hash, scraped_at,
+        judge_name, hearing_location, is_virtual, source_url, charges, created_at
+      FROM court_events
+      WHERE ${whereClause}
+      ORDER BY case_number, event_date, scraped_at DESC
+    ) deduped
     ORDER BY event_date DESC, event_time ASC
     LIMIT 2000
   `;

@@ -90,17 +90,19 @@ export function exportCourtEventsCsv(results: Array<{
   caseType: string | null;
   hearingType: string | null;
   defendantName: string | null;
+  defenseAttorney: string | null;
+  prosecutingAttorney: string | null;
 }>): void {
   if (results.length === 0) return;
   const headers = [
     "Date", "Time", "Court", "Court Room", "Location", "Judge",
     "Case Number", "Case Type", "Hearing Type",
-    "Defendant", "Defendant Last Name",
+    "Defendant", "Defendant Last Name", "Prosecuting Attorney", "Defense Attorney",
   ];
   const rows = results.map((e) => [
-    e.eventDate, e.eventTime, e.courtName, e.courtRoom, e.hearingLocation, e.judgeName,
+    e.eventDate, e.eventTime, e.courtName, e.courtRoom, e.hearingLocation, extractLastName(e.judgeName),
     e.caseNumber, e.caseType, e.hearingType,
-    e.defendantName, extractLastName(e.defendantName),
+    e.defendantName, extractLastName(e.defendantName), extractLastName(e.prosecutingAttorney), extractLastName(e.defenseAttorney),
   ].map(csvCell).join(","));
   const csv = [headers.join(","), ...rows].join("\n");
   const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
