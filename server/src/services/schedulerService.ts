@@ -653,9 +653,9 @@ async function upsertCourtEvent(event: ParsedCourtEvent): Promise<boolean> {
     // same case at different times on the same day (e.g. 9:00 AM vs 10:30 AM)
     const existing = await client.query(
       `SELECT * FROM court_events
-       WHERE case_number = $1 AND event_date = $2
+       WHERE case_number = $1 AND event_date = $2 AND COALESCE(event_time, '') = COALESCE($3, '')
        LIMIT 1`,
-      [event.caseNumber, event.eventDate]
+      [event.caseNumber, event.eventDate, event.eventTime]
     );
 
     if (existing.rows.length > 0) {

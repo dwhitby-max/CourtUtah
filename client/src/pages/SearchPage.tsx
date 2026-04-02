@@ -6,7 +6,7 @@ import { apiFetch } from "@/api/client";
 import EventDetailRow from "@/components/EventDetailRow";
 import NewEntriesSection from "@/components/NewEntriesSection";
 import Pagination from "@/components/Pagination";
-import { exportCourtEventsCsv, ExportTemplate } from "@/utils/formatters";
+import { exportCourtEventsCsv, extractLastName, ExportTemplate } from "@/utils/formatters";
 import ExportTemplateModal from "@/components/ExportTemplateModal";
 import { useCalendarActions } from "@/hooks/useCalendarActions";
 import { formatDate, hasDetails, timeAgo } from "@/utils/courtEventUtils";
@@ -85,6 +85,7 @@ export default function SearchPage() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [showExportModal, setShowExportModal] = useState(false);
+  const [cachedToday, setCachedToday] = useState(false);
   const [savedSearches, setSavedSearches] = useState<SavedSearchRow[]>([]);
   const [loadingSaved, setLoadingSaved] = useState(false);
   const [lastSearchParams, setLastSearchParams] = useState<Record<string, string> | null>(null);
@@ -169,6 +170,7 @@ export default function SearchPage() {
       setLastSearchSavedId(data.savedSearchId ?? null);
       setPreviousRunAt(data.previousRunAt ?? null);
       setDetectedChanges(data.detectedChanges ?? []);
+      setCachedToday(data.cachedToday ?? false);
       setAddedAll(false);
       fetchSavedSearches();
 
@@ -752,6 +754,11 @@ export default function SearchPage() {
               <h2 className="text-lg font-semibold text-gray-900">
                 {results.length} Result{results.length !== 1 ? "s" : ""} Found
               </h2>
+              {cachedToday && (
+                <span className="text-sm text-amber-600 bg-amber-50 px-3 py-1 rounded-full">
+                  Search already run today. New results will post tomorrow.
+                </span>
+              )}
               <div className="flex items-center gap-2">
                 {results.length > 0 && (
                   <button
@@ -832,6 +839,7 @@ export default function SearchPage() {
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Defendant</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Court</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Hearing</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Attorneys</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
                   </tr>
                 </thead>
@@ -880,6 +888,16 @@ export default function SearchPage() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-sm">{event.hearingType || "N/A"}</td>
+                        <td className="px-4 py-3 text-sm">
+                          {extractLastName(event.prosecutingAttorney) || extractLastName(event.defenseAttorney) ? (
+                            <>
+                              <div><span className="text-gray-500 text-xs">P:</span> {extractLastName(event.prosecutingAttorney) || "-"}</div>
+                              <div><span className="text-gray-500 text-xs">D:</span> {extractLastName(event.defenseAttorney) || "-"}</div>
+                            </>
+                          ) : (
+                            <span className="text-gray-400">-</span>
+                          )}
+                        </td>
                         <td className="px-4 py-3 text-sm space-y-1">
                           {cal.hasCalendarConnection ? (
                             cal.calSyncedIds.has(event.id) ? (

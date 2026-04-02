@@ -218,8 +218,8 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
   const client = await pool.connect();
   try {
     for (const event of parsed) {
-      // Upsert by case_number + event_date (time excluded — search.php and
-      // reports.php can disagree on time for the same hearing)
+      // Upsert by case_number + event_date + event_time — a case can have
+      // multiple hearings on the same day at different times
       if (!event.caseNumber || !event.eventDate) continue;
       try {
         const existing = await client.query(
@@ -228,8 +228,8 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
                   prosecuting_attorney, defense_attorney,
                   judge_name, hearing_location, content_hash
            FROM court_events
-           WHERE case_number = $1 AND event_date = $2 LIMIT 1`,
-          [event.caseNumber, event.eventDate]
+           WHERE case_number = $1 AND event_date = $2 AND COALESCE(event_time, '') = COALESCE($3, '') LIMIT 1`,
+          [event.caseNumber, event.eventDate, event.eventTime]
         );
 
         if (existing.rows.length > 0) {

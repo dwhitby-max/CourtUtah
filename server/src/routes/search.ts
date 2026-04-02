@@ -12,6 +12,7 @@ import {
   resolveCourtCodes,
   searchParamsKey,
   saveSearch,
+  findExistingAutoSearch,
   persistLiveResults,
   markNewEvents,
   toCourtEvent,
@@ -152,6 +153,37 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
   } catch { /* default to free */ }
   const isPro = userPlan === "pro";
 
+  // If this exact search was already run today, return cached DB results.
+  // Utah courts only update once daily, so re-scraping is unnecessary.
+  const existing = await findExistingAutoSearch(userId, pKey);
+  if (existing?.last_refreshed_at) {
+    const lastRun = new Date(existing.last_refreshed_at);
+    const now = new Date();
+    const sameDay =
+      lastRun.getUTCFullYear() === now.getUTCFullYear() &&
+      lastRun.getUTCMonth() === now.getUTCMonth() &&
+      lastRun.getUTCDate() === now.getUTCDate();
+
+    if (sameDay) {
+      console.log(`📋 Search already run today (${lastRun.toISOString()}) — returning cached results`);
+      const dbResults = await searchCourtEvents(searchParams);
+      const filtered = applyAllFilters(dbResults, searchParams);
+      markNewEvents(filtered, existing.last_refreshed_at);
+      res.json({
+        results: filtered,
+        resultsCount: filtered.length,
+        searchParams,
+        source: "cached",
+        savedSearchId: existing.id,
+        previousRunAt: lastRun.toISOString(),
+        cachedToday: true,
+        userPlan,
+        processedAt: new Date().toISOString(),
+      });
+      return;
+    }
+  }
+
   // Free plan: enforce 1-week max date range
   if (!isPro && searchParams.dateFrom && searchParams.dateTo) {
     const from = new Date(searchParams.dateFrom);
@@ -262,33 +294,41 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       console.warn("⚠️ Failed to persist live results:", err instanceof Error ? err.message : err);
     }
 
-    // Convert live-parsed results to CourtEvent format and apply filters
+    // Convert live-parsed results to CourtEvent format
     const liveEvents = allParsed.map((event) => toCourtEvent(event));
-    const filteredLive = applyAllFilters(liveEvents, searchParams);
 
-    // Merge: live results are authoritative for scheduling fields (time, date,
-    // courtroom, judge), but DB records may have richer enrichment data
-    // (attorneys, OTN, DOB, charges) from reports.php. Backfill those fields
-    // from DB into live results when live data is missing them.
-    const dbByKey = new Map(
-      dbResults.map((r) => [`${r.caseNumber}|${r.eventDate}`, r])
-    );
+    // Enrich live results with DB data (attorneys, OTN, DOB, charges) BEFORE
+    // filtering, so attorney-based searches don't drop results that only have
+    // attorney data in the DB from prior reports.php enrichment.
+    const dbByCase = new Map<string, typeof dbResults>();
+    for (const r of dbResults) {
+      const key = `${r.caseNumber}|${r.eventDate}`;
+      const arr = dbByCase.get(key) || [];
+      arr.push(r);
+      dbByCase.set(key, arr);
+    }
     const liveKeys = new Set<string>();
-    for (const event of filteredLive) {
-      const key = `${event.caseNumber}|${event.eventDate}`;
-      liveKeys.add(key);
-      const dbMatch = dbByKey.get(key);
-      if (dbMatch) {
-        if (!event.prosecutingAttorney && dbMatch.prosecutingAttorney) event.prosecutingAttorney = dbMatch.prosecutingAttorney;
-        if (!event.defenseAttorney && dbMatch.defenseAttorney) event.defenseAttorney = dbMatch.defenseAttorney;
-        if (!event.defendantOtn && dbMatch.defendantOtn) event.defendantOtn = dbMatch.defendantOtn;
-        if (!event.defendantDob && dbMatch.defendantDob) event.defendantDob = dbMatch.defendantDob;
-        if (!event.citationNumber && dbMatch.citationNumber) event.citationNumber = dbMatch.citationNumber;
-        if ((!event.charges || event.charges.length === 0) && dbMatch.charges && dbMatch.charges.length > 0) event.charges = dbMatch.charges;
+    for (const event of liveEvents) {
+      liveKeys.add(`${event.caseNumber}|${event.eventDate}|${event.eventTime || ""}`);
+      const dbMatches = dbByCase.get(`${event.caseNumber}|${event.eventDate}`);
+      if (dbMatches) {
+        for (const dbMatch of dbMatches) {
+          if (!event.prosecutingAttorney && dbMatch.prosecutingAttorney) event.prosecutingAttorney = dbMatch.prosecutingAttorney;
+          if (!event.defenseAttorney && dbMatch.defenseAttorney) event.defenseAttorney = dbMatch.defenseAttorney;
+          if (!event.defendantOtn && dbMatch.defendantOtn) event.defendantOtn = dbMatch.defendantOtn;
+          if (!event.defendantDob && dbMatch.defendantDob) event.defendantDob = dbMatch.defendantDob;
+          if (!event.citationNumber && dbMatch.citationNumber) event.citationNumber = dbMatch.citationNumber;
+          if ((!event.charges || event.charges.length === 0) && dbMatch.charges && dbMatch.charges.length > 0) event.charges = dbMatch.charges;
+        }
       }
     }
+
+    // Now apply filters (attorney filter works because enrichment already ran)
+    const filteredLive = applyAllFilters(liveEvents, searchParams);
+
+    // Add DB-only results (not in live) and merge
     const extraDb = dbResults.filter(
-      (r) => !liveKeys.has(`${r.caseNumber}|${r.eventDate}`)
+      (r) => !liveKeys.has(`${r.caseNumber}|${r.eventDate}|${r.eventTime || ""}`)
     );
     const merged = [...filteredLive, ...extraDb].slice(0, 2000);
 

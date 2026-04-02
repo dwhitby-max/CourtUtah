@@ -24,7 +24,7 @@ export default function SearchResultsPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { results, searched, loading, error, previousRunAt, search } = useSearch();
+  const { results, searched, loading, error, previousRunAt, cachedToday, search } = useSearch();
   const isPro = user?.subscriptionPlan === "pro" && (user?.subscriptionStatus === "active" || user?.subscriptionStatus === "grandfathered");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -397,6 +397,11 @@ export default function SearchResultsPage() {
                   <span className="ml-2 text-sm font-normal text-blue-600">({newResults.length} new)</span>
                 )}
               </h2>
+              {cachedToday && (
+                <span className="text-sm text-amber-600 bg-amber-50 px-3 py-1 rounded-full">
+                  Search already run today. New results will post tomorrow.
+                </span>
+              )}
               {results.length > 0 && (
                 <button
                   onClick={() => setShowExportModal(true)}
@@ -528,11 +533,13 @@ export default function SearchResultsPage() {
                         </td>
                         <td className="px-4 py-3 text-sm">{event.hearingType || "N/A"}</td>
                         <td className={`px-4 py-3 text-sm ${isLocked ? "blur-sm select-none" : ""}`}>
-                          {extractLastName(event.prosecutingAttorney) && (
-                            <div><span className="text-gray-500 text-xs">P:</span> {extractLastName(event.prosecutingAttorney)}</div>
-                          )}
-                          {extractLastName(event.defenseAttorney) && (
-                            <div><span className="text-gray-500 text-xs">D:</span> {extractLastName(event.defenseAttorney)}</div>
+                          {extractLastName(event.prosecutingAttorney) || extractLastName(event.defenseAttorney) ? (
+                            <>
+                              <div><span className="text-gray-500 text-xs">P:</span> {extractLastName(event.prosecutingAttorney) || "-"}</div>
+                              <div><span className="text-gray-500 text-xs">D:</span> {extractLastName(event.defenseAttorney) || "-"}</div>
+                            </>
+                          ) : (
+                            <span className="text-gray-400">-</span>
                           )}
                         </td>
                         <td className="px-4 py-3 text-sm">

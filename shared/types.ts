@@ -133,7 +133,7 @@ export interface SearchResponse {
   results: CourtEvent[];
   resultsCount: number;
   searchParams: SearchRequest;
-  source?: "live" | "database";
+  source?: "live" | "database" | "cached";
   /** ID of the auto-saved watched case for this search */
   savedSearchId?: number | null;
   previousRunAt?: string | null;
@@ -144,6 +144,8 @@ export interface SearchResponse {
   savedSearchLimitReached?: boolean;
   /** User's subscription plan */
   userPlan?: string;
+  /** True if results were served from today's cache (no live scrape) */
+  cachedToday?: boolean;
 }
 
 // --- Watched Cases ---
