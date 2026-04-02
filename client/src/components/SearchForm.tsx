@@ -255,7 +255,7 @@ export default function SearchForm({ onSearch, loading, hasCalendarConnection, i
               <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 px-3 py-2 text-xs text-white bg-gray-800 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
-              Continuously monitors this search daily for up to 4 weeks out. You'll be notified by email of new hearings, schedule changes, and cancellations.
+              Continuously monitors this search daily for up to 4 weeks out. You'll be notified by email of new hearings, schedule changes, and cancellations. Pro plan allows up to 5 watched cases.
               {!isPro && <span className="block mt-1 text-amber-300 font-medium">Pro plan only</span>}
             </span>
           </span>
