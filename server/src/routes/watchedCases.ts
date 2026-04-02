@@ -450,10 +450,21 @@ router.delete("/:id/calendar-entries", async (req: Request, res: Response) => {
       return;
     }
 
-    // Find all calendar entries for this watched case
+    // Find ALL calendar entries for this watched case — both those linked by
+    // watched_case_id AND those manually added for the same court events.
+    // This ensures past and future events are all removed from the calendar.
     const entries = await client.query(
-      `SELECT id FROM calendar_entries WHERE watched_case_id = $1 AND user_id = $2`,
-      [watchedCaseId, currentUser.userId]
+      `SELECT DISTINCT ce.id FROM calendar_entries ce
+       WHERE ce.user_id = $1
+         AND ce.sync_status != 'removed'
+         AND (
+           ce.watched_case_id = $2
+           OR ce.court_event_id IN (
+             SELECT ce2.court_event_id FROM calendar_entries ce2
+             WHERE ce2.watched_case_id = $2 AND ce2.user_id = $1
+           )
+         )`,
+      [currentUser.userId, watchedCaseId]
     );
 
     let removed = 0;

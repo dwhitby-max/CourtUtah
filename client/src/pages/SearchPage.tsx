@@ -354,6 +354,17 @@ export default function SearchPage() {
       const res = await apiFetch(`/watched-cases/${id}`, { method: "DELETE" });
       if (res.ok) {
         setSavedSearches(prev => prev.filter(s => s.id !== id));
+        // If this was the currently displayed search, clear results from UI
+        if (lastSearchSavedId === id) {
+          setResults([]);
+          setSearched(false);
+          setLastSearchParams(null);
+          setLastSearchSavedId(null);
+          setDetectedChanges([]);
+          setWatchSuccess("");
+        }
+        // Refresh synced event state so calendar icons update
+        cal.refreshSyncedEvents();
       }
     } catch {
       // non-fatal
