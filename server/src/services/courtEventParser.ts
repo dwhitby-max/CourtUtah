@@ -192,12 +192,30 @@ function parseEventBlock(
       .trim();
   }
 
-  // 5. Extract attorney name if present (shown in attorney-type searches)
-  let attorney: string | null = null;
-  const attorneyMatch = boxHtml.match(/Attorney:\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i);
-  if (attorneyMatch) {
-    attorney = cleanName(stripTags(attorneyMatch[1]));
-    if (attorney.length < 2) attorney = null;
+  // 5. Extract attorney name and role if present (shown in attorney-type searches)
+  //    search.php labels the attorney role, e.g. "Prosecuting Attorney:" or "Defense Attorney:"
+  let prosecutingAttorney: string | null = null;
+  let defenseAttorney: string | null = null;
+
+  const prosAttyMatch = boxHtml.match(/Prosecut(?:ing|or)\s+Attorney:\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i);
+  if (prosAttyMatch) {
+    const name = cleanName(stripTags(prosAttyMatch[1]));
+    if (name.length >= 2) prosecutingAttorney = name;
+  }
+
+  const defAttyMatch = boxHtml.match(/Defen(?:se|dant)\s+Attorney:\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i);
+  if (defAttyMatch) {
+    const name = cleanName(stripTags(defAttyMatch[1]));
+    if (name.length >= 2) defenseAttorney = name;
+  }
+
+  // Fallback: generic "Attorney:" without role qualifier — can't determine side,
+  // so leave both null and let DB enrichment (reports.php) fill them in later.
+  if (!prosecutingAttorney && !defenseAttorney) {
+    const genericMatch = boxHtml.match(/(?<!\w\s)Attorney:\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i);
+    if (genericMatch) {
+      // Only use if we can't determine the role — store nothing, rely on enrichment
+    }
   }
 
   // 6. Extract defendant name from the col-sm-4 div (parties section)
@@ -336,8 +354,8 @@ function parseEventBlock(
     defendantName,
     defendantOtn: null,
     defendantDob: null,
-    prosecutingAttorney: null,
-    defenseAttorney: attorney,
+    prosecutingAttorney,
+    defenseAttorney,
     citationNumber: null,
     sheriffNumber: null,
     leaNumber: null,

@@ -266,12 +266,27 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     const liveEvents = allParsed.map((event) => toCourtEvent(event));
     const filteredLive = applyAllFilters(liveEvents, searchParams);
 
-    // Merge: live results are authoritative (most current from search.php),
-    // then backfill with any DB results not already covered by live data.
-    // Live results reflect the latest court schedule; DB may be stale.
-    const liveKeys = new Set(
-      filteredLive.map((e) => `${e.caseNumber}|${e.eventDate}`)
+    // Merge: live results are authoritative for scheduling fields (time, date,
+    // courtroom, judge), but DB records may have richer enrichment data
+    // (attorneys, OTN, DOB, charges) from reports.php. Backfill those fields
+    // from DB into live results when live data is missing them.
+    const dbByKey = new Map(
+      dbResults.map((r) => [`${r.caseNumber}|${r.eventDate}`, r])
     );
+    const liveKeys = new Set<string>();
+    for (const event of filteredLive) {
+      const key = `${event.caseNumber}|${event.eventDate}`;
+      liveKeys.add(key);
+      const dbMatch = dbByKey.get(key);
+      if (dbMatch) {
+        if (!event.prosecutingAttorney && dbMatch.prosecutingAttorney) event.prosecutingAttorney = dbMatch.prosecutingAttorney;
+        if (!event.defenseAttorney && dbMatch.defenseAttorney) event.defenseAttorney = dbMatch.defenseAttorney;
+        if (!event.defendantOtn && dbMatch.defendantOtn) event.defendantOtn = dbMatch.defendantOtn;
+        if (!event.defendantDob && dbMatch.defendantDob) event.defendantDob = dbMatch.defendantDob;
+        if (!event.citationNumber && dbMatch.citationNumber) event.citationNumber = dbMatch.citationNumber;
+        if ((!event.charges || event.charges.length === 0) && dbMatch.charges && dbMatch.charges.length > 0) event.charges = dbMatch.charges;
+      }
+    }
     const extraDb = dbResults.filter(
       (r) => !liveKeys.has(`${r.caseNumber}|${r.eventDate}`)
     );

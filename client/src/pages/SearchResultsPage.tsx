@@ -11,7 +11,8 @@ import ChangesFeedSection from "@/components/ChangesFeedSection";
 import MonitorModal from "@/components/MonitorModal";
 import UpgradeBanner from "@/components/UpgradeBanner";
 import Pagination from "@/components/Pagination";
-import { exportCourtEventsCsv, extractLastName } from "@/utils/formatters";
+import { exportCourtEventsCsv, extractLastName, ExportTemplate } from "@/utils/formatters";
+import ExportTemplateModal from "@/components/ExportTemplateModal";
 import { formatDate, hasDetails, providerLabels } from "@/utils/courtEventUtils";
 import { CourtEvent } from "@shared/types";
 import { ChangeRecord } from "@/components/UpdatesSection";
@@ -36,6 +37,9 @@ export default function SearchResultsPage() {
   const [batchAdding, setBatchAdding] = useState(false);
   const [batchProgress, setBatchProgress] = useState("");
   const [batchRemoving, setBatchRemoving] = useState(false);
+
+  // Export template modal state
+  const [showExportModal, setShowExportModal] = useState(false);
 
   // Monitor modal state
   const [showMonitorModal, setShowMonitorModal] = useState(false);
@@ -88,8 +92,9 @@ export default function SearchResultsPage() {
     }
   }, [searched, loading, results, fetchUpdates]);
 
-  function exportResultsCsv() {
-    exportCourtEventsCsv(results);
+  function handleExportWithTemplate(template: ExportTemplate) {
+    exportCourtEventsCsv(results, template);
+    setShowExportModal(false);
   }
 
   async function handleAddToCalendar(event: CourtEvent) {
@@ -394,9 +399,9 @@ export default function SearchResultsPage() {
               </h2>
               {results.length > 0 && (
                 <button
-                  onClick={exportResultsCsv}
+                  onClick={() => setShowExportModal(true)}
                   className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md bg-gray-600 text-white hover:bg-gray-700 transition-colors"
-                  title="Export all results to CSV"
+                  title="Export results to CSV"
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -644,6 +649,13 @@ export default function SearchResultsPage() {
           monitoringInProgress={monitoringInProgress}
           onConfirm={handleMonitorConfirm}
           onCancel={() => setShowMonitorModal(false)}
+        />
+      )}
+
+      {showExportModal && (
+        <ExportTemplateModal
+          onExport={handleExportWithTemplate}
+          onClose={() => setShowExportModal(false)}
         />
       )}
     </div>

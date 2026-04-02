@@ -6,7 +6,8 @@ import { apiFetch } from "@/api/client";
 import EventDetailRow from "@/components/EventDetailRow";
 import NewEntriesSection from "@/components/NewEntriesSection";
 import Pagination from "@/components/Pagination";
-import { exportCourtEventsCsv } from "@/utils/formatters";
+import { exportCourtEventsCsv, ExportTemplate } from "@/utils/formatters";
+import ExportTemplateModal from "@/components/ExportTemplateModal";
 import { useCalendarActions } from "@/hooks/useCalendarActions";
 import { formatDate, hasDetails, timeAgo } from "@/utils/courtEventUtils";
 import { CourtEvent, DetectedChange } from "@shared/types";
@@ -83,6 +84,7 @@ export default function SearchPage() {
   const [watchSuccess, setWatchSuccess] = useState("");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [showExportModal, setShowExportModal] = useState(false);
   const [savedSearches, setSavedSearches] = useState<SavedSearchRow[]>([]);
   const [loadingSaved, setLoadingSaved] = useState(false);
   const [lastSearchParams, setLastSearchParams] = useState<Record<string, string> | null>(null);
@@ -576,8 +578,9 @@ export default function SearchPage() {
     setExpandedId(expandedId === id ? null : id);
   }
 
-  function exportResultsCsv() {
-    exportCourtEventsCsv(results);
+  function handleExportWithTemplate(template: ExportTemplate) {
+    exportCourtEventsCsv(results, template);
+    setShowExportModal(false);
   }
 
   const anySynced = results.some(e => cal.calSyncedIds.has(e.id));
@@ -752,9 +755,9 @@ export default function SearchPage() {
               <div className="flex items-center gap-2">
                 {results.length > 0 && (
                   <button
-                    onClick={exportResultsCsv}
+                    onClick={() => setShowExportModal(true)}
                     className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md bg-gray-600 text-white hover:bg-gray-700 transition-colors"
-                    title="Export all results to CSV"
+                    title="Export results to CSV"
                   >
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -951,6 +954,12 @@ export default function SearchPage() {
             </div>
           )}
         </div>
+      )}
+      {showExportModal && (
+        <ExportTemplateModal
+          onExport={handleExportWithTemplate}
+          onClose={() => setShowExportModal(false)}
+        />
       )}
     </div>
   );
