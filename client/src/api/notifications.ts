@@ -23,3 +23,30 @@ export async function markAllAsRead(): Promise<void> {
     throw new Error(data.error || "Failed to mark all notifications");
   }
 }
+
+export interface ChangeFeedItem {
+  id: number;
+  type: "schedule_change" | "new_match" | "event_cancelled";
+  title: string;
+  message: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export async function getChangesFeed(): Promise<ChangeFeedItem[]> {
+  const res = await apiFetch("/notifications/changes-feed");
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Failed to fetch changes");
+  return data.changes;
+}
+
+export async function markChangesSeen(ids: number[]): Promise<void> {
+  const res = await apiFetch("/notifications/mark-seen", {
+    method: "PATCH",
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) {
+    const data = await res.json();
+    throw new Error(data.error || "Failed to mark changes as seen");
+  }
+}

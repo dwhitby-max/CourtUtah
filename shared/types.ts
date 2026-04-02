@@ -140,6 +140,10 @@ export interface SearchResponse {
   processedAt: string;
   /** Changes detected when comparing live results against DB (re-run only) */
   detectedChanges?: DetectedChange[];
+  /** True if free plan saved search limit (3) was reached — search not saved */
+  savedSearchLimitReached?: boolean;
+  /** User's subscription plan */
+  userPlan?: string;
 }
 
 // --- Watched Cases ---
@@ -189,7 +193,7 @@ export interface CalendarEntry {
 
 // --- Notifications ---
 
-export type NotificationType = "schedule_change" | "new_event" | "new_match" | "sync_error" | "calendar_disconnected" | "system";
+export type NotificationType = "schedule_change" | "new_event" | "new_match" | "event_cancelled" | "sync_error" | "calendar_disconnected" | "system";
 
 export interface Notification {
   id: number;

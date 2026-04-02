@@ -120,3 +120,45 @@ export async function sendScheduleChangeEmail(
   `;
   return sendEmail(to, `Schedule Change: ${caseName}`, html);
 }
+
+export async function sendNewMatchEmail(
+  to: string,
+  caseName: string,
+  events: Array<{ date: string; time: string; court: string; hearingType: string }>
+): Promise<boolean> {
+  const eventRows = events
+    .map((e) => `<tr><td>${e.date}</td><td>${e.time || "TBD"}</td><td>${e.court}</td><td>${e.hearingType || "N/A"}</td></tr>`)
+    .join("");
+
+  const html = `
+    <h2>New Court Hearing${events.length > 1 ? "s" : ""} Found</h2>
+    <p>New hearing${events.length > 1 ? "s" : ""} matching your search <strong>"${caseName}"</strong> ${events.length > 1 ? "have" : "has"} been found and added to your calendar:</p>
+    <table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse;">
+      <tr><th>Date</th><th>Time</th><th>Court</th><th>Hearing</th></tr>
+      ${eventRows}
+    </table>
+    <p>These events have been automatically added to your calendar.</p>
+  `;
+  return sendEmail(to, `New Hearing Found: ${caseName}`, html);
+}
+
+export async function sendCancellationEmail(
+  to: string,
+  caseName: string,
+  details: { date: string; time: string; court: string; defendant: string }
+): Promise<boolean> {
+  const html = `
+    <h2>Hearing May Be Cancelled</h2>
+    <p>A hearing that was on your calendar no longer appears on the Utah court calendar:</p>
+    <table border="0" cellpadding="8" cellspacing="0" style="border-collapse:collapse;">
+      <tr><td><strong>Case:</strong></td><td>${caseName}</td></tr>
+      <tr><td><strong>Defendant:</strong></td><td>${details.defendant}</td></tr>
+      <tr><td><strong>Date:</strong></td><td>${details.date}</td></tr>
+      <tr><td><strong>Time:</strong></td><td>${details.time || "TBD"}</td></tr>
+      <tr><td><strong>Court:</strong></td><td>${details.court}</td></tr>
+    </table>
+    <p style="color:#b91c1c;"><strong>This hearing may have been cancelled or rescheduled.</strong> Please verify with the court directly.</p>
+    <p>Your calendar event has been updated to reflect this change.</p>
+  `;
+  return sendEmail(to, `Hearing May Be Cancelled: ${caseName}`, html);
+}

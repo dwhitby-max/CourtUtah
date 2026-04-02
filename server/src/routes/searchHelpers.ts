@@ -144,8 +144,9 @@ export async function saveSearch(
   userId: number,
   params: Record<string, string | undefined>,
   paramsKey: string,
-  resultsCount: number
-): Promise<{ savedSearchId: number; previousRunAt: string | null }> {
+  resultsCount: number,
+  userPlan?: string
+): Promise<{ savedSearchId: number; previousRunAt: string | null; limitReached?: boolean }> {
   const pool = getPool();
   if (!pool) return { savedSearchId: -1, previousRunAt: null };
   const client = await pool.connect();
@@ -176,6 +177,20 @@ export async function saveSearch(
         [resultsCount, existing.id]
       );
       return { savedSearchId: existing.id, previousRunAt };
+    }
+
+    // Free plan: max 3 saved searches
+    const plan = userPlan || "free";
+    if (plan === "free") {
+      const countResult = await client.query<{ cnt: string }>(
+        `SELECT COUNT(*) as cnt FROM watched_cases
+         WHERE user_id = $1 AND source = 'auto_search' AND is_active = true`,
+        [userId]
+      );
+      if (parseInt(countResult.rows[0].cnt, 10) >= 3) {
+        // Don't save — return flag so the caller can still return results
+        return { savedSearchId: -1, previousRunAt: null, limitReached: true };
+      }
     }
 
     const result = await client.query(

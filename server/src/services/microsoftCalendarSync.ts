@@ -5,7 +5,7 @@ import {
 } from "@shared/types";
 import { getPool } from "../db/pool";
 import { config } from "../config/env";
-import { parseTimeTo24h } from "./calendarSync";
+import { markConnectionInactive, parseTimeTo24h } from "./calendarSync";
 
 export const MICROSOFT_GRAPH_API = "https://graph.microsoft.com/v1.0";
 const MICROSOFT_TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
@@ -35,7 +35,11 @@ async function refreshMicrosoftToken(
   const tokens: MicrosoftTokenResponse = await response.json();
 
   if (tokens.error) {
-    throw new Error(`Microsoft token refresh failed: ${tokens.error_description || tokens.error}`);
+    const errorDesc = tokens.error_description || tokens.error;
+    if (tokens.error === "invalid_grant") {
+      await markConnectionInactive(connectionId, "microsoft", `Token revoked: ${errorDesc}`);
+    }
+    throw new Error(`Microsoft token refresh failed: ${errorDesc}`);
   }
 
   const pool = getPool();
@@ -76,6 +80,15 @@ export async function getMicrosoftAccessToken(connection: CalendarSyncRow): Prom
     return refreshMicrosoftToken(connection.calendar_connection_id, connection.refresh_token_encrypted);
   }
 
+  if (tokenExpired && !connection.refresh_token_encrypted) {
+    await markConnectionInactive(
+      connection.calendar_connection_id,
+      "microsoft",
+      "Token expired and no refresh token available"
+    );
+    throw new Error("Microsoft token expired and no refresh token available — connection marked inactive");
+  }
+
   return decrypt(connection.access_token_encrypted);
 }
 
@@ -105,11 +118,15 @@ export function buildMicrosoftEventBody(eventData: CalendarEventData): Record<st
   }
 
   const dateStr = eventData.startDate.split("T")[0];
+  // Microsoft Graph requires all-day events to use "date" (YYYY-MM-DD), not "dateTime"
+  const nextDay = new Date(dateStr + "T00:00:00");
+  nextDay.setDate(nextDay.getDate() + 1);
+  const endDateStr = nextDay.toISOString().split("T")[0];
   return {
     subject: eventData.title,
     body: { contentType: "text", content: eventData.description },
-    start: { dateTime: `${dateStr}T00:00:00`, timeZone: "America/Denver" },
-    end: { dateTime: `${dateStr}T23:59:59`, timeZone: "America/Denver" },
+    start: { dateTime: dateStr, timeZone: "America/Denver" },
+    end: { dateTime: endDateStr, timeZone: "America/Denver" },
     location: { displayName: eventData.location },
     isAllDay: true,
   };
@@ -144,6 +161,9 @@ export async function syncMicrosoftCalendarEvent(
 
     if (!response.ok) {
       const errBody = await response.text();
+      if (response.status === 401) {
+        await markConnectionInactive(connection.calendar_connection_id, "microsoft", "API returned 401 Unauthorized");
+      }
       throw new Error(`Microsoft Graph PATCH failed (${response.status}): ${errBody}`);
     }
 
@@ -165,6 +185,9 @@ export async function syncMicrosoftCalendarEvent(
 
   if (!response.ok) {
     const errBody = await response.text();
+    if (response.status === 401) {
+      await markConnectionInactive(connection.calendar_connection_id, "microsoft", "API returned 401 Unauthorized");
+    }
     throw new Error(`Microsoft Graph POST failed (${response.status}): ${errBody}`);
   }
 

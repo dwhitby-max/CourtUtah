@@ -12,6 +12,7 @@ interface SearchFormProps {
 
 export default function SearchForm({ onSearch, loading, hasCalendarConnection, initialAutoAdd }: SearchFormProps) {
   const { user } = useAuth();
+  const isPro = user?.subscriptionPlan === "pro" && (user?.subscriptionStatus === "active" || user?.subscriptionStatus === "grandfathered");
   const [defendantName, setDefendantName] = useState("");
   const [caseNumber, setCaseNumber] = useState("");
   const [selectedCourts, setSelectedCourts] = useState<string[]>(
@@ -26,6 +27,7 @@ export default function SearchForm({ onSearch, loading, hasCalendarConnection, i
   const [judgeName, setJudgeName] = useState("");
   const [attorney, setAttorney] = useState("");
   const [autoAddToCalendar, setAutoAddToCalendar] = useState(initialAutoAdd ?? false);
+  const [watchedCase, setWatchedCase] = useState(false);
   const [validationError, setValidationError] = useState("");
   const [coverage, setCoverage] = useState<{
     totalEvents: number;
@@ -63,8 +65,11 @@ export default function SearchForm({ onSearch, loading, hasCalendarConnection, i
     } else if (selectedCourts.length > 0) {
       params.court_names = selectedCourts.join(",");
     }
-    if (dateFrom) params.date_from = dateFrom;
-    if (dateTo) params.date_to = dateTo;
+    // Watched case searches ignore dates — they search all available dates (up to 4 weeks)
+    if (!watchedCase) {
+      if (dateFrom) params.date_from = dateFrom;
+      if (dateTo) params.date_to = dateTo;
+    }
     if (defendantOtn) params.defendant_otn = defendantOtn;
     if (citationNumber) params.citation_number = citationNumber;
     if (charges) params.charges = charges;
@@ -72,6 +77,7 @@ export default function SearchForm({ onSearch, loading, hasCalendarConnection, i
     if (attorney) params.attorney = attorney;
 
     if (autoAddToCalendar) params._autoAddToCalendar = "true";
+    if (watchedCase) params._watchedCase = "true";
     onSearch(params);
   }
 
@@ -120,27 +126,46 @@ export default function SearchForm({ onSearch, loading, hasCalendarConnection, i
           />
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Date From</label>
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            max={dateTo || undefined}
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-amber-500 focus:border-amber-500"
-          />
-        </div>
+        {!watchedCase && (
+          <>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Date From</label>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => {
+                  setDateFrom(e.target.value);
+                  // Free plan: auto-cap dateTo to 7 days from dateFrom
+                  if (!isPro && e.target.value) {
+                    const maxDate = new Date(e.target.value);
+                    maxDate.setDate(maxDate.getDate() + 7);
+                    const maxStr = maxDate.toISOString().split("T")[0];
+                    if (dateTo && dateTo > maxStr) setDateTo(maxStr);
+                  }
+                }}
+                max={dateTo || undefined}
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-amber-500 focus:border-amber-500"
+              />
+            </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Date To</label>
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            min={dateFrom || undefined}
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-amber-500 focus:border-amber-500"
-          />
-        </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Date To
+                {!isPro && <span className="text-xs text-gray-400 ml-1">(max 1 week)</span>}
+              </label>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                min={dateFrom || undefined}
+                max={!isPro && dateFrom
+                  ? new Date(new Date(dateFrom).getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
+                  : undefined}
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-amber-500 focus:border-amber-500"
+              />
+            </div>
+          </>
+        )}
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Offender Tracking # (OTN)</label>
@@ -210,6 +235,34 @@ export default function SearchForm({ onSearch, loading, hasCalendarConnection, i
         >
           {loading ? "Searching..." : "Search"}
         </button>
+
+        <label className="flex items-center gap-2 cursor-pointer select-none group relative">
+          <input
+            type="checkbox"
+            checked={watchedCase}
+            onChange={(e) => {
+              if (!isPro && e.target.checked) {
+                setValidationError("Watched Case is a Pro feature. Upgrade to continuously monitor searches and get notified of new hearings.");
+                return;
+              }
+              setWatchedCase(e.target.checked);
+            }}
+            className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+          />
+          <span className="text-sm text-gray-700 font-medium">Watched Case</span>
+          <span className="relative">
+            <svg className="w-4 h-4 text-gray-400 hover:text-gray-600 cursor-help" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 px-3 py-2 text-xs text-white bg-gray-800 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+              Continuously monitors this search daily for up to 4 weeks out. You'll be notified by email of new hearings, schedule changes, and cancellations.
+              {!isPro && <span className="block mt-1 text-amber-300 font-medium">Pro plan only</span>}
+            </span>
+          </span>
+          {watchedCase && (
+            <span className="text-xs text-indigo-600">(searches all dates up to 4 weeks, refreshes daily)</span>
+          )}
+        </label>
 
         {hasCalendarConnection && (
           <label className="flex items-center gap-2 cursor-pointer select-none">

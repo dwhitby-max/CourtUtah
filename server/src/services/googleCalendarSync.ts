@@ -125,8 +125,12 @@ export function buildGoogleEventBody(eventData: CalendarEventData, colorId?: str
   }
 
   const dateStr = eventData.startDate.split("T")[0];
+  // Google Calendar end.date is exclusive — must be day after for a 1-day all-day event
+  const nextDay = new Date(dateStr + "T00:00:00");
+  nextDay.setDate(nextDay.getDate() + 1);
+  const endDateStr = nextDay.toISOString().split("T")[0];
   base.start = { date: dateStr };
-  base.end = { date: dateStr };
+  base.end = { date: endDateStr };
   return base;
 }
 

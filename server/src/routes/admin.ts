@@ -5,6 +5,7 @@ import { requireAdmin } from "../middleware/adminAuth";
 import { heavyLimiter } from "../middleware/rateLimiter";
 import { getPool, getPoolStats } from "../db/pool";
 import { refreshAllWatchedCases } from "../services/schedulerService";
+import { syncCalendarEntry } from "../services/calendarSync";
 import { sendAccountApprovedEmail } from "../services/emailService";
 import { config } from "../config/env";
 
@@ -293,6 +294,74 @@ router.put("/settings/:key", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("❌ Failed to update setting:", err);
     res.status(500).json({ error: "Failed to update setting" });
+  } finally {
+    client.release();
+  }
+});
+
+// ─── Calendar Re-sync ───
+
+// POST /api/admin/resync-calendar — deduplicate, then reset all Google entries to pending and re-sync
+router.post("/resync-calendar", heavyLimiter, async (_req: Request, res: Response) => {
+  const pool = getPool();
+  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
+
+  const client = await pool.connect();
+  try {
+    // Step 1: Clean up duplicate calendar entries (same user + court_event + connection).
+    // Keep the entry that is already synced (or most recently updated), delete the rest.
+    const dupeResult = await client.query(
+      `DELETE FROM calendar_entries
+       WHERE id NOT IN (
+         SELECT DISTINCT ON (user_id, court_event_id, calendar_connection_id) id
+         FROM calendar_entries
+         ORDER BY user_id, court_event_id, calendar_connection_id,
+                  CASE WHEN sync_status = 'synced' THEN 0 ELSE 1 END,
+                  updated_at DESC,
+                  id DESC
+       )
+       RETURNING id`
+    );
+    const dupesRemoved = dupeResult.rows.length;
+    if (dupesRemoved > 0) {
+      console.log(`🧹 Removed ${dupesRemoved} duplicate calendar entries`);
+    }
+
+    // Step 2: Mark all synced entries as pending so syncCalendarEntry will re-PATCH them
+    const resetResult = await client.query(
+      `UPDATE calendar_entries ce
+       SET last_synced_content_hash = NULL, sync_status = 'pending', updated_at = NOW()
+       FROM calendar_connections cc
+       WHERE ce.calendar_connection_id = cc.id
+         AND cc.provider = 'google'
+         AND ce.sync_status IN ('synced', 'error')
+       RETURNING ce.id`
+    );
+
+    const entryIds: number[] = resetResult.rows.map((r: { id: number }) => r.id);
+
+    if (entryIds.length === 0 && dupesRemoved === 0) {
+      res.json({ message: "No Google calendar entries to re-sync", total: 0, synced: 0, errors: 0, dupesRemoved: 0 });
+      return;
+    }
+
+    // Fire off re-sync in background so the response returns immediately
+    const total = entryIds.length;
+    res.json({ message: `Re-syncing ${total} Google calendar entries (removed ${dupesRemoved} duplicates)`, total, dupesRemoved, status: "running" });
+
+    let synced = 0;
+    let errors = 0;
+    for (const id of entryIds) {
+      const ok = await syncCalendarEntry(id);
+      if (ok) synced++;
+      else errors++;
+    }
+    console.log(`✅ Calendar re-sync complete: ${synced} synced, ${errors} errors out of ${total} (${dupesRemoved} dupes removed)`);
+  } catch (err) {
+    console.error("❌ Failed to trigger calendar re-sync:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Failed to trigger calendar re-sync" });
+    }
   } finally {
     client.release();
   }

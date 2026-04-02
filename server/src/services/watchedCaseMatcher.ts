@@ -151,42 +151,39 @@ async function matchSingleWatchedCase(
   // For each calendar connection × each matching event, create entry if not exists
   for (const calConn of calResult.rows) {
     for (const event of eventsResult.rows) {
-      // Check if entry already exists for this watched case (avoid duplicates)
-      const existing = await client.query<{ id: number }>(
-        `SELECT id FROM calendar_entries
-         WHERE watched_case_id = $1 AND court_event_id = $2 AND calendar_connection_id = $3`,
-        [wc.id, event.id, calConn.id]
-      );
-
-      if (existing.rows.length > 0) continue; // Already linked
-
-      // Check for orphaned entry (from a previously deleted watched case) —
-      // reconnect it instead of creating a duplicate calendar event
-      const orphaned = await client.query<{ id: number }>(
-        `SELECT id FROM calendar_entries
-         WHERE watched_case_id IS NULL AND court_event_id = $1 AND calendar_connection_id = $2 AND user_id = $3
+      // Check if ANY entry already exists for this user + event + connection
+      // (regardless of watched_case_id) to prevent duplicate Google Calendar events
+      // when the same event was already added manually or via another watched case.
+      // Also respects 'removed' status — user explicitly removed it, don't re-add.
+      const existing = await client.query<{ id: number; watched_case_id: number | null; sync_status: string }>(
+        `SELECT id, watched_case_id, sync_status FROM calendar_entries
+         WHERE user_id = $1 AND court_event_id = $2 AND calendar_connection_id = $3
          LIMIT 1`,
-        [event.id, calConn.id, wc.user_id]
+        [wc.user_id, event.id, calConn.id]
       );
 
-      let entryId: number;
-      if (orphaned.rows.length > 0) {
-        // Reconnect the orphaned entry to the new watched case
-        entryId = orphaned.rows[0].id;
-        await client.query(
-          `UPDATE calendar_entries SET watched_case_id = $1, updated_at = NOW() WHERE id = $2`,
-          [wc.id, entryId]
-        );
-      } else {
-        // Create a new calendar entry
-        const insertResult = await client.query<{ id: number }>(
-          `INSERT INTO calendar_entries (user_id, watched_case_id, court_event_id, calendar_connection_id)
-           VALUES ($1, $2, $3, $4)
-           RETURNING id`,
-          [wc.user_id, wc.id, event.id, calConn.id]
-        );
-        entryId = insertResult.rows[0].id;
+      if (existing.rows.length > 0) {
+        // If user explicitly removed this entry, don't re-add
+        if (existing.rows[0].sync_status === "removed") continue;
+        // Entry exists — if it's unlinked (manual add), attach the watched case
+        if (existing.rows[0].watched_case_id === null) {
+          await client.query(
+            `UPDATE calendar_entries SET watched_case_id = $1, updated_at = NOW() WHERE id = $2`,
+            [wc.id, existing.rows[0].id]
+          );
+        }
+        continue; // Already has a calendar event — skip
       }
+
+      // No entry exists — create a new one
+      let entryId: number;
+      const insertResult = await client.query<{ id: number }>(
+        `INSERT INTO calendar_entries (user_id, watched_case_id, court_event_id, calendar_connection_id)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id`,
+        [wc.user_id, wc.id, event.id, calConn.id]
+      );
+      entryId = insertResult.rows[0].id;
 
       result.newEntriesCreated++;
 

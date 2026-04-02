@@ -42,14 +42,14 @@ router.post("/", async (req: Request, res: Response) => {
   const pool = getPool();
   if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
 
-  const { searchType, searchValue, label, monitorChanges, autoAddNew } = req.body;
+  const { searchType, searchValue, label, monitorChanges, autoAddNew, searchParams } = req.body;
 
   if (!searchType || !searchValue || !label) {
     res.status(400).json({ error: "searchType, searchValue, and label are required" });
     return;
   }
 
-  const validTypes = ["defendant_name", "case_number", "court_name", "court_date", "defendant_otn", "citation_number", "judge_name", "attorney"];
+  const validTypes = ["defendant_name", "case_number", "court_name", "court_date", "defendant_otn", "citation_number", "judge_name", "attorney", "search_watch"];
   if (!validTypes.includes(searchType)) {
     res.status(400).json({ error: `searchType must be one of: ${validTypes.join(", ")}` });
     return;
@@ -58,11 +58,45 @@ router.post("/", async (req: Request, res: Response) => {
   const client = await pool.connect();
   let watchedCase: Record<string, unknown>;
   try {
+    // Enforce plan limits on search_watch entries
+    if (searchType === "search_watch") {
+      const userPlan = await client.query<{ subscription_plan: string }>(
+        "SELECT subscription_plan FROM users WHERE id = $1",
+        [currentUser.userId]
+      );
+      const plan = userPlan.rows[0]?.subscription_plan || "free";
+
+      // Free plan: no watched searches at all
+      if (plan === "free") {
+        res.status(403).json({
+          error: "Watched Cases is a Pro feature. Upgrade to Pro to continuously monitor searches and get notified of new hearings.",
+          upgradeRequired: true,
+        });
+        return;
+      }
+
+      // Pro plan: max 5
+      const watchCount = await client.query<{ cnt: string }>(
+        `SELECT COUNT(*) as cnt FROM watched_cases
+         WHERE user_id = $1 AND search_type = 'search_watch' AND is_active = true`,
+        [currentUser.userId]
+      );
+      if (parseInt(watchCount.rows[0].cnt, 10) >= 5) {
+        res.status(403).json({
+          error: "You can have up to 5 watched searches. Remove an existing one first.",
+        });
+        return;
+      }
+    }
+
+    // For search_watch type, store the full search params so the scheduler
+    // can re-run the exact same search (without date constraints, up to 4 weeks)
     const result = await client.query(
-      `INSERT INTO watched_cases (user_id, search_type, search_value, label, monitor_changes, auto_add_new)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO watched_cases (user_id, search_type, search_value, label, monitor_changes, auto_add_new, search_params)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [currentUser.userId, searchType, searchValue, label, !!monitorChanges, !!autoAddNew]
+      [currentUser.userId, searchType, searchValue, label, !!monitorChanges, !!autoAddNew,
+       searchParams ? JSON.stringify(searchParams) : null]
     );
     watchedCase = result.rows[0];
   } catch (err) {

@@ -7,6 +7,7 @@ import { useCalendarActions } from "@/hooks/useCalendarActions";
 import EventDetailRow from "@/components/EventDetailRow";
 import UpdatesSection from "@/components/UpdatesSection";
 import NewEntriesSection from "@/components/NewEntriesSection";
+import ChangesFeedSection from "@/components/ChangesFeedSection";
 import MonitorModal from "@/components/MonitorModal";
 import UpgradeBanner from "@/components/UpgradeBanner";
 import Pagination from "@/components/Pagination";
@@ -373,6 +374,8 @@ export default function SearchResultsPage() {
       {watchError && <div className="bg-red-50 text-red-700 p-4 rounded-md text-sm">{watchError}</div>}
 
       {loading && <div className="text-gray-500">Searching...</div>}
+
+      <ChangesFeedSection refreshKey={results.length} />
 
       <UpdatesSection
         updates={updates}

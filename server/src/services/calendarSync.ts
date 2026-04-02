@@ -290,8 +290,13 @@ export async function deleteCalendarEntry(
       }
     }
 
-    // Only remove the DB row after successful provider deletion (or if never synced)
-    await client.query("DELETE FROM calendar_entries WHERE id = $1 AND user_id = $2", [calendarEntryId, userId]);
+    // Soft-delete: mark as 'removed' so auto-sync won't re-create the event.
+    // The row is kept so the system remembers the user intentionally removed it.
+    await client.query(
+      `UPDATE calendar_entries SET sync_status = 'removed', external_event_id = NULL, updated_at = NOW()
+       WHERE id = $1 AND user_id = $2`,
+      [calendarEntryId, userId]
+    );
 
     return true;
   } finally {
@@ -348,8 +353,9 @@ export async function syncAllForUser(userId: number): Promise<{ synced: number; 
        FROM calendar_entries ce
        JOIN court_events ev ON ev.id = ce.court_event_id
        WHERE ce.user_id = $1
-         AND (ce.sync_status = 'pending'
-              OR ce.last_synced_content_hash != ev.content_hash)`,
+         AND ce.sync_status NOT IN ('removed')
+         AND (ce.sync_status IN ('pending', 'error')
+              OR ce.last_synced_content_hash IS DISTINCT FROM ev.content_hash)`,
       [userId]
     );
 

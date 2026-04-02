@@ -104,4 +104,64 @@ router.patch("/read-all", async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/notifications/changes-feed — recent changes (new, modified, cancelled) for the user
+// Returns unread notifications of actionable types, used by SearchResultsPage to show
+// changes prominently on first view. Marking them as read hides them on subsequent views.
+router.get("/changes-feed", async (req: Request, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const currentUser = req.user;
+  const pool = getPool();
+  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
+
+  const client = await pool.connect();
+  try {
+    // Fetch unread notifications of types that represent court-side changes
+    const result = await client.query(
+      `SELECT id, type, title, message, metadata, created_at
+       FROM notifications
+       WHERE user_id = $1
+         AND read = false
+         AND type IN ('schedule_change', 'new_match', 'event_cancelled')
+       ORDER BY created_at DESC
+       LIMIT 50`,
+      [currentUser.userId]
+    );
+
+    res.json({ changes: result.rows });
+  } catch (err) {
+    console.error("❌ GET /api/notifications/changes-feed failed:", err);
+    res.status(500).json({ error: "Failed to fetch changes feed" });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/notifications/mark-seen — mark specific notification IDs as read (batch)
+router.patch("/mark-seen", async (req: Request, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const currentUser = req.user;
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    res.status(400).json({ error: "ids must be a non-empty array" });
+    return;
+  }
+
+  const pool = getPool();
+  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
+
+  const client = await pool.connect();
+  try {
+    await client.query(
+      `UPDATE notifications SET read = true WHERE id = ANY($1) AND user_id = $2`,
+      [ids, currentUser.userId]
+    );
+    res.json({ message: `Marked ${ids.length} notifications as read` });
+  } catch (err) {
+    console.error("❌ PATCH /api/notifications/mark-seen failed:", err);
+    res.status(500).json({ error: "Failed to mark notifications" });
+  } finally {
+    client.release();
+  }
+});
+
 export default router;

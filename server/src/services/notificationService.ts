@@ -1,5 +1,5 @@
 import { getPool } from "../db/pool";
-import { sendEmail, sendScheduleChangeEmail } from "./emailService";
+import { sendEmail, sendScheduleChangeEmail, sendNewMatchEmail, sendCancellationEmail } from "./emailService";
 import { sendScheduleChangeSms } from "./smsService";
 import { NotificationType, NotificationPreferences, Notification, ServerToClientEvents, ClientToServerEvents } from "@shared/types";
 import type { Server as SocketIOServer } from "socket.io";
@@ -26,6 +26,46 @@ interface UserNotificationInfo {
   email: string;
   phone: string | null;
   notification_preferences: NotificationPreferences;
+}
+
+/**
+ * Send a formatted email based on notification type.
+ * Falls back to a generic email if the type doesn't have a dedicated template.
+ */
+async function sendTypedEmail(to: string, params: NotifyParams): Promise<boolean> {
+  const meta = params.metadata || {};
+
+  switch (params.type) {
+    case "schedule_change": {
+      const changes = meta.changes as Array<{ field: string; oldValue: string; newValue: string }> | undefined;
+      if (changes && changes.length > 0) {
+        const caseName = (meta.caseNumber as string) || (meta.defendantName as string) || params.title.replace("Schedule Change: ", "");
+        return sendScheduleChangeEmail(to, caseName, changes);
+      }
+      break;
+    }
+    case "new_match": {
+      const events = meta.matchedEvents as Array<{ date: string; time: string; court: string; hearingType: string }> | undefined;
+      const caseName = (meta.searchValue as string) || params.title.replace("New matches for ", "").replace(/"/g, "");
+      if (events && events.length > 0) {
+        return sendNewMatchEmail(to, caseName, events);
+      }
+      // Fallback: send generic email with the message
+      return sendEmail(to, params.title, `<p>${params.message}</p>`);
+    }
+    case "event_cancelled": {
+      const caseName = (meta.caseNumber as string) || "Unknown Case";
+      return sendCancellationEmail(to, caseName, {
+        date: (meta.eventDate as string) || "Unknown",
+        time: (meta.eventTime as string) || "TBD",
+        court: (meta.courtName as string) || "Unknown",
+        defendant: (meta.defendantName as string) || "Unknown",
+      });
+    }
+  }
+
+  // Default: generic email
+  return sendEmail(to, params.title, `<p>${params.message}</p>`);
 }
 
 export async function createNotification(params: NotifyParams): Promise<number | null> {
@@ -63,7 +103,7 @@ export async function createNotification(params: NotifyParams): Promise<number |
 
     // Send email if enabled and frequency is immediate
     if (prefs.emailEnabled && shouldSendNow) {
-      const sent = await sendEmail(user.email, params.title, `<p>${params.message}</p>`);
+      const sent = await sendTypedEmail(user.email, params);
       if (sent) channelsSent.push("email");
     } else if (prefs.emailEnabled && !shouldSendNow) {
       channelsSent.push("email_deferred");

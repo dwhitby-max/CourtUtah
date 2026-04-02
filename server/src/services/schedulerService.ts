@@ -32,6 +32,11 @@ interface WatchedCaseRow {
  * as local DB filters after results are fetched).
  */
 function watchedCaseToLiveParams(wc: WatchedCaseRow): LiveSearchParams | null {
+  // search_watch type: use stored search_params to reconstruct the original search
+  if (wc.search_type === "search_watch" && wc.search_params) {
+    return searchParamsToLiveParams(wc.search_params);
+  }
+
   switch (wc.search_type) {
     case "defendant_name":
       return { partyName: wc.search_value };
@@ -54,6 +59,37 @@ function watchedCaseToLiveParams(wc: WatchedCaseRow): LiveSearchParams | null {
       // can't be directly searched via utcourts — need a primary search field
       return null;
   }
+}
+
+/**
+ * Convert stored search params (from the UI search form) to LiveSearchParams.
+ * Picks the primary search field that utcourts.gov requires, stripping dates
+ * since watched searches always search all available dates (up to 4 weeks).
+ */
+function searchParamsToLiveParams(params: Record<string, string>): LiveSearchParams | null {
+  const p: LiveSearchParams = {};
+
+  // Map stored params to live search params — priority order matches utcourts.gov
+  if (params.case_number || params.caseNumber) {
+    p.caseNumber = params.case_number || params.caseNumber;
+  } else if (params.defendant_name || params.defendantName) {
+    p.partyName = params.defendant_name || params.defendantName;
+  } else if (params.judge_name || params.judgeName) {
+    p.judgeName = params.judge_name || params.judgeName;
+  } else if (params.attorney) {
+    const parts = params.attorney.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      p.attorneyFirstName = parts.slice(0, -1).join(" ");
+      p.attorneyLastName = parts[parts.length - 1];
+    } else {
+      p.attorneyLastName = parts[0];
+    }
+  } else {
+    // No searchable field — can't query utcourts.gov
+    return null;
+  }
+
+  return p;
 }
 
 /**
@@ -123,10 +159,101 @@ export async function runWatchedCaseSearch(watchedCaseId: number): Promise<{
       ? await createCalendarEntriesForWatchedCase(wc, client)
       : 0;
 
-    return { eventsFound: allParsed.length, newEntries, changes };
+    // Detect cancellations: future DB events matching this watched case that
+    // are NOT in the scraped results may have been cancelled on the court side
+    const cancellations = await detectCancelledEvents(wc, allParsed, client);
+
+    return { eventsFound: allParsed.length, newEntries, changes: changes + cancellations };
   } finally {
     client.release();
   }
+}
+
+/**
+ * Detect events that previously matched this watched case but no longer appear
+ * in scrape results. These are likely cancelled or rescheduled hearings.
+ * Marks them as cancelled, updates the user's calendar, and notifies the user.
+ */
+async function detectCancelledEvents(
+  wc: WatchedCaseRow,
+  scrapedEvents: ParsedCourtEvent[],
+  client: { query: <T = Record<string, unknown>>(q: string, p?: unknown[]) => Promise<{ rows: T[] }> }
+): Promise<number> {
+  // Build a set of scraped event identifiers (case_number + date + time)
+  const scrapedKeys = new Set(
+    scrapedEvents.map(e => `${e.caseNumber}|${e.eventDate}|${e.eventTime}`)
+  );
+
+  // Find future court_events in DB that match this watched case's criteria
+  const { whereClause, searchVal } = buildWhereClause(wc);
+  const dbEvents = await client.query<{
+    id: number; case_number: string; event_date: string; event_time: string;
+    defendant_name: string; court_name: string; hearing_type: string;
+    is_cancelled: boolean;
+  }>(
+    `SELECT id, case_number, event_date, event_time, defendant_name,
+            court_name, hearing_type, COALESCE(is_cancelled, false) as is_cancelled
+     FROM court_events
+     WHERE ${whereClause}
+       AND event_date >= CURRENT_DATE
+       AND COALESCE(is_cancelled, false) = false`,
+    [searchVal]
+  );
+
+  if (dbEvents.rows.length === 0) return 0;
+
+  let cancelled = 0;
+  for (const dbEvent of dbEvents.rows) {
+    const rawDate = dbEvent.event_date as unknown;
+    const dateStr = rawDate instanceof Date
+      ? rawDate.toISOString().split("T")[0]
+      : typeof rawDate === "string" ? rawDate.split("T")[0] : String(rawDate);
+    const key = `${dbEvent.case_number}|${dateStr}|${dbEvent.event_time}`;
+
+    if (!scrapedKeys.has(key)) {
+      // This event was in DB but not in scrape results — likely cancelled
+      await client.query(
+        `UPDATE court_events SET is_cancelled = true, cancelled_detected_at = NOW(), updated_at = NOW()
+         WHERE id = $1`,
+        [dbEvent.id]
+      );
+
+      // Find and update any calendar entries tracking this event
+      const calEntries = await client.query<{ id: number; user_id: number }>(
+        `SELECT ce.id, ce.user_id FROM calendar_entries ce
+         WHERE ce.court_event_id = $1 AND ce.sync_status NOT IN ('removed')`,
+        [dbEvent.id]
+      );
+
+      for (const entry of calEntries.rows) {
+        // Notify the user about the cancellation
+        await createNotification({
+          userId: entry.user_id,
+          type: "event_cancelled",
+          title: `Hearing may be cancelled: ${dbEvent.defendant_name || dbEvent.case_number}`,
+          message: `A hearing for ${dbEvent.defendant_name || "Unknown"} (${dbEvent.case_number}) on ${dateStr} at ${dbEvent.event_time || "TBD"} at ${dbEvent.court_name} no longer appears on the court calendar. It may have been cancelled or rescheduled. Your calendar has been updated.`,
+          metadata: {
+            courtEventId: dbEvent.id,
+            calendarEntryId: entry.id,
+            caseNumber: dbEvent.case_number,
+            defendantName: dbEvent.defendant_name,
+            eventDate: dateStr,
+            eventTime: dbEvent.event_time,
+            courtName: dbEvent.court_name,
+          },
+        });
+      }
+
+      cancelled++;
+      console.log(`  🚫 Event likely cancelled: ${dbEvent.case_number} on ${dateStr} at ${dbEvent.event_time}`);
+    }
+  }
+
+  if (cancelled > 0) {
+    console.log(`  🚫 Detected ${cancelled} potentially cancelled event(s) for "${wc.label}"`);
+  }
+
+  return cancelled;
 }
 
 /**
@@ -148,7 +275,7 @@ async function createCalendarEntriesForWatchedCase(
   const { whereClause, searchVal } = buildWhereClause(wc);
 
   const eventsResult = await client.query<{ id: number }>(
-    `SELECT id FROM court_events WHERE ${whereClause} AND event_date >= CURRENT_DATE`,
+    `SELECT id FROM court_events WHERE ${whereClause} AND event_date >= CURRENT_DATE AND COALESCE(is_cancelled, false) = false`,
     [searchVal]
   );
 
@@ -157,40 +284,37 @@ async function createCalendarEntriesForWatchedCase(
   let created = 0;
   for (const calConn of calResult.rows) {
     for (const event of eventsResult.rows) {
-      // Check if entry already exists for this watched case
-      const existing = await client.query<{ id: number }>(
-        `SELECT id FROM calendar_entries
-         WHERE watched_case_id = $1 AND court_event_id = $2 AND calendar_connection_id = $3`,
-        [wc.id, event.id, calConn.id]
-      );
-      if (existing.rows.length > 0) continue;
-
-      // Check for orphaned entry (from a previously deleted watched case) —
-      // reconnect it instead of creating a duplicate calendar event
-      const orphaned = await client.query<{ id: number }>(
-        `SELECT id FROM calendar_entries
-         WHERE watched_case_id IS NULL AND court_event_id = $1 AND calendar_connection_id = $2 AND user_id = $3
+      // Check if ANY entry already exists for this user + event + connection
+      // (regardless of watched_case_id) to prevent duplicate calendar events.
+      // Also respects 'removed' status — user explicitly removed it, don't re-add.
+      const existing = await client.query<{ id: number; watched_case_id: number | null; sync_status: string }>(
+        `SELECT id, watched_case_id, sync_status FROM calendar_entries
+         WHERE user_id = $1 AND court_event_id = $2 AND calendar_connection_id = $3
          LIMIT 1`,
-        [event.id, calConn.id, wc.user_id]
+        [wc.user_id, event.id, calConn.id]
       );
 
-      let entryId: number;
-      if (orphaned.rows.length > 0) {
-        // Reconnect the orphaned entry to the new watched case
-        entryId = orphaned.rows[0].id;
-        await client.query(
-          `UPDATE calendar_entries SET watched_case_id = $1, updated_at = NOW() WHERE id = $2`,
-          [wc.id, entryId]
-        );
-      } else {
-        // Create a new calendar entry
-        const insertResult = await client.query<{ id: number }>(
-          `INSERT INTO calendar_entries (user_id, watched_case_id, court_event_id, calendar_connection_id)
-           VALUES ($1, $2, $3, $4) RETURNING id`,
-          [wc.user_id, wc.id, event.id, calConn.id]
-        );
-        entryId = insertResult.rows[0].id;
+      if (existing.rows.length > 0) {
+        // If user explicitly removed this entry, don't re-add
+        if (existing.rows[0].sync_status === "removed") continue;
+        // Entry exists — if unlinked (manual add), attach the watched case
+        if (existing.rows[0].watched_case_id === null) {
+          await client.query(
+            `UPDATE calendar_entries SET watched_case_id = $1, updated_at = NOW() WHERE id = $2`,
+            [wc.id, existing.rows[0].id]
+          );
+        }
+        continue;
       }
+
+      // No entry exists — create a new one
+      let entryId: number;
+      const insertResult = await client.query<{ id: number }>(
+        `INSERT INTO calendar_entries (user_id, watched_case_id, court_event_id, calendar_connection_id)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [wc.user_id, wc.id, event.id, calConn.id]
+      );
+      entryId = insertResult.rows[0].id;
       created++;
 
       try {
@@ -214,15 +338,30 @@ async function createCalendarEntriesForWatchedCase(
   }
 
   if (created > 0) {
+    // Fetch event details for the email template
+    const matchedDetails = await client.query<{
+      event_date: string; event_time: string; court_name: string; hearing_type: string;
+    }>(
+      `SELECT event_date, event_time, court_name, hearing_type
+       FROM court_events WHERE ${whereClause} AND event_date >= CURRENT_DATE AND COALESCE(is_cancelled, false) = false`,
+      [searchVal]
+    );
+    const matchedEvents = matchedDetails.rows.map(r => {
+      const rawDate = r.event_date as unknown;
+      const dateStr = rawDate instanceof Date ? rawDate.toISOString().split("T")[0] : String(r.event_date).split("T")[0];
+      return { date: dateStr, time: r.event_time, court: r.court_name, hearingType: r.hearing_type };
+    });
+
     await createNotification({
       userId: wc.user_id,
       type: "new_match",
       title: `New matches for "${wc.label}"`,
-      message: `Found ${eventsResult.rows.length} court events matching your search "${wc.label}". Calendar entries have been created automatically.`,
+      message: `Found ${created} new court event${created !== 1 ? "s" : ""} matching your search "${wc.label}". Calendar entries have been created automatically.`,
       metadata: {
         watchedCaseId: wc.id,
         searchType: wc.search_type,
         searchValue: wc.search_value,
+        matchedEvents,
       },
     });
   }
@@ -234,6 +373,31 @@ async function createCalendarEntriesForWatchedCase(
  * Build a WHERE clause for matching a watched case against court_events.
  */
 function buildWhereClause(wc: WatchedCaseRow): { whereClause: string; searchVal: string } {
+  // search_watch: use the primary search field from stored search_params
+  if (wc.search_type === "search_watch" && wc.search_params) {
+    const p = wc.search_params;
+    if (p.attorney) {
+      return {
+        whereClause: `(UPPER(prosecuting_attorney) LIKE $1 OR UPPER(defense_attorney) LIKE $1)`,
+        searchVal: `%${p.attorney.toUpperCase()}%`,
+      };
+    }
+    if (p.defendant_name || p.defendantName) {
+      const val = (p.defendant_name || p.defendantName).toUpperCase();
+      return { whereClause: `UPPER(defendant_name) LIKE $1`, searchVal: `%${val}%` };
+    }
+    if (p.case_number || p.caseNumber) {
+      const val = (p.case_number || p.caseNumber).toUpperCase();
+      return { whereClause: `UPPER(case_number) LIKE $1`, searchVal: `%${val}%` };
+    }
+    if (p.judge_name || p.judgeName) {
+      const val = (p.judge_name || p.judgeName).toUpperCase();
+      return { whereClause: `UPPER(judge_name) LIKE $1`, searchVal: `%${val}%` };
+    }
+    // Fallback: use search_value as defendant name
+    return { whereClause: `UPPER(defendant_name) LIKE $1`, searchVal: `%${wc.search_value.toUpperCase()}%` };
+  }
+
   if (wc.search_type === "attorney") {
     return {
       whereClause: `(UPPER(prosecuting_attorney) LIKE $1 OR UPPER(defense_attorney) LIKE $1)`,
@@ -373,11 +537,27 @@ export async function refreshAllWatchedCases(): Promise<{
     const uniqueSearches = [...deduped.values()].map((group) => group[0]);
     console.log(`  📊 ${watchedCases.length} watched cases → ${uniqueSearches.length} unique searches`);
 
-    // Run searches concurrently in batches of 5
-    const BATCH_SIZE = 5;
+    // Run searches in batches with adaptive delays.
+    // Starts with 3s between batches, increases on failures, resets on clean batches.
+    const BATCH_SIZE = 3;
+    const BASE_DELAY_MS = 3000;
+    const MAX_DELAY_MS = 60000;
+    let currentDelay = BASE_DELAY_MS;
+    let consecutiveFailedBatches = 0;
     const shuffled = [...uniqueSearches].sort(() => Math.random() - 0.5);
 
     for (let i = 0; i < shuffled.length; i += BATCH_SIZE) {
+      // If too many consecutive failures, abort remaining searches
+      if (consecutiveFailedBatches >= 3) {
+        console.error(`🛑 Aborting refresh — ${consecutiveFailedBatches} consecutive batch failures (likely rate limited)`);
+        captureMessage(
+          `Refresh aborted after ${consecutiveFailedBatches} consecutive batch failures`,
+          "warning",
+          { tags: { service: "scheduler" } }
+        );
+        break;
+      }
+
       const batch = shuffled.slice(i, i + BATCH_SIZE);
       const results = await Promise.allSettled(
         batch.map(async (wc) => {
@@ -407,22 +587,35 @@ export async function refreshAllWatchedCases(): Promise<{
         })
       );
 
+      let batchFailed = false;
       for (const r of results) {
         if (r.status === "fulfilled") {
           totalEvents += r.value.eventsFound;
           totalNewEntries += r.value.newEntries;
           totalChanges += r.value.changes;
         } else {
-          console.error(`❌ Refresh failed:`, r.reason instanceof Error ? r.reason.message : r.reason);
+          batchFailed = true;
+          const errMsg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+          console.error(`❌ Refresh failed:`, errMsg);
           captureException(r.reason instanceof Error ? r.reason : new Error(String(r.reason)), {
             tags: { service: "scheduler" },
           });
         }
       }
 
-      // Brief pause between batches to avoid overwhelming utcourts.gov
+      // Adaptive delay: back off on failures, reset on success
+      if (batchFailed) {
+        consecutiveFailedBatches++;
+        currentDelay = Math.min(currentDelay * 2, MAX_DELAY_MS);
+        console.warn(`⚠️ Batch had failures — increasing delay to ${Math.round(currentDelay / 1000)}s (${consecutiveFailedBatches} consecutive)`);
+      } else {
+        consecutiveFailedBatches = 0;
+        currentDelay = Math.max(currentDelay * 0.75, BASE_DELAY_MS);
+      }
+
+      // Pause between batches
       if (i + BATCH_SIZE < shuffled.length) {
-        await new Promise((r) => setTimeout(r, 2000));
+        await new Promise((r) => setTimeout(r, currentDelay));
       }
     }
 
@@ -455,12 +648,14 @@ async function upsertCourtEvent(event: ParsedCourtEvent): Promise<boolean> {
 
   const client = await pool.connect();
   try {
-    // Look for existing event by case_number + event_date + court name from hearing location
+    // Look for existing event by case_number + event_date + event_time
+    // Including event_time prevents collapsing separate hearings for the
+    // same case at different times on the same day (e.g. 9:00 AM vs 10:30 AM)
     const existing = await client.query(
       `SELECT * FROM court_events
-       WHERE case_number = $1 AND event_date = $2
+       WHERE case_number = $1 AND event_date = $2 AND event_time = $3
        LIMIT 1`,
-      [event.caseNumber, event.eventDate]
+      [event.caseNumber, event.eventDate, event.eventTime]
     );
 
     if (existing.rows.length > 0) {
@@ -534,12 +729,20 @@ async function upsertCourtEvent(event: ParsedCourtEvent): Promise<boolean> {
           }
 
           const changeDescription = changes.map(c => `${c.field}: "${c.oldValue}" → "${c.newValue}"`).join(", ");
+          const caseName = event.defendantName || event.caseNumber || "Court Hearing";
           await createNotification({
             userId: entry.user_id,
             type: "schedule_change",
-            title: "Court schedule updated",
+            title: `Schedule Change: ${caseName}`,
             message: `Changes detected and ${synced ? "your calendar has been updated automatically" : "calendar update is pending"}. Changes: ${changeDescription}`,
-            metadata: { calendarEntryId: entry.id, courtEventId: existingRow.id, changes, autoSynced: synced },
+            metadata: {
+              calendarEntryId: entry.id,
+              courtEventId: existingRow.id,
+              caseNumber: event.caseNumber,
+              defendantName: event.defendantName,
+              changes,
+              autoSynced: synced,
+            },
           });
         }
 

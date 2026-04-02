@@ -133,6 +133,39 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
   const userId = req.user.userId;
   const pKey = searchParamsKey(searchParams);
 
+  // Get user plan for limit enforcement
+  let userPlan = "free";
+  try {
+    const pool = getPool();
+    if (pool) {
+      const client = await pool.connect();
+      try {
+        const planResult = await client.query<{ subscription_plan: string }>(
+          "SELECT subscription_plan FROM users WHERE id = $1",
+          [userId]
+        );
+        userPlan = planResult.rows[0]?.subscription_plan || "free";
+      } finally {
+        client.release();
+      }
+    }
+  } catch { /* default to free */ }
+  const isPro = userPlan === "pro";
+
+  // Free plan: enforce 1-week max date range
+  if (!isPro && searchParams.dateFrom && searchParams.dateTo) {
+    const from = new Date(searchParams.dateFrom);
+    const to = new Date(searchParams.dateTo);
+    const diffDays = Math.ceil((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24));
+    if (diffDays > 7) {
+      res.status(403).json({
+        error: "Free plan is limited to a 1-week date range. Upgrade to Pro for unlimited date ranges.",
+        upgradeRequired: true,
+      });
+      return;
+    }
+  }
+
   try {
     const liveBase = toLiveSearchBase(searchParams);
     const courts = await getCourts();
@@ -147,7 +180,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
         console.log("  ⚠️ No courts selected — using DB only (utcourts.gov requires a court location)");
       }
       console.log(`  📊 DB-only search: ${dbResults.length} results`);
-      const { savedSearchId, previousRunAt } = await saveSearch(userId, searchParams, pKey, dbResults.length);
+      const { savedSearchId, previousRunAt, limitReached } = await saveSearch(userId, searchParams, pKey, dbResults.length, userPlan);
       markNewEvents(dbResults, previousRunAt);
       res.json({
         results: dbResults,
@@ -156,6 +189,8 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
         source,
         savedSearchId,
         previousRunAt,
+        savedSearchLimitReached: limitReached || false,
+        userPlan,
         processedAt: new Date().toISOString(),
       });
       return;
@@ -243,7 +278,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
 
     console.log(`  📊 Merge: ${dbResults.length} DB + ${extraLive.length} extra live = ${merged.length} total results`);
 
-    const { savedSearchId, previousRunAt } = await saveSearch(userId, searchParams, pKey, merged.length);
+    const { savedSearchId, previousRunAt, limitReached } = await saveSearch(userId, searchParams, pKey, merged.length, userPlan);
     markNewEvents(merged, previousRunAt);
     res.json({
       results: merged,
@@ -252,6 +287,8 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       source: "live",
       savedSearchId,
       previousRunAt,
+      savedSearchLimitReached: limitReached || false,
+      userPlan,
       processedAt: new Date().toISOString(),
       detectedChanges: detectedChanges.length > 0 && previousRunAt ? detectedChanges : undefined,
     });

@@ -93,6 +93,9 @@ export default function SearchPage() {
   const [previousRunAt, setPreviousRunAt] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; label: string } | null>(null);
   const [detectedChanges, setDetectedChanges] = useState<DetectedChange[]>([]);
+  const [watchingSearch, setWatchingSearch] = useState(false);
+  const [watchSearchActive, setWatchSearchActive] = useState(false);
+  const [upgradeMessage, setUpgradeMessage] = useState("");
 
   const cal = useCalendarActions();
 
@@ -111,10 +114,18 @@ export default function SearchPage() {
       const res = await apiFetch("/watched-cases");
       if (res.ok) {
         const data = await res.json();
-        const autoSearches = (data.watchedCases || []).filter(
+        const allWatched = data.watchedCases || [];
+        const autoSearches = allWatched.filter(
           (wc: SavedSearchRow) => wc.source === "auto_search" && wc.search_params
         );
         setSavedSearches(autoSearches);
+
+        // Check if current search params match any search_watch type
+        const hasSearchWatch = allWatched.some(
+          (wc: SavedSearchRow & { search_type?: string }) =>
+            wc.search_type === "search_watch" && wc.search_params
+        );
+        if (hasSearchWatch) setWatchSearchActive(true);
       }
     } catch {
       // non-fatal
@@ -125,8 +136,10 @@ export default function SearchPage() {
 
   async function handleSearch(params: Record<string, string>, opts?: { isRerun?: boolean }) {
     const autoAdd = params._autoAddToCalendar === "true";
+    const isWatchedCase = params._watchedCase === "true";
     const searchParams = { ...params };
     delete searchParams._autoAddToCalendar;
+    delete searchParams._watchedCase;
 
     // Block duplicate searches unless this is a "Run Again" from a saved search
     if (!opts?.isRerun && savedSearches.length > 0) {
@@ -139,11 +152,13 @@ export default function SearchPage() {
     }
 
     setError("");
+    setUpgradeMessage("");
     setLoading(true);
     setSearched(true);
     setWatchSuccess("");
     setExpandedId(null);
     setCurrentPage(1);
+    setWatchSearchActive(false);
 
     try {
       const data = await searchCourtEvents(searchParams);
@@ -155,14 +170,31 @@ export default function SearchPage() {
       setAddedAll(false);
       fetchSavedSearches();
 
+      // Show upgrade prompt if saved search limit was reached
+      if (data.savedSearchLimitReached) {
+        setUpgradeMessage("You've reached the 3 saved search limit on the free plan. Upgrade to Pro for unlimited saved searches.");
+      } else {
+        setUpgradeMessage("");
+      }
+
       const currentSynced = await cal.refreshSyncedEvents();
+
+      // If "Watched Case" was checked, create a search_watch watched case
+      if (isWatchedCase) {
+        await createSearchWatch(searchParams);
+      }
 
       if (autoAdd && cal.hasCalendarConnection && data.results.length > 0) {
         await autoAddResults(data.results, currentSynced, data.savedSearchId ?? undefined);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Search failed";
-      setError(msg);
+      // Check if it's an upgrade-required error
+      if (msg.includes("Upgrade to Pro") || msg.includes("upgrade")) {
+        setUpgradeMessage(msg);
+      } else {
+        setError(msg);
+      }
       setResults([]);
     } finally {
       setLoading(false);
@@ -325,6 +357,115 @@ export default function SearchPage() {
       }
     } catch {
       // non-fatal
+    }
+  }
+
+  async function createSearchWatch(params: Record<string, string>) {
+    try {
+      const parts: string[] = [];
+      if (params.attorney) parts.push(`Attorney: ${params.attorney}`);
+      if (params.defendant_name) parts.push(`Defendant: ${params.defendant_name}`);
+      if (params.case_number) parts.push(`Case: ${params.case_number}`);
+      if (params.judge_name) parts.push(`Judge: ${params.judge_name}`);
+      if (params.defendant_otn) parts.push(`OTN: ${params.defendant_otn}`);
+      if (params.citation_number) parts.push(`Citation: ${params.citation_number}`);
+      if (params.charges) parts.push(`Charges: ${params.charges}`);
+      const label = parts.join(", ") || "Custom Search";
+
+      const searchValue = params.attorney
+        || params.defendant_name
+        || params.case_number
+        || params.judge_name
+        || params.defendant_otn
+        || "search";
+
+      const res = await apiFetch("/watched-cases", {
+        method: "POST",
+        body: JSON.stringify({
+          searchType: "search_watch",
+          searchValue,
+          label: `Watch: ${label}`,
+          monitorChanges: true,
+          autoAddNew: true,
+          searchParams: params,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.upgradeRequired) {
+          setUpgradeMessage(data.error);
+        } else {
+          setError(data.error);
+        }
+        return;
+      }
+
+      setWatchSearchActive(true);
+      setWatchSuccess(`Watching "${label}" — new results up to 4 weeks out will be added to your calendar automatically.`);
+      fetchSavedSearches();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to create search watch";
+      setError(msg);
+    }
+  }
+
+  async function handleWatchSearch() {
+    if (!lastSearchParams || watchSearchActive) return;
+    setWatchingSearch(true);
+    setError("");
+
+    try {
+      // Build a human-readable label from search params
+      const parts: string[] = [];
+      if (lastSearchParams.attorney) parts.push(`Attorney: ${lastSearchParams.attorney}`);
+      if (lastSearchParams.defendant_name) parts.push(`Defendant: ${lastSearchParams.defendant_name}`);
+      if (lastSearchParams.case_number) parts.push(`Case: ${lastSearchParams.case_number}`);
+      if (lastSearchParams.judge_name) parts.push(`Judge: ${lastSearchParams.judge_name}`);
+      if (lastSearchParams.defendant_otn) parts.push(`OTN: ${lastSearchParams.defendant_otn}`);
+      if (lastSearchParams.citation_number) parts.push(`Citation: ${lastSearchParams.citation_number}`);
+      if (lastSearchParams.charges) parts.push(`Charges: ${lastSearchParams.charges}`);
+      const label = parts.join(", ") || "Custom Search";
+
+      // Determine the primary search value for display
+      const searchValue = lastSearchParams.attorney
+        || lastSearchParams.defendant_name
+        || lastSearchParams.case_number
+        || lastSearchParams.judge_name
+        || lastSearchParams.defendant_otn
+        || "search";
+
+      // Strip date fields — watched search monitors all dates (up to 4 weeks)
+      const watchParams = { ...lastSearchParams };
+      delete watchParams.date_from;
+      delete watchParams.dateTo;
+      delete watchParams.date_to;
+      delete watchParams.dateFrom;
+      delete watchParams.court_date;
+      delete watchParams.courtDate;
+
+      const res = await apiFetch("/watched-cases", {
+        method: "POST",
+        body: JSON.stringify({
+          searchType: "search_watch",
+          searchValue,
+          label: `Watch: ${label}`,
+          monitorChanges: true,
+          autoAddNew: true,
+          searchParams: watchParams,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      setWatchSearchActive(true);
+      setWatchSuccess(`Watching "${label}" — new results up to 4 weeks out will be added to your calendar automatically.`);
+      fetchSavedSearches();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create search watch");
+    } finally {
+      setWatchingSearch(false);
     }
   }
 
@@ -532,6 +673,31 @@ export default function SearchPage() {
       {error && <div className="bg-red-50 text-red-700 p-4 rounded-md text-sm">{error}</div>}
       {watchSuccess && <div className="bg-green-50 text-green-700 p-4 rounded-md text-sm">{watchSuccess}</div>}
 
+      {upgradeMessage && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
+          <svg className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+          <div className="flex-1">
+            <p className="text-sm text-amber-800">{upgradeMessage}</p>
+            <a
+              href="/billing"
+              className="inline-block mt-2 px-4 py-1.5 text-sm font-medium text-white bg-amber-700 hover:bg-amber-800 rounded-md transition-colors"
+            >
+              Upgrade to Pro
+            </a>
+          </div>
+          <button
+            onClick={() => setUpgradeMessage("")}
+            className="shrink-0 p-1 text-amber-400 hover:text-amber-600"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
+
       {/* Schedule Changes Detected */}
       {detectedChanges.length > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
@@ -623,6 +789,15 @@ export default function SearchPage() {
                         ? `All added to ${cal.calLabel}`
                         : `Add all ${results.length} to ${cal.calLabel}`}
                   </button>
+                )}
+                {watchSearchActive && (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                    Watched Case
+                  </span>
                 )}
               </div>
             )}

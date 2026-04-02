@@ -42,7 +42,8 @@ export interface CourtInfo {
 
 /**
  * Fetch raw content from a URL with redirect-following and timeout.
- * Retries with exponential backoff on transient failures.
+ * Retries with exponential backoff on transient failures (network errors,
+ * 429 rate limits, 5xx server errors).
  */
 export async function fetchUrl(
   url: string,
@@ -53,7 +54,7 @@ export async function fetchUrl(
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     if (attempt > 0) {
-      const delay = Math.min(2000 * Math.pow(2, attempt - 1), 10000);
+      const delay = Math.min(2000 * Math.pow(2, attempt - 1), 15000);
       await new Promise((r) => setTimeout(r, delay));
       console.log(`🔁 Retry ${attempt}/${maxRetries - 1} for ${url}`);
     }
@@ -64,8 +65,20 @@ export async function fetchUrl(
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       const code = (err as NodeJS.ErrnoException).code;
-      // Only retry on transient errors
+      const msg = lastError.message;
+
+      // Retry on transient network errors
       if (code === "ECONNRESET" || code === "ETIMEDOUT" || code === "ECONNREFUSED") {
+        continue;
+      }
+      // Retry on HTTP 429 (rate limit) and 5xx (server errors)
+      if (msg.includes("HTTP 429") || msg.match(/HTTP 5\d\d/)) {
+        // Extra delay for rate limiting — wait longer
+        if (msg.includes("HTTP 429")) {
+          const rateLimitDelay = Math.min(5000 * Math.pow(2, attempt), 30000);
+          console.warn(`⚠️ Rate limited (429) — waiting ${Math.round(rateLimitDelay / 1000)}s before retry`);
+          await new Promise((r) => setTimeout(r, rateLimitDelay));
+        }
         continue;
       }
       // Non-transient error — don't retry

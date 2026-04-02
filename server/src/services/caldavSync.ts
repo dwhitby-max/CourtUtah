@@ -32,8 +32,12 @@ export function buildVCalendar(uid: string, eventData: CalendarEventData): strin
     dtStart = `DTSTART;TZID=America/Denver:${dateStr}T${hh}${mm}00`;
     dtEnd = `DTEND;TZID=America/Denver:${dateStr}T${endHours}${mm}00`;
   } else {
+    // RFC 5545: all-day DTEND must be the day AFTER the event
+    const nextDay = new Date(eventData.startDate.split("T")[0] + "T00:00:00");
+    nextDay.setDate(nextDay.getDate() + 1);
+    const endDateStr = nextDay.toISOString().split("T")[0].replace(/-/g, "");
     dtStart = `DTSTART;VALUE=DATE:${dateStr}`;
-    dtEnd = `DTEND;VALUE=DATE:${dateStr}`;
+    dtEnd = `DTEND;VALUE=DATE:${endDateStr}`;
   }
 
   // Escape special ICS chars in text fields
