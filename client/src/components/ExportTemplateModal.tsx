@@ -378,9 +378,20 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
           <button
             onClick={handleSave}
             disabled={!editing.name.trim() || editing.fieldKeys.length === 0}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-4 py-2 text-sm font-medium text-white bg-gray-600 rounded-md hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Save Template
+          </button>
+          <button
+            onClick={() => {
+              if (!editing || editing.fieldKeys.length === 0) return;
+              if (editing.name.trim()) handleSave();
+              onExport(editing);
+            }}
+            disabled={editing.fieldKeys.length === 0}
+            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            Save & Export
           </button>
         </div>
       </div>

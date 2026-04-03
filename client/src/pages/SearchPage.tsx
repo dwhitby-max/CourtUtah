@@ -889,14 +889,19 @@ export default function SearchPage() {
                         </td>
                         <td className="px-4 py-3 text-sm">{event.hearingType || "N/A"}</td>
                         <td className="px-4 py-3 text-sm">
-                          {extractLastName(event.prosecutingAttorney) || extractLastName(event.defenseAttorney) ? (
-                            <>
-                              <div><span className="text-gray-500 text-xs">P:</span> {extractLastName(event.prosecutingAttorney) || "-"}</div>
-                              <div><span className="text-gray-500 text-xs">D:</span> {extractLastName(event.defenseAttorney) || "-"}</div>
-                            </>
-                          ) : (
-                            <span className="text-gray-400">-</span>
-                          )}
+                          {(() => {
+                            const pros = extractLastName(event.prosecutingAttorney);
+                            const def = extractLastName(event.defenseAttorney);
+                            const cleanDef = (def && pros && def.toUpperCase() === pros.toUpperCase()) ? "" : def;
+                            return pros || cleanDef ? (
+                              <>
+                                <div><span className="text-gray-500 text-xs">P:</span> {pros || "-"}</div>
+                                <div><span className="text-gray-500 text-xs">D:</span> {cleanDef || "-"}</div>
+                              </>
+                            ) : (
+                              <span className="text-gray-400">-</span>
+                            );
+                          })()}
                         </td>
                         <td className="px-4 py-3 text-sm space-y-1">
                           {cal.hasCalendarConnection ? (

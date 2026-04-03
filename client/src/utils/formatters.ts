@@ -115,7 +115,13 @@ export const EXPORT_FIELDS: ExportField[] = [
   { key: "defendant", label: "Defendant", accessor: (e) => e.defendantName || "" },
   { key: "defendantLastName", label: "Defendant Last Name", accessor: (e) => extractLastName(e.defendantName) },
   { key: "prosecutingAttorney", label: "Prosecuting Attorney", accessor: (e) => extractLastName(e.prosecutingAttorney) || "-" },
-  { key: "defenseAttorney", label: "Defense Attorney", accessor: (e) => extractLastName(e.defenseAttorney) || "-" },
+  { key: "defenseAttorney", label: "Defense Attorney", accessor: (e) => {
+    // Guard: if defense is the same as prosecution, it's corrupt data — show blank
+    const def = extractLastName(e.defenseAttorney);
+    const pros = extractLastName(e.prosecutingAttorney);
+    if (def && pros && def.toUpperCase() === pros.toUpperCase()) return "-";
+    return def || "-";
+  }},
 ];
 
 export interface SortLevel {
