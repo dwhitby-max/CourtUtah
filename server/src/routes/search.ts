@@ -3,7 +3,7 @@ import { heavyLimiter } from "../middleware/rateLimiter";
 import { authenticateToken } from "../middleware/auth";
 import { searchCourtEvents } from "../services/searchService";
 import { liveSearchUtcourts, fetchCourtList, CourtInfo } from "../services/courtScraper";
-import { parseHtmlCalendarResults, ParsedCourtEvent, SearchContext } from "../services/courtEventParser";
+import { parseHtmlCalendarResults, ParsedCourtEvent, SearchContext, enrichFromDetailsPages } from "../services/courtEventParser";
 import { DetectedChange } from "@shared/types";
 import { getPool } from "../db/pool";
 import {
@@ -285,6 +285,17 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     // Diagnostic logging
     console.log(`  📋 Live: ${allParsed.length} parsed events from ${totalHtmlLen} chars HTML (${failedJobs} failed jobs, ${emptyJobs} empty responses)`);
     console.log(`  📋 DB: ${dbResults.length} events`);
+
+    // Enrich events with attorney data from details.php pages
+    // (search.php only shows one attorney with no role label)
+    try {
+      const detailsEnriched = await enrichFromDetailsPages(allParsed);
+      if (detailsEnriched > 0) {
+        console.log(`  👤 Enriched ${detailsEnriched} events with attorney data from details pages`);
+      }
+    } catch (err) {
+      console.warn("⚠️ Details enrichment failed:", err instanceof Error ? err.message : err);
+    }
 
     // Persist live results and detect changes (awaited so we can return changes)
     let detectedChanges: DetectedChange[] = [];

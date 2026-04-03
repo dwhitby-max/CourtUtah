@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import https from "https";
 
 // ============================================================
 // COURT EVENT PARSER — HTML format from legacy.utcourts.gov/cal/search.php
@@ -39,6 +40,8 @@ export interface ParsedCourtEvent {
   courtName?: string | null;
   /** Court location code used for the live search (e.g. "1868D"). Set by caller, not parser. */
   courtLocationCode?: string | null;
+  /** URL to details.php page for this event (extracted from search results). */
+  detailsUrl?: string | null;
 }
 
 /**
@@ -198,91 +201,15 @@ function parseEventBlock(
       .trim();
   }
 
-  // 5. Extract attorney names and roles from search results.
-  //    search.php may use various labels:
-  //      "Prosecuting Attorney:", "Prosecutor:", "Pros. Atty:", "Plaintiff Attorney:"
-  //      "Defense Attorney:", "Defendant Attorney:", "Def. Atty:"
-  //      "Attorney:" (generic, role unknown)
+  // 5. Extract attorney name from search results.
+  //    search.php only shows ONE attorney with the generic label "Attorney: &nbsp;"
+  //    followed by the name (with HILI spans highlighting search matches).
+  //    No role label ("Prosecuting" / "Defense") is provided, and NO opposing
+  //    counsel is shown. We cannot determine the attorney's role from search.php
+  //    alone — that data comes from reports.php enrichment stored in the DB.
+  //    We leave both prosecutingAttorney and defenseAttorney null here.
   let prosecutingAttorney: string | null = null;
   let defenseAttorney: string | null = null;
-
-  // Try labeled prosecution patterns
-  const prosPatterns = [
-    /Prosecut(?:ing|or)\s+(?:Att(?:orney|y)):\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i,
-    /Pros\.?\s+(?:Att(?:orney|y)):\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i,
-    /Plaintiff\s+(?:Att(?:orney|y)):\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i,
-    /State(?:'s)?\s+(?:Att(?:orney|y)):\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i,
-  ];
-  for (const pat of prosPatterns) {
-    const m = boxHtml.match(pat);
-    if (m) {
-      const name = cleanName(stripTags(m[1]));
-      if (name.length >= 2) { prosecutingAttorney = name; break; }
-    }
-  }
-
-  // Try labeled defense patterns
-  const defPatterns = [
-    /Defen(?:se|dant)\s+(?:Att(?:orney|y)):\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i,
-    /Def\.?\s+(?:Att(?:orney|y)):\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i,
-    /Respondent\s+(?:Att(?:orney|y)):\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i,
-  ];
-  for (const pat of defPatterns) {
-    const m = boxHtml.match(pat);
-    if (m) {
-      const name = cleanName(stripTags(m[1]));
-      if (name.length >= 2) { defenseAttorney = name; break; }
-    }
-  }
-
-  // Fallback: generic "Attorney:" — use search context to determine role.
-  // In criminal cases, the party structure is "State of Utah vs. [Defendant]".
-  // If we know who was searched, the OTHER attorney shown is opposing counsel.
-  if (!prosecutingAttorney && !defenseAttorney) {
-    const genericMatch = boxHtml.match(/(?<!\w\s)Attorney:\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i);
-    if (genericMatch) {
-      const name = cleanName(stripTags(genericMatch[1]));
-      if (name.length >= 2) {
-        if (context?.searchedAttorney) {
-          // Check if this is the searched attorney or opposing counsel
-          const searched = context.searchedAttorney.toUpperCase();
-          const found = name.toUpperCase();
-          // Check if party structure indicates criminal (State vs. Defendant)
-          const isStateCase = /State\s+of\s+Utah/i.test(boxHtml) || /\bvs\b/i.test(boxHtml);
-
-          if (found.includes(searched) || searched.includes(found.split(",")[0].trim())) {
-            // This is the searched attorney — determine side from case parties
-            if (isStateCase) {
-              // In "State vs." cases, check which side the defendant is on
-              // The attorney listed first or for the state side is prosecution
-              // We can't be certain, so use context from the search results:
-              // utcourts.gov shows the searched attorney and labels opposing counsel
-              prosecutingAttorney = name;
-            }
-          } else {
-            // This is NOT the searched attorney — it's opposing counsel
-            // We don't know their role without more context
-            defenseAttorney = name;
-          }
-        }
-        // Without search context, we can't determine the role — leave null
-      }
-    }
-  }
-
-  // If we found one attorney via labeled match and have a generic "Attorney:" too,
-  // try to capture the second attorney. search.php shows BOTH attorneys.
-  if ((prosecutingAttorney && !defenseAttorney) || (!prosecutingAttorney && defenseAttorney)) {
-    // Look for any additional "Attorney:" entries we haven't captured
-    const allAttyMatches = boxHtml.matchAll(/(?:[\w.]+\s+)?Att(?:orney|y):\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/gi);
-    for (const m of allAttyMatches) {
-      const name = cleanName(stripTags(m[1]));
-      if (name.length < 2) continue;
-      if (name === prosecutingAttorney || name === defenseAttorney) continue;
-      if (!prosecutingAttorney) { prosecutingAttorney = name; break; }
-      if (!defenseAttorney) { defenseAttorney = name; break; }
-    }
-  }
 
   // 6. Extract defendant name from the col-sm-4 div (parties section)
   let defendantName: string | null = null;
@@ -406,6 +333,13 @@ function parseEventBlock(
     }
   }
 
+  // Extract details.php URL for fetching attorney data
+  let detailsUrl: string | null = null;
+  const detailsMatch = boxHtml.match(/href="[^"]*?(details\.php\?ref=\d+[^"]*?)"/i);
+  if (detailsMatch) {
+    detailsUrl = `https://legacy.utcourts.gov/cal/${detailsMatch[1].replace(/&amp;/g, "&")}`;
+  }
+
   // Must have at least a case number or defendant to be a valid event
   if (!caseNumber && !defendantName) return null;
 
@@ -428,6 +362,7 @@ function parseEventBlock(
     judgeName,
     hearingLocation,
     isVirtual,
+    detailsUrl,
   };
 
   return {
@@ -652,4 +587,157 @@ export function parseCourtCalendarText(
   }
 
   return events;
+}
+
+// ============================================================
+// DETAILS PAGE PARSER — legacy.utcourts.gov/cal/details.php
+//
+// The details page shows both attorneys with role labels:
+//   <strong>DEF ATTY:</strong> BRANDON LARSEN
+//   <strong>PLA ATTY:</strong> RYAN ROBINSON
+// ============================================================
+
+export interface DetailAttorneys {
+  prosecutingAttorney: string | null;
+  defenseAttorney: string | null;
+  defendantDob: string | null;
+  defendantOtn: string | null;
+  citationNumber: string | null;
+  charges: string[];
+}
+
+/**
+ * Fetch a details.php page via GET.
+ */
+function fetchDetailsHtml(url: string, timeoutMs = 8000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Details fetch timeout")), timeoutMs);
+    https.get(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Accept": "text/html",
+      },
+      timeout: timeoutMs,
+    }, (res) => {
+      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        const redirectUrl = res.headers.location.startsWith("http")
+          ? res.headers.location
+          : `https://legacy.utcourts.gov${res.headers.location}`;
+        res.resume();
+        https.get(redirectUrl, { timeout: timeoutMs }, (rRes) => {
+          const chunks: Buffer[] = [];
+          rRes.on("data", (c: Buffer) => chunks.push(c));
+          rRes.on("end", () => { clearTimeout(timer); resolve(Buffer.concat(chunks).toString("utf-8")); });
+          rRes.on("error", (e) => { clearTimeout(timer); reject(e); });
+        }).on("error", (e) => { clearTimeout(timer); reject(e); });
+        return;
+      }
+      const chunks: Buffer[] = [];
+      res.on("data", (c: Buffer) => chunks.push(c));
+      res.on("end", () => { clearTimeout(timer); resolve(Buffer.concat(chunks).toString("utf-8")); });
+      res.on("error", (e) => { clearTimeout(timer); reject(e); });
+    }).on("error", (e) => { clearTimeout(timer); reject(e); });
+  });
+}
+
+/**
+ * Parse attorney and enrichment data from a details.php HTML page.
+ *
+ * Labels found in the HTML:
+ *   <strong>DEF ATTY:</strong> name  — defense attorney
+ *   <strong>PLA ATTY:</strong> name  — plaintiff/prosecuting attorney
+ *   <strong>DOB:</strong> date
+ *   OTN: value
+ *   Citation: value
+ */
+export function parseDetailsHtml(html: string): DetailAttorneys {
+  let prosecutingAttorney: string | null = null;
+  let defenseAttorney: string | null = null;
+  let defendantDob: string | null = null;
+  let defendantOtn: string | null = null;
+  let citationNumber: string | null = null;
+  const charges: string[] = [];
+
+  // PLA ATTY: (plaintiff/prosecuting attorney)
+  const plaMatch = html.match(/<strong>PLA\s+ATTY:<\/strong>\s*([\s\S]*?)(?:<br|<\/p|<\/div|<strong>)/i);
+  if (plaMatch) {
+    const name = stripTags(plaMatch[1]).trim();
+    if (name.length >= 2) prosecutingAttorney = name;
+  }
+
+  // DEF ATTY: (defense attorney)
+  const defMatch = html.match(/<strong>DEF\s+ATTY:<\/strong>\s*([\s\S]*?)(?:<br|<\/p|<\/div|<strong>)/i);
+  if (defMatch) {
+    const name = stripTags(defMatch[1]).trim();
+    if (name.length >= 2) defenseAttorney = name;
+  }
+
+  // DOB
+  const dobMatch = html.match(/<strong>DOB:<\/strong>\s*(\d{1,2}\/\d{1,2}\/\d{4})/i);
+  if (dobMatch) {
+    try {
+      const parts = dobMatch[1].split("/");
+      defendantDob = `${parts[2]}-${parts[0].padStart(2, "0")}-${parts[1].padStart(2, "0")}`;
+    } catch { /* ignore */ }
+  }
+
+  // OTN
+  const otnMatch = html.match(/OTN:\s*(?:&nbsp;)?\s*([A-Z0-9-]+)/i);
+  if (otnMatch && otnMatch[1].trim().length > 1) {
+    defendantOtn = otnMatch[1].trim();
+  }
+
+  // Citation
+  const citMatch = html.match(/Citation:\s*(?:&nbsp;)?\s*#?\s*([A-Z0-9-]+)/i);
+  if (citMatch && citMatch[1].trim().length > 1) {
+    citationNumber = citMatch[1].trim();
+  }
+
+  // Charges — lines starting with "- " in the charges section
+  const chargeMatches = html.matchAll(/- ([A-Z][A-Z /()-]+)/g);
+  for (const m of chargeMatches) {
+    const charge = m[1].trim();
+    if (charge.length > 3) charges.push(charge);
+  }
+
+  return { prosecutingAttorney, defenseAttorney, defendantDob, defendantOtn, citationNumber, charges };
+}
+
+/**
+ * Enrich parsed events by fetching their details.php pages in parallel.
+ * Updates events in-place with attorney and other enrichment data.
+ */
+export async function enrichFromDetailsPages(
+  events: ParsedCourtEvent[],
+  batchSize = 10
+): Promise<number> {
+  const toEnrich = events.filter((e) => e.detailsUrl && !e.prosecutingAttorney && !e.defenseAttorney);
+  if (toEnrich.length === 0) return 0;
+
+  let enriched = 0;
+  for (let i = 0; i < toEnrich.length; i += batchSize) {
+    const batch = toEnrich.slice(i, i + batchSize);
+    const results = await Promise.all(
+      batch.map((event) =>
+        fetchDetailsHtml(event.detailsUrl!)
+          .then((html) => ({ event, data: parseDetailsHtml(html) }))
+          .catch((err) => {
+            console.warn(`⚠️ Details fetch failed for ${event.caseNumber}:`, err instanceof Error ? err.message : err);
+            return null;
+          })
+      )
+    );
+
+    for (const result of results) {
+      if (!result) continue;
+      const { event, data } = result;
+      if (data.prosecutingAttorney) { event.prosecutingAttorney = data.prosecutingAttorney; enriched++; }
+      if (data.defenseAttorney) event.defenseAttorney = data.defenseAttorney;
+      if (data.defendantDob && !event.defendantDob) event.defendantDob = data.defendantDob;
+      if (data.defendantOtn && !event.defendantOtn) event.defendantOtn = data.defendantOtn;
+      if (data.citationNumber && !event.citationNumber) event.citationNumber = data.citationNumber;
+    }
+  }
+
+  return enriched;
 }
