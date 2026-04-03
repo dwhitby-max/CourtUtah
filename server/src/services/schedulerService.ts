@@ -448,6 +448,17 @@ export function startScheduler(): void {
     await refreshAllWatchedCases();
   });
 
+  // Daily cleanup — 12:30 UTC (~6:30 AM MT), after refresh completes
+  // Deactivates watched cases with only past events, marks past calendar entries as completed
+  cron.schedule("30 12 * * *", async () => {
+    console.log("🧹 Daily past-event cleanup triggered");
+    try {
+      await cleanupPastEvents();
+    } catch (err) {
+      console.error("❌ Past event cleanup failed:", err instanceof Error ? err.message : err);
+    }
+  });
+
   // Daily digest — 7:00 AM MT (13:00 UTC), after refresh window completes
   cron.schedule("0 13 * * *", async () => {
     console.log("📬 Daily digest triggered");
@@ -636,6 +647,64 @@ export async function refreshAllWatchedCases(): Promise<{
     return { casesChecked: 0, totalEvents: 0, totalNewEntries: 0, totalChanges: 0 };
   } finally {
     isRunning = false;
+  }
+}
+
+/**
+ * Deactivate watched cases and calendar entries for events that have passed.
+ * Uses Mountain Time (America/Denver) as the reference timezone since all
+ * Utah court events are in Mountain Time.
+ */
+export async function cleanupPastEvents(): Promise<{ deactivatedCases: number; completedEntries: number }> {
+  const pool = getPool();
+  if (!pool) return { deactivatedCases: 0, completedEntries: 0 };
+
+  const client = await pool.connect();
+  try {
+    // Mark calendar entries as 'completed' for events that have passed (Mountain Time)
+    const entriesResult = await client.query(
+      `UPDATE calendar_entries ce
+       SET sync_status = 'completed', updated_at = NOW()
+       FROM court_events ev
+       WHERE ce.court_event_id = ev.id
+         AND ce.sync_status IN ('synced', 'pending', 'pending_update')
+         AND ev.event_date < (NOW() AT TIME ZONE 'America/Denver')::date`
+    );
+    const completedEntries = entriesResult.rowCount || 0;
+
+    // Deactivate auto_search watched cases where ALL associated court events are in the past.
+    // A watched case is "expired" if it has no future events AND at least one past event.
+    // Manual watched cases are kept active (user may want ongoing monitoring).
+    const casesResult = await client.query(
+      `UPDATE watched_cases wc
+       SET is_active = false, updated_at = NOW()
+       WHERE wc.is_active = true
+         AND wc.source = 'auto_search'
+         AND NOT EXISTS (
+           SELECT 1 FROM calendar_entries ce
+           JOIN court_events ev ON ev.id = ce.court_event_id
+           WHERE ce.watched_case_id = wc.id
+             AND ev.event_date >= (NOW() AT TIME ZONE 'America/Denver')::date
+         )
+         AND EXISTS (
+           SELECT 1 FROM calendar_entries ce
+           JOIN court_events ev ON ev.id = ce.court_event_id
+           WHERE ce.watched_case_id = wc.id
+             AND ev.event_date < (NOW() AT TIME ZONE 'America/Denver')::date
+         )`
+    );
+    const deactivatedCases = casesResult.rowCount || 0;
+
+    if (completedEntries > 0 || deactivatedCases > 0) {
+      console.log(`🧹 Cleanup: ${completedEntries} calendar entries completed, ${deactivatedCases} watched cases deactivated`);
+    }
+
+    return { deactivatedCases, completedEntries };
+  } catch (err) {
+    console.error("❌ Past event cleanup failed:", err instanceof Error ? err.message : err);
+    return { deactivatedCases: 0, completedEntries: 0 };
+  } finally {
+    client.release();
   }
 }
 
