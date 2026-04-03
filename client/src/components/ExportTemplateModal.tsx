@@ -21,6 +21,7 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<ExportTemplate | null>(null);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     fetchExportTemplates()
@@ -54,44 +55,54 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
     try {
       await deleteExportTemplate(id);
       setTemplates((prev) => prev.filter((t) => t.id !== id));
-    } catch { /* ignore */ }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete template");
+    }
   }
 
   async function handleSave() {
     if (!editing || !editing.name.trim() || saving) return;
     setSaving(true);
+    setError("");
     try {
-      const exists = templates.find((t) => t.id === editing.id);
+      const exists = editing.id && templates.find((t) => t.id === editing.id);
       if (exists) {
         const updated = await updateExportTemplate(editing);
         setTemplates((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
-        setEditing(null);
       } else {
         const created = await createExportTemplate(editing);
         setTemplates((prev) => [...prev, created]);
-        setEditing(null);
       }
-    } catch { /* ignore */ }
+      setEditing(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save template");
+    }
     setSaving(false);
   }
 
   async function handleSaveAndExport() {
     if (!editing || editing.fieldKeys.length === 0 || saving) return;
+    if (!editing.name.trim()) {
+      // Export without saving if no name
+      onExport(editing);
+      return;
+    }
     setSaving(true);
+    setError("");
     try {
-      let tmpl = editing;
-      if (editing.name.trim()) {
-        const exists = templates.find((t) => t.id === editing.id);
-        if (exists) {
-          tmpl = await updateExportTemplate(editing);
-          setTemplates((prev) => prev.map((t) => (t.id === tmpl.id ? tmpl : t)));
-        } else {
-          tmpl = await createExportTemplate(editing);
-          setTemplates((prev) => [...prev, tmpl]);
-        }
+      let tmpl: ExportTemplate;
+      const exists = editing.id && templates.find((t) => t.id === editing.id);
+      if (exists) {
+        tmpl = await updateExportTemplate(editing);
+        setTemplates((prev) => prev.map((t) => (t.id === tmpl.id ? tmpl : t)));
+      } else {
+        tmpl = await createExportTemplate(editing);
+        setTemplates((prev) => [...prev, tmpl]);
       }
       onExport(tmpl);
-    } catch { /* ignore */ }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save template");
+    }
     setSaving(false);
   }
 
@@ -254,6 +265,8 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
         <h3 className="text-lg font-semibold text-gray-900 mb-4">
           {templates.find((t) => t.id === editing.id) ? "Edit Template" : "New Template"}
         </h3>
+
+        {error && <div className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-md mb-3">{error}</div>}
 
         {/* Template name */}
         <label className="block text-sm font-medium text-gray-700 mb-1">Template Name</label>
