@@ -8,7 +8,6 @@ import { DetectedChange } from "@shared/types";
 import { getPool } from "../db/pool";
 import {
   toLiveSearchBase,
-  expandDates,
   resolveCourtCodes,
   searchParamsKey,
   saveSearch,
@@ -208,22 +207,17 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     const courts = await getCourts();
     const courtCodes = resolveCourtCodes(searchParams, courts);
 
-    // utcourts.gov REQUIRES a location code for searches to return results.
-    // If no courts selected or no live-searchable field, use DB only.
-    if (!liveBase || courtCodes.length === 0) {
+    // No live-searchable field (OTN, citation, charges) → DB only
+    if (!liveBase) {
       const dbResults = await searchCourtEvents(searchParams);
-      const source = !liveBase ? "database" : "database";
-      if (courtCodes.length === 0 && liveBase) {
-        console.log("  ⚠️ No courts selected — using DB only (utcourts.gov requires a court location)");
-      }
-      console.log(`  📊 DB-only search: ${dbResults.length} results`);
+      console.log(`  📊 DB-only search (no live-searchable field): ${dbResults.length} results`);
       const { savedSearchId, previousRunAt, limitReached } = await saveSearch(userId, searchParams, pKey, dbResults.length, userPlan);
       markNewEvents(dbResults, previousRunAt);
       res.json({
         results: dbResults,
         resultsCount: dbResults.length,
         searchParams,
-        source,
+        source: "database",
         savedSearchId,
         previousRunAt,
         savedSearchLimitReached: limitReached || false,
@@ -233,19 +227,12 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       return;
     }
 
-    // Build exact court × date combinations to query.
-    // Each request to utcourts.gov mirrors exactly what a user would do on
-    // the site: one search with a specific court, date, and search field.
-    const dates = expandDates(searchParams);
-    const jobs: { loc: string; date: string }[] = [];
-    for (const loc of courtCodes) {
-      for (const date of dates) {
-        jobs.push({ loc, date });
-      }
-    }
-
-    const BATCH_SIZE = 15;
-    console.log(`🌐 Live searching: ${courtCodes.length} court(s) × ${dates.length} date(s) = ${jobs.length} request(s)`);
+    // Determine search strategy:
+    // - No courts selected, "all courts", or many courts (>3): use loc=all&d=all
+    //   in a SINGLE request (same approach the scheduler uses — fast)
+    // - 1-3 specific courts: use loc=CODE&d=all per court (1-3 requests)
+    // Then filter by date range locally after parsing.
+    const useBroadSearch = courtCodes.length === 0 || courtCodes.length > 3 || searchParams.allCourts === "true";
 
     // Build a lookup from location code → full court info so we can annotate parsed events
     const courtByLoc = new Map(courts.map((c) => [c.locationCode, c]));
@@ -255,26 +242,35 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     const parseContext: SearchContext = {
       searchedAttorney: searchParams.attorney || undefined,
     };
-    let failedJobs = 0;
-    let emptyJobs = 0;
-    let totalHtmlLen = 0;
-    for (let i = 0; i < jobs.length; i += BATCH_SIZE) {
-      const batch = jobs.slice(i, i + BATCH_SIZE);
+
+    if (useBroadSearch) {
+      // Single request with loc=all — searches ALL courts at once
+      console.log(`🌐 Broad search: loc=all&d=all (1 request for all ${courtCodes.length} courts)`);
+      try {
+        const html = await liveSearchUtcourts({ ...liveBase, date: "all", locationCode: "all" });
+        if (html.length > 0) {
+          const parsed = parseHtmlCalendarResults(html, parseContext);
+          allParsed.push(...parsed);
+          console.log(`  📋 Parsed ${parsed.length} events from ${html.length} chars HTML`);
+        }
+      } catch (err) {
+        console.warn(`⚠️ Broad search failed:`, err instanceof Error ? err.message : err);
+      }
+    } else {
+      // Targeted search: 1-3 courts, each with d=all (1 request per court)
+      console.log(`🌐 Targeted search: ${courtCodes.length} court(s) with d=all = ${courtCodes.length} request(s)`);
       const results = await Promise.all(
-        batch.map((j) =>
-          liveSearchUtcourts({ ...liveBase, locationCode: j.loc, date: j.date })
-            .then((html) => ({ html, loc: j.loc }))
+        courtCodes.map((loc) =>
+          liveSearchUtcourts({ ...liveBase, locationCode: loc, date: "all" })
+            .then((html) => ({ html, loc }))
             .catch((err) => {
-              failedJobs++;
-              console.warn(`⚠️ Search failed for loc=${j.loc} date=${j.date}:`, err instanceof Error ? err.message : err);
-              return { html: "", loc: j.loc };
+              console.warn(`⚠️ Search failed for loc=${loc}:`, err instanceof Error ? err.message : err);
+              return { html: "", loc };
             })
         )
       );
-      // Parse each job's HTML separately and annotate with court metadata
       for (const { html, loc } of results) {
-        totalHtmlLen += html.length;
-        if (html.length === 0) { emptyJobs++; continue; }
+        if (html.length === 0) continue;
         const courtInfo = courtByLoc.get(loc);
         const parsed = parseHtmlCalendarResults(html, parseContext);
         for (const event of parsed) {
@@ -283,13 +279,13 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
         }
         allParsed.push(...parsed);
       }
+      console.log(`  📋 Parsed ${allParsed.length} events total`);
     }
 
     const dbResults = await dbResultsPromise;
 
     // Diagnostic logging
-    console.log(`  📋 Live: ${allParsed.length} parsed events from ${totalHtmlLen} chars HTML (${failedJobs} failed jobs, ${emptyJobs} empty responses)`);
-    console.log(`  📋 DB: ${dbResults.length} events`);
+    console.log(`  📋 Live: ${allParsed.length} parsed events, DB: ${dbResults.length} events`);
 
     // Enrich events with attorney data from details.php pages
     // (search.php only shows one attorney with no role label)
