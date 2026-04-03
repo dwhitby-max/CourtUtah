@@ -160,7 +160,8 @@ export function parseCourtListHtml(html: string): CourtInfo[] {
 
   while ((optMatch = optgroupPattern.exec(html)) !== null) {
     const label = optMatch[1];
-    const content = optMatch[2];
+    // Strip HTML comments to exclude commented-out courts
+    const content = optMatch[2].replace(/<!--[\s\S]*?-->/g, "");
     const courtType: "DistrictCourt" | "JusticeCourt" =
       label.toLowerCase().includes("district") ? "DistrictCourt" : "JusticeCourt";
 
