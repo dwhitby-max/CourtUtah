@@ -89,6 +89,7 @@ export default function WatchedCasesPage() {
   async function fetchCases() {
     try {
       const res = await apiFetch("/watched-cases");
+      if (!res.ok) throw new Error("Failed to load saved searches");
       const data = await res.json();
       setCases(data.watchedCases || []);
     } catch (err) {

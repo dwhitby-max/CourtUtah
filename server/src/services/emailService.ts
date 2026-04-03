@@ -162,3 +162,122 @@ export async function sendCancellationEmail(
   `;
   return sendEmail(to, `Hearing May Be Cancelled: ${caseName}`, html);
 }
+
+export interface DailySummaryItem {
+  type: "change" | "cancellation" | "new_match";
+  caseName: string;
+  caseNumber: string;
+  defendant: string;
+  date: string;
+  time: string;
+  court: string;
+  calendarSynced: boolean;
+  changes?: Array<{ field: string; oldValue: string; newValue: string }>;
+}
+
+export async function sendDailySummaryEmail(
+  to: string,
+  items: DailySummaryItem[]
+): Promise<boolean> {
+  if (items.length === 0) return false;
+
+  const changes = items.filter(i => i.type === "change");
+  const cancellations = items.filter(i => i.type === "cancellation");
+  const newMatches = items.filter(i => i.type === "new_match");
+
+  let sectionsHtml = "";
+
+  if (changes.length > 0) {
+    const rows = changes.map(item => {
+      const changeDetail = item.changes
+        ? item.changes.map(c => `${c.field}: <span style="color:#b91c1c;text-decoration:line-through;">${c.oldValue}</span> &rarr; <span style="color:#059669;font-weight:bold;">${c.newValue}</span>`).join("<br/>")
+        : "";
+      return `<tr>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.defendant || item.caseNumber}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.caseNumber}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.date} ${item.time || ""}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.court}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${changeDetail}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.calendarSynced ? "&#10003; Updated" : "Pending"}</td>
+      </tr>`;
+    }).join("");
+
+    sectionsHtml += `
+      <h3 style="color:#b45309;margin-top:24px;">Schedule Changes (${changes.length})</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <tr style="background:#f9fafb;">
+          <th style="padding:8px;text-align:left;border-bottom:2px solid #4f46e5;">Defendant</th>
+          <th style="padding:8px;text-align:left;border-bottom:2px solid #4f46e5;">Case #</th>
+          <th style="padding:8px;text-align:left;border-bottom:2px solid #4f46e5;">Date/Time</th>
+          <th style="padding:8px;text-align:left;border-bottom:2px solid #4f46e5;">Court</th>
+          <th style="padding:8px;text-align:left;border-bottom:2px solid #4f46e5;">Changes</th>
+          <th style="padding:8px;text-align:left;border-bottom:2px solid #4f46e5;">Calendar</th>
+        </tr>
+        ${rows}
+      </table>`;
+  }
+
+  if (cancellations.length > 0) {
+    const rows = cancellations.map(item =>
+      `<tr>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.defendant || item.caseNumber}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.caseNumber}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.date} ${item.time || ""}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.court}</td>
+      </tr>`
+    ).join("");
+
+    sectionsHtml += `
+      <h3 style="color:#b91c1c;margin-top:24px;">Possible Cancellations (${cancellations.length})</h3>
+      <p style="color:#666;">These hearings no longer appear on the court calendar. Please verify with the court.</p>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <tr style="background:#fef2f2;">
+          <th style="padding:8px;text-align:left;border-bottom:2px solid #b91c1c;">Defendant</th>
+          <th style="padding:8px;text-align:left;border-bottom:2px solid #b91c1c;">Case #</th>
+          <th style="padding:8px;text-align:left;border-bottom:2px solid #b91c1c;">Date/Time</th>
+          <th style="padding:8px;text-align:left;border-bottom:2px solid #b91c1c;">Court</th>
+        </tr>
+        ${rows}
+      </table>`;
+  }
+
+  if (newMatches.length > 0) {
+    const rows = newMatches.map(item =>
+      `<tr>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.defendant || item.caseNumber}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.caseNumber}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.date} ${item.time || ""}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.court}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.calendarSynced ? "&#10003; Added" : "Pending"}</td>
+      </tr>`
+    ).join("");
+
+    sectionsHtml += `
+      <h3 style="color:#059669;margin-top:24px;">New Hearings Found (${newMatches.length})</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <tr style="background:#f0fdf4;">
+          <th style="padding:8px;text-align:left;border-bottom:2px solid #059669;">Defendant</th>
+          <th style="padding:8px;text-align:left;border-bottom:2px solid #059669;">Case #</th>
+          <th style="padding:8px;text-align:left;border-bottom:2px solid #059669;">Date/Time</th>
+          <th style="padding:8px;text-align:left;border-bottom:2px solid #059669;">Court</th>
+          <th style="padding:8px;text-align:left;border-bottom:2px solid #059669;">Calendar</th>
+        </tr>
+        ${rows}
+      </table>`;
+  }
+
+  const totalCount = items.length;
+  const subject = `Court Calendar Daily Update — ${totalCount} change${totalCount !== 1 ? "s" : ""} detected`;
+
+  const html = `
+    <div style="max-width:700px;margin:0 auto;font-family:Arial,sans-serif;">
+      <h2 style="color:#1e293b;">Court Calendar Daily Update</h2>
+      <p style="color:#64748b;">Your daily summary of court calendar changes from the overnight check.</p>
+      ${sectionsHtml}
+      <hr style="margin-top:24px;border:none;border-top:1px solid #e5e7eb;" />
+      <p style="color:#94a3b8;font-size:12px;">You're receiving this because you have active watched cases on Court Calendar Tracker. Manage your notification preferences in your profile settings.</p>
+    </div>
+  `;
+
+  return sendEmail(to, subject, html);
+}

@@ -345,8 +345,13 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       }
     }
 
-    // Now apply filters (attorney filter works because enrichment already ran)
-    const filteredLive = applyAllFilters(liveEvents, searchParams);
+    // Apply filters — but skip attorney filter for live results since
+    // utcourts.gov already filtered by attorney (search.php t=a).
+    // The parser leaves prosecutingAttorney/defenseAttorney null until
+    // details.php enrichment runs, which may fail or be incomplete.
+    const liveFilterParams = { ...searchParams };
+    if (isAttorneySearch) delete liveFilterParams.attorney;
+    const filteredLive = applyAllFilters(liveEvents, liveFilterParams);
 
     // Add DB-only results (not in live) and merge
     const extraDb = dbResults.filter(

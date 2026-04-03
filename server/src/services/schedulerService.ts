@@ -7,6 +7,23 @@ import { syncCalendarEntry } from "./calendarSync";
 import { captureException, captureMessage } from "./sentryService";
 import { createNotification } from "./notificationService";
 import { sendDigestNotifications } from "./digestService";
+import { sendDailySummaryEmail, DailySummaryItem } from "./emailService";
+
+/**
+ * Per-user accumulator for daily summary emails.
+ * Collects all changes/cancellations/new matches during the refresh cycle,
+ * then sends ONE consolidated email per user at the end.
+ */
+const dailySummary = new Map<number, { email: string; items: DailySummaryItem[] }>();
+
+function addSummaryItem(userId: number, email: string, item: DailySummaryItem): void {
+  const existing = dailySummary.get(userId);
+  if (existing) {
+    existing.items.push(item);
+  } else {
+    dailySummary.set(userId, { email, items: [item] });
+  }
+}
 
 let isRunning = false;
 
@@ -226,7 +243,7 @@ async function detectCancelledEvents(
       );
 
       for (const entry of calEntries.rows) {
-        // Notify the user about the cancellation
+        // Create in-app notification (no immediate email — batched into daily summary)
         await createNotification({
           userId: entry.user_id,
           type: "event_cancelled",
@@ -240,8 +257,26 @@ async function detectCancelledEvents(
             eventDate: dateStr,
             eventTime: dbEvent.event_time,
             courtName: dbEvent.court_name,
+            _skipEmail: true,
           },
         });
+
+        // Collect for daily summary email
+        const userRow = await client.query<{ email: string }>(
+          "SELECT email FROM users WHERE id = $1", [entry.user_id]
+        );
+        if (userRow.rows.length > 0) {
+          addSummaryItem(entry.user_id, userRow.rows[0].email, {
+            type: "cancellation",
+            caseName: dbEvent.defendant_name || dbEvent.case_number,
+            caseNumber: dbEvent.case_number,
+            defendant: dbEvent.defendant_name || "",
+            date: dateStr,
+            time: dbEvent.event_time || "",
+            court: dbEvent.court_name || "",
+            calendarSynced: true,
+          });
+        }
       }
 
       cancelled++;
@@ -632,6 +667,20 @@ export async function refreshAllWatchedCases(): Promise<{
 
     console.log(`✅ Refresh complete: ${watchedCases.length} cases, ${totalEvents} events, ${totalNewEntries} new entries, ${totalChanges} changes`);
 
+    // Send one consolidated daily summary email per user
+    if (dailySummary.size > 0) {
+      console.log(`📧 Sending daily summary emails to ${dailySummary.size} user(s)...`);
+      for (const [userId, { email, items }] of dailySummary) {
+        try {
+          await sendDailySummaryEmail(email, items);
+          console.log(`  ✅ Summary email sent to ${email}: ${items.length} item(s)`);
+        } catch (err) {
+          console.warn(`  ⚠️ Summary email failed for user ${userId}:`, err instanceof Error ? err.message : err);
+        }
+      }
+      dailySummary.clear();
+    }
+
     captureMessage(
       `Watched-case refresh: ${watchedCases.length} cases, ${totalEvents} events, ${totalNewEntries} new entries`,
       "info",
@@ -646,6 +695,7 @@ export async function refreshAllWatchedCases(): Promise<{
     });
     return { casesChecked: 0, totalEvents: 0, totalNewEntries: 0, totalChanges: 0 };
   } finally {
+    dailySummary.clear();
     isRunning = false;
   }
 }
@@ -799,6 +849,8 @@ async function upsertCourtEvent(event: ParsedCourtEvent): Promise<boolean> {
 
           const changeDescription = changes.map(c => `${c.field}: "${c.oldValue}" → "${c.newValue}"`).join(", ");
           const caseName = event.defendantName || event.caseNumber || "Court Hearing";
+
+          // Create in-app notification (no immediate email — batched into daily summary)
           await createNotification({
             userId: entry.user_id,
             type: "schedule_change",
@@ -811,8 +863,27 @@ async function upsertCourtEvent(event: ParsedCourtEvent): Promise<boolean> {
               defendantName: event.defendantName,
               changes,
               autoSynced: synced,
+              _skipEmail: true,  // Signal to skip immediate email — daily summary handles it
             },
           });
+
+          // Collect for daily summary email
+          const userRow = await client.query<{ email: string }>(
+            "SELECT email FROM users WHERE id = $1", [entry.user_id]
+          );
+          if (userRow.rows.length > 0) {
+            addSummaryItem(entry.user_id, userRow.rows[0].email, {
+              type: "change",
+              caseName,
+              caseNumber: event.caseNumber || "",
+              defendant: event.defendantName || "",
+              date: event.eventDate || "",
+              time: event.eventTime || "",
+              court: event.hearingLocation || "",
+              calendarSynced: synced,
+              changes,
+            });
+          }
         }
 
         return true;

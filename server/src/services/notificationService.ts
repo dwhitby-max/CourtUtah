@@ -101,10 +101,15 @@ export async function createNotification(params: NotifyParams): Promise<number |
     // but defer email/SMS delivery to the digest job.
     const shouldSendNow = frequency === "immediate";
 
-    // Send email if enabled and frequency is immediate
-    if (prefs.emailEnabled && shouldSendNow) {
+    // _skipEmail: scheduler batches emails into one daily summary — skip individual sends
+    const skipEmail = !!(params.metadata && params.metadata._skipEmail);
+
+    // Send email if enabled and frequency is immediate (unless batched by scheduler)
+    if (prefs.emailEnabled && shouldSendNow && !skipEmail) {
       const sent = await sendTypedEmail(user.email, params);
       if (sent) channelsSent.push("email");
+    } else if (prefs.emailEnabled && skipEmail) {
+      channelsSent.push("email_batched");
     } else if (prefs.emailEnabled && !shouldSendNow) {
       channelsSent.push("email_deferred");
     }
