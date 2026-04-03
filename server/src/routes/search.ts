@@ -309,8 +309,40 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       console.warn("⚠️ Failed to persist live results:", err instanceof Error ? err.message : err);
     }
 
-    // Convert live-parsed results to CourtEvent format
-    const liveEvents = allParsed.map((event) => toCourtEvent(event));
+    // Look up real DB IDs for persisted live results so the frontend can
+    // reference them (e.g. "Add to Calendar" needs a real court_event ID).
+    const dbIdLookup = new Map<string, number>();
+    try {
+      const pool = getPool();
+      if (pool && allParsed.length > 0) {
+        const client = await pool.connect();
+        try {
+          const caseNumbers = [...new Set(allParsed.map(e => e.caseNumber).filter(Boolean))];
+          if (caseNumbers.length > 0) {
+            const result = await client.query<{ id: number; case_number: string; event_date: string; event_time: string }>(
+              `SELECT id, case_number, event_date::text, COALESCE(event_time, '') as event_time
+               FROM court_events WHERE case_number = ANY($1)`,
+              [caseNumbers]
+            );
+            for (const row of result.rows) {
+              dbIdLookup.set(`${row.case_number}|${row.event_date}|${row.event_time}`, row.id);
+            }
+          }
+        } finally {
+          client.release();
+        }
+      }
+    } catch (err) {
+      console.warn("⚠️ DB ID lookup failed:", err instanceof Error ? err.message : err);
+    }
+
+    // Convert live-parsed results to CourtEvent format, using real DB IDs when available
+    const liveEvents = allParsed.map((event) => {
+      const ce = toCourtEvent(event);
+      const dbId = dbIdLookup.get(`${event.caseNumber}|${event.eventDate}|${event.eventTime || ""}`);
+      if (dbId) ce.id = dbId;
+      return ce;
+    });
 
     // Enrich live results with DB data (attorneys, OTN, DOB, charges) BEFORE
     // filtering, so attorney-based searches don't drop results that only have

@@ -27,7 +27,7 @@ function addSummaryItem(userId: number, email: string, item: DailySummaryItem): 
 
 let isRunning = false;
 
-interface WatchedCaseRow {
+export interface WatchedCaseRow {
   id: number;
   user_id: number;
   search_type: string;
@@ -295,7 +295,7 @@ async function detectCancelledEvents(
  * After upserting events, find matching court_events for this watched case
  * and create calendar_entries for any new matches.
  */
-async function createCalendarEntriesForWatchedCase(
+export async function createCalendarEntriesForWatchedCase(
   wc: WatchedCaseRow,
   client: { query: <T = Record<string, unknown>>(q: string, p?: unknown[]) => Promise<{ rows: T[] }> }
 ): Promise<number> {

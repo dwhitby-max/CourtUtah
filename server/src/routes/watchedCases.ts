@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { authenticateToken } from "../middleware/auth";
 import { getPool } from "../db/pool";
-import { runWatchedCaseSearch } from "../services/schedulerService";
+import { runWatchedCaseSearch, createCalendarEntriesForWatchedCase, WatchedCaseRow } from "../services/schedulerService";
 import { syncCalendarEntry, deleteCalendarEntry } from "../services/calendarSync";
 
 const router = Router();
@@ -180,7 +180,30 @@ router.patch("/:id", async (req: Request, res: Response) => {
       values
     );
 
-    res.json({ message: "Watched case updated" });
+    // If autosync was just turned ON, immediately create calendar entries
+    // for existing matching events (don't wait for the next daily cron)
+    let entriesCreated = 0;
+    const autoSyncEnabled = (autoAddNew === true || autoAddToCalendar === true);
+    if (autoSyncEnabled) {
+      try {
+        const wcResult = await client.query<WatchedCaseRow>(
+          `SELECT id, user_id, search_type, search_value, label, monitor_changes,
+                  auto_add_new, search_params, COALESCE(source, 'manual') as source
+           FROM watched_cases WHERE id = $1`,
+          [watchedCaseId]
+        );
+        if (wcResult.rows.length > 0) {
+          entriesCreated = await createCalendarEntriesForWatchedCase(wcResult.rows[0], client);
+          if (entriesCreated > 0) {
+            console.log(`📅 Auto-sync enabled: created ${entriesCreated} calendar entries for watched case ${watchedCaseId}`);
+          }
+        }
+      } catch (err) {
+        console.warn(`⚠️ Failed to auto-create calendar entries:`, err instanceof Error ? err.message : err);
+      }
+    }
+
+    res.json({ message: "Watched case updated", entriesCreated });
   } catch (err) {
     console.error("❌ PATCH /api/watched-cases/:id failed:", err);
     res.status(500).json({ error: "Failed to update watched case" });
