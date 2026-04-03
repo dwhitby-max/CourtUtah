@@ -661,14 +661,15 @@ export function parseDetailsHtml(html: string): DetailAttorneys {
   // PLA ATTY: (plaintiff/prosecuting attorney)
   const plaMatch = html.match(/<strong>PLA\s+ATTY:<\/strong>\s*([\s\S]*?)(?:<br|<\/p|<\/div|<strong>)/i);
   if (plaMatch) {
-    const name = stripTags(plaMatch[1]).trim();
+    // Normalize whitespace — the HTML has newlines between first/last name
+    const name = stripTags(plaMatch[1]).replace(/\s+/g, " ").trim();
     if (name.length >= 2) prosecutingAttorney = name;
   }
 
   // DEF ATTY: (defense attorney)
   const defMatch = html.match(/<strong>DEF\s+ATTY:<\/strong>\s*([\s\S]*?)(?:<br|<\/p|<\/div|<strong>)/i);
   if (defMatch) {
-    const name = stripTags(defMatch[1]).trim();
+    const name = stripTags(defMatch[1]).replace(/\s+/g, " ").trim();
     if (name.length >= 2) defenseAttorney = name;
   }
 

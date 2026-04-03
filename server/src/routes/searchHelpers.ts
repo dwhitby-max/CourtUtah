@@ -490,12 +490,14 @@ export function applyAllFilters(
   }
 
   if (params.attorney) {
-    const atty = params.attorney.toUpperCase();
-    filtered = filtered.filter(
-      (e) =>
-        (e.prosecutingAttorney && e.prosecutingAttorney.toUpperCase().includes(atty)) ||
-        (e.defenseAttorney && e.defenseAttorney.toUpperCase().includes(atty))
-    );
+    // Split search term into words — each word must appear in at least one attorney field
+    const attyWords = params.attorney.toUpperCase().split(/\s+/).filter(Boolean);
+    filtered = filtered.filter((e) => {
+      const pros = (e.prosecutingAttorney || "").toUpperCase();
+      const def = (e.defenseAttorney || "").toUpperCase();
+      const combined = `${pros} ${def}`;
+      return attyWords.every((w) => combined.includes(w));
+    });
   }
 
   if (params.defendantOtn) {
