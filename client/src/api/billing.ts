@@ -34,6 +34,19 @@ export async function activateSubscription(sessionId: string): Promise<{
   return res.json();
 }
 
+export async function cancelSubscription(): Promise<{
+  status: string;
+  cancelAt: string | null;
+  message: string;
+}> {
+  const res = await apiFetch("/billing/cancel", { method: "POST" });
+  if (!res.ok) {
+    const data = await res.json();
+    throw new Error(data.error || "Failed to cancel subscription");
+  }
+  return res.json();
+}
+
 export async function getSubscription(): Promise<{
   plan: string;
   status: string;

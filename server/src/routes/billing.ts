@@ -209,6 +209,52 @@ router.post("/activate", authenticateToken, heavyLimiter, async (req: Request, r
   }
 });
 
+// POST /api/billing/cancel — Cancel subscription at end of current period
+router.post("/cancel", authenticateToken, heavyLimiter, async (req: Request, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
+
+  const stripe = getStripe();
+  if (!stripe) { res.status(503).json({ error: "Stripe not configured" }); return; }
+
+  const pool = getPool();
+  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
+
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      "SELECT subscription_id, stripe_customer_id FROM users WHERE id = $1",
+      [req.user.userId]
+    );
+    if (result.rows.length === 0 || !result.rows[0].subscription_id) {
+      res.status(400).json({ error: "No active subscription found" });
+      return;
+    }
+
+    // Cancel at period end — subscription stays active until the renewal date
+    const sub = await stripe.subscriptions.update(result.rows[0].subscription_id, {
+      cancel_at_period_end: true,
+    }) as unknown as { id: string; current_period_end: number | null };
+
+    const periodEnd = sub.current_period_end
+      ? new Date(sub.current_period_end * 1000).toISOString()
+      : null;
+
+    console.log(`🚫 Subscription ${sub.id} set to cancel at period end (${periodEnd})`);
+
+    res.json({
+      status: "canceling",
+      cancelAt: periodEnd,
+      message: `Your subscription will remain active until ${periodEnd ? new Date(periodEnd).toLocaleDateString() : "your renewal date"}. You will not be charged again.`,
+    });
+  } catch (err) {
+    console.error("❌ Cancel subscription failed:", err);
+    const message = err instanceof Error ? err.message : "Failed to cancel subscription";
+    res.status(500).json({ error: message });
+  } finally {
+    client.release();
+  }
+});
+
 // POST /api/billing/webhook — Stripe webhook events
 router.post("/webhook", async (req: Request, res: Response) => {
   const stripe = getStripe();

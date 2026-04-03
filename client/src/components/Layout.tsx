@@ -60,6 +60,9 @@ export default function Layout() {
                   Upgrade
                 </Link>
               )}
+              <Link to="/settings" className="hidden sm:inline text-slate-200 hover:text-white text-sm">
+                Settings
+              </Link>
               <Link to="/profile" className="hidden sm:inline text-slate-200 hover:text-white text-sm truncate max-w-32">
                 {user?.email}
               </Link>
@@ -103,6 +106,9 @@ export default function Layout() {
                   Upgrade to Pro
                 </Link>
               )}
+              <Link to="/settings" className="block px-3 py-2 text-slate-200 hover:text-white text-sm" onClick={() => setMobileMenuOpen(false)}>
+                Settings
+              </Link>
               <Link to="/profile" className="block px-3 py-2 text-slate-200 hover:text-white text-sm" onClick={() => setMobileMenuOpen(false)}>
                 {user?.email}
               </Link>

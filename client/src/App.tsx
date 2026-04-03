@@ -19,6 +19,7 @@ import TermsPage from "@/pages/TermsPage";
 import AcceptTermsPage from "@/pages/AcceptTermsPage";
 import PendingApprovalPage from "@/pages/PendingApprovalPage";
 import BillingPage from "@/pages/BillingPage";
+import SettingsPage from "@/pages/SettingsPage";
 
 export default function App() {
   return (
@@ -51,6 +52,7 @@ export default function App() {
             <Route path="/notification-settings" element={<NotificationSettingsPage />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/billing" element={<BillingPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
             <Route path="/admin" element={<AdminPage />} />
           </Route>
         </Routes>
