@@ -3,9 +3,13 @@ import {
   EXPORT_FIELDS,
   ExportTemplate,
   SortLevel,
-  loadExportTemplates,
-  saveExportTemplates,
 } from "@/utils/formatters";
+import {
+  fetchExportTemplates,
+  createExportTemplate,
+  updateExportTemplate,
+  deleteExportTemplate,
+} from "@/api/exportTemplates";
 
 interface ExportTemplateModalProps {
   onExport: (template: ExportTemplate) => void;
@@ -14,16 +18,16 @@ interface ExportTemplateModalProps {
 
 export default function ExportTemplateModal({ onExport, onClose }: ExportTemplateModalProps) {
   const [templates, setTemplates] = useState<ExportTemplate[]>([]);
+  const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<ExportTemplate | null>(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    setTemplates(loadExportTemplates());
+    fetchExportTemplates()
+      .then(setTemplates)
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
-
-  function persist(updated: ExportTemplate[]) {
-    setTemplates(updated);
-    saveExportTemplates(updated);
-  }
 
   function handleQuickExport(tmpl: ExportTemplate) {
     onExport(tmpl);
@@ -31,7 +35,7 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
 
   function startNew() {
     setEditing({
-      id: crypto.randomUUID(),
+      id: "",
       name: "",
       fieldKeys: EXPORT_FIELDS.map((f) => f.key),
       sortLevels: [],
@@ -42,27 +46,53 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
     setEditing({
       ...tmpl,
       fieldKeys: [...tmpl.fieldKeys],
-      sortLevels: tmpl.sortLevels?.length
-        ? tmpl.sortLevels.map((l) => ({ ...l }))
-        : tmpl.sortByKey
-          ? [{ key: tmpl.sortByKey, dir: tmpl.sortDir || "asc" }]
-          : [],
+      sortLevels: tmpl.sortLevels.map((l) => ({ ...l })),
     });
   }
 
-  function handleDelete(id: string) {
-    persist(templates.filter((t) => t.id !== id));
+  async function handleDelete(id: string) {
+    try {
+      await deleteExportTemplate(id);
+      setTemplates((prev) => prev.filter((t) => t.id !== id));
+    } catch { /* ignore */ }
   }
 
-  function handleSave() {
-    if (!editing || !editing.name.trim()) return;
-    const exists = templates.find((t) => t.id === editing.id);
-    if (exists) {
-      persist(templates.map((t) => (t.id === editing.id ? editing : t)));
-    } else {
-      persist([...templates, editing]);
-    }
-    setEditing(null);
+  async function handleSave() {
+    if (!editing || !editing.name.trim() || saving) return;
+    setSaving(true);
+    try {
+      const exists = templates.find((t) => t.id === editing.id);
+      if (exists) {
+        const updated = await updateExportTemplate(editing);
+        setTemplates((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+        setEditing(null);
+      } else {
+        const created = await createExportTemplate(editing);
+        setTemplates((prev) => [...prev, created]);
+        setEditing(null);
+      }
+    } catch { /* ignore */ }
+    setSaving(false);
+  }
+
+  async function handleSaveAndExport() {
+    if (!editing || editing.fieldKeys.length === 0 || saving) return;
+    setSaving(true);
+    try {
+      let tmpl = editing;
+      if (editing.name.trim()) {
+        const exists = templates.find((t) => t.id === editing.id);
+        if (exists) {
+          tmpl = await updateExportTemplate(editing);
+          setTemplates((prev) => prev.map((t) => (t.id === tmpl.id ? tmpl : t)));
+        } else {
+          tmpl = await createExportTemplate(editing);
+          setTemplates((prev) => [...prev, tmpl]);
+        }
+      }
+      onExport(tmpl);
+    } catch { /* ignore */ }
+    setSaving(false);
   }
 
   function toggleField(key: string) {
@@ -70,7 +100,6 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
     const keys = editing.fieldKeys.includes(key)
       ? editing.fieldKeys.filter((k) => k !== key)
       : [...editing.fieldKeys, key];
-    // Also remove from sort levels if unchecked
     const sortLevels = editing.sortLevels.filter((l) => keys.includes(l.key));
     setEditing({ ...editing, fieldKeys: keys, sortLevels });
   }
@@ -84,7 +113,6 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
     setEditing({ ...editing, fieldKeys: keys });
   }
 
-  // Sort level helpers
   function addSortLevel() {
     if (!editing) return;
     const usedKeys = new Set(editing.sortLevels.map((l) => l.key));
@@ -98,8 +126,7 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
 
   function removeSortLevel(index: number) {
     if (!editing) return;
-    const sortLevels = editing.sortLevels.filter((_, i) => i !== index);
-    setEditing({ ...editing, sortLevels });
+    setEditing({ ...editing, sortLevels: editing.sortLevels.filter((_, i) => i !== index) });
   }
 
   function updateSortLevel(index: number, updates: Partial<SortLevel>) {
@@ -120,11 +147,7 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
   }
 
   function sortDescription(tmpl: ExportTemplate): string {
-    const levels = tmpl.sortLevels?.length
-      ? tmpl.sortLevels
-      : tmpl.sortByKey
-        ? [{ key: tmpl.sortByKey, dir: tmpl.sortDir || "asc" }]
-        : [];
+    const levels = tmpl.sortLevels || [];
     if (levels.length === 0) return "";
     const names = levels.map((l) => {
       const label = EXPORT_FIELDS.find((f) => f.key === l.key)?.label || l.key;
@@ -148,63 +171,69 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
             </button>
           </div>
 
-          {/* Default all-fields export */}
-          <button
-            onClick={() => handleQuickExport({
-              id: "default",
-              name: "All Fields",
-              fieldKeys: EXPORT_FIELDS.map((f) => f.key),
-              sortLevels: [],
-            })}
-            className="w-full text-left px-4 py-3 rounded-lg border border-gray-200 hover:border-blue-300 hover:bg-blue-50 transition-colors mb-2"
-          >
-            <div className="font-medium text-gray-900">All Fields</div>
-            <div className="text-xs text-gray-500">Export all columns, default sort</div>
-          </button>
-
-          {/* Saved templates */}
-          {templates.map((tmpl) => (
-            <div
-              key={tmpl.id}
-              className="flex items-center gap-2 px-4 py-3 rounded-lg border border-gray-200 hover:border-blue-300 hover:bg-blue-50 transition-colors mb-2"
-            >
+          {loading ? (
+            <p className="text-sm text-gray-500 text-center py-4">Loading templates...</p>
+          ) : (
+            <>
+              {/* Default all-fields export */}
               <button
-                onClick={() => handleQuickExport(tmpl)}
-                className="flex-1 text-left"
+                onClick={() => handleQuickExport({
+                  id: "default",
+                  name: "All Fields",
+                  fieldKeys: EXPORT_FIELDS.map((f) => f.key),
+                  sortLevels: [],
+                })}
+                className="w-full text-left px-4 py-3 rounded-lg border border-gray-200 hover:border-blue-300 hover:bg-blue-50 transition-colors mb-2"
               >
-                <div className="font-medium text-gray-900">{tmpl.name}</div>
-                <div className="text-xs text-gray-500">
-                  {tmpl.fieldKeys.length} field{tmpl.fieldKeys.length !== 1 ? "s" : ""}
-                  {sortDescription(tmpl)}
+                <div className="font-medium text-gray-900">All Fields</div>
+                <div className="text-xs text-gray-500">Export all columns, default sort</div>
+              </button>
+
+              {/* Saved templates */}
+              {templates.map((tmpl) => (
+                <div
+                  key={tmpl.id}
+                  className="flex items-center gap-2 px-4 py-3 rounded-lg border border-gray-200 hover:border-blue-300 hover:bg-blue-50 transition-colors mb-2"
+                >
+                  <button
+                    onClick={() => handleQuickExport(tmpl)}
+                    className="flex-1 text-left"
+                  >
+                    <div className="font-medium text-gray-900">{tmpl.name}</div>
+                    <div className="text-xs text-gray-500">
+                      {tmpl.fieldKeys.length} field{tmpl.fieldKeys.length !== 1 ? "s" : ""}
+                      {sortDescription(tmpl)}
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => startEdit(tmpl)}
+                    className="p-1.5 text-gray-400 hover:text-blue-600 rounded"
+                    title="Edit template"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => handleDelete(tmpl.id)}
+                    className="p-1.5 text-gray-400 hover:text-red-600 rounded"
+                    title="Delete template"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
                 </div>
-              </button>
-              <button
-                onClick={() => startEdit(tmpl)}
-                className="p-1.5 text-gray-400 hover:text-blue-600 rounded"
-                title="Edit template"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                </svg>
-              </button>
-              <button
-                onClick={() => handleDelete(tmpl.id)}
-                className="p-1.5 text-gray-400 hover:text-red-600 rounded"
-                title="Delete template"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </button>
-            </div>
-          ))}
+              ))}
 
-          <button
-            onClick={startNew}
-            className="w-full mt-2 px-4 py-2 text-sm font-medium rounded-md border-2 border-dashed border-gray-300 text-gray-600 hover:border-blue-400 hover:text-blue-600 transition-colors"
-          >
-            + New Template
-          </button>
+              <button
+                onClick={startNew}
+                className="w-full mt-2 px-4 py-2 text-sm font-medium rounded-md border-2 border-dashed border-gray-300 text-gray-600 hover:border-blue-400 hover:text-blue-600 transition-colors"
+              >
+                + New Template
+              </button>
+            </>
+          )}
         </div>
       </div>
     );
@@ -377,21 +406,17 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
           </button>
           <button
             onClick={handleSave}
-            disabled={!editing.name.trim() || editing.fieldKeys.length === 0}
+            disabled={!editing.name.trim() || editing.fieldKeys.length === 0 || saving}
             className="px-4 py-2 text-sm font-medium text-white bg-gray-600 rounded-md hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            Save Template
+            {saving ? "Saving..." : "Save Template"}
           </button>
           <button
-            onClick={() => {
-              if (!editing || editing.fieldKeys.length === 0) return;
-              if (editing.name.trim()) handleSave();
-              onExport(editing);
-            }}
-            disabled={editing.fieldKeys.length === 0}
+            onClick={handleSaveAndExport}
+            disabled={editing.fieldKeys.length === 0 || saving}
             className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            Save & Export
+            {saving ? "Saving..." : "Save & Export"}
           </button>
         </div>
       </div>

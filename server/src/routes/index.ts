@@ -5,6 +5,7 @@ import calendarRouter from "./calendar";
 import notificationsRouter from "./notifications";
 import watchedCasesRouter from "./watchedCases";
 
+import exportTemplatesRouter from "./exportTemplates";
 import adminRouter from "./admin";
 import healthRouter from "./health";
 import billingRouter from "./billing";
@@ -19,6 +20,7 @@ router.use("/calendar", calendarRouter);
 router.use("/notifications", notificationsRouter);
 router.use("/watched-cases", watchedCasesRouter);
 
+router.use("/export-templates", exportTemplatesRouter);
 router.use("/admin", adminRouter);
 router.use("/billing", billingRouter);
 router.use("/support", supportRouter);

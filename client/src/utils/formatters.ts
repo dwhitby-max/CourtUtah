@@ -139,8 +139,6 @@ export interface ExportTemplate {
   sortDir?: "asc" | "desc";
 }
 
-const TEMPLATES_STORAGE_KEY = "courtcal_export_templates";
-
 export function getDefaultTemplate(): ExportTemplate {
   return {
     id: "default",
@@ -155,18 +153,6 @@ function migrateSortLevels(tmpl: ExportTemplate): SortLevel[] {
   if (tmpl.sortLevels && tmpl.sortLevels.length > 0) return tmpl.sortLevels;
   if (tmpl.sortByKey) return [{ key: tmpl.sortByKey, dir: tmpl.sortDir || "asc" }];
   return [];
-}
-
-export function loadExportTemplates(): ExportTemplate[] {
-  try {
-    const raw = localStorage.getItem(TEMPLATES_STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch { /* ignore */ }
-  return [];
-}
-
-export function saveExportTemplates(templates: ExportTemplate[]): void {
-  localStorage.setItem(TEMPLATES_STORAGE_KEY, JSON.stringify(templates));
 }
 
 export function exportCourtEventsCsv(
