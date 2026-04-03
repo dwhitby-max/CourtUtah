@@ -3,7 +3,7 @@ import { heavyLimiter } from "../middleware/rateLimiter";
 import { authenticateToken } from "../middleware/auth";
 import { searchCourtEvents } from "../services/searchService";
 import { liveSearchUtcourts, fetchCourtList, CourtInfo } from "../services/courtScraper";
-import { parseHtmlCalendarResults, ParsedCourtEvent } from "../services/courtEventParser";
+import { parseHtmlCalendarResults, ParsedCourtEvent, SearchContext } from "../services/courtEventParser";
 import { DetectedChange } from "@shared/types";
 import { getPool } from "../db/pool";
 import {
@@ -247,6 +247,9 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
 
     const dbResultsPromise = searchCourtEvents(searchParams);
     const allParsed: ParsedCourtEvent[] = [];
+    const parseContext: SearchContext = {
+      searchedAttorney: searchParams.attorney || undefined,
+    };
     let failedJobs = 0;
     let emptyJobs = 0;
     let totalHtmlLen = 0;
@@ -268,7 +271,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
         totalHtmlLen += html.length;
         if (html.length === 0) { emptyJobs++; continue; }
         const courtInfo = courtByLoc.get(loc);
-        const parsed = parseHtmlCalendarResults(html);
+        const parsed = parseHtmlCalendarResults(html, parseContext);
         for (const event of parsed) {
           event.courtName = courtInfo?.name ?? null;
           event.courtLocationCode = loc;
@@ -307,14 +310,21 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       arr.push(r);
       dbByCase.set(key, arr);
     }
+    // Skip attorney backfill from DB when doing attorney searches — the DB may
+    // have corrupt data from the old parser that assigned the searched attorney
+    // to defenseAttorney regardless of their actual role.
+    const isAttorneySearch = !!searchParams.attorney;
+
     const liveKeys = new Set<string>();
     for (const event of liveEvents) {
       liveKeys.add(`${event.caseNumber}|${event.eventDate}|${event.eventTime || ""}`);
       const dbMatches = dbByCase.get(`${event.caseNumber}|${event.eventDate}`);
       if (dbMatches) {
         for (const dbMatch of dbMatches) {
-          if (!event.prosecutingAttorney && dbMatch.prosecutingAttorney) event.prosecutingAttorney = dbMatch.prosecutingAttorney;
-          if (!event.defenseAttorney && dbMatch.defenseAttorney) event.defenseAttorney = dbMatch.defenseAttorney;
+          if (!isAttorneySearch) {
+            if (!event.prosecutingAttorney && dbMatch.prosecutingAttorney) event.prosecutingAttorney = dbMatch.prosecutingAttorney;
+            if (!event.defenseAttorney && dbMatch.defenseAttorney) event.defenseAttorney = dbMatch.defenseAttorney;
+          }
           if (!event.defendantOtn && dbMatch.defendantOtn) event.defendantOtn = dbMatch.defendantOtn;
           if (!event.defendantDob && dbMatch.defendantDob) event.defendantDob = dbMatch.defendantDob;
           if (!event.citationNumber && dbMatch.citationNumber) event.citationNumber = dbMatch.citationNumber;

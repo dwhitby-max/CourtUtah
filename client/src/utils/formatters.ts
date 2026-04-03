@@ -94,9 +94,6 @@ export type CourtEventRow = Record<string, unknown> & {
   defendantName: string | null;
   defenseAttorney: string | null;
   prosecutingAttorney: string | null;
-  defendantOtn: string | null;
-  citationNumber: string | null;
-  isVirtual: boolean;
 };
 
 export interface ExportField {
@@ -119,17 +116,21 @@ export const EXPORT_FIELDS: ExportField[] = [
   { key: "defendantLastName", label: "Defendant Last Name", accessor: (e) => extractLastName(e.defendantName) },
   { key: "prosecutingAttorney", label: "Prosecuting Attorney", accessor: (e) => extractLastName(e.prosecutingAttorney) || "-" },
   { key: "defenseAttorney", label: "Defense Attorney", accessor: (e) => extractLastName(e.defenseAttorney) || "-" },
-  { key: "otn", label: "OTN", accessor: (e) => e.defendantOtn || "" },
-  { key: "citationNumber", label: "Citation Number", accessor: (e) => e.citationNumber || "" },
-  { key: "virtual", label: "Virtual", accessor: (e) => e.isVirtual ? "Yes" : "" },
 ];
+
+export interface SortLevel {
+  key: string;
+  dir: "asc" | "desc";
+}
 
 export interface ExportTemplate {
   id: string;
   name: string;
   fieldKeys: string[];   // ordered list of field keys to include
-  sortByKey: string | null; // field key to sort by
-  sortDir: "asc" | "desc";
+  sortLevels: SortLevel[]; // multi-level sort: first by [0], then [1], etc.
+  // Legacy compat (ignored if sortLevels is present)
+  sortByKey?: string | null;
+  sortDir?: "asc" | "desc";
 }
 
 const TEMPLATES_STORAGE_KEY = "courtcal_export_templates";
@@ -139,9 +140,15 @@ export function getDefaultTemplate(): ExportTemplate {
     id: "default",
     name: "All Fields",
     fieldKeys: EXPORT_FIELDS.map((f) => f.key),
-    sortByKey: null,
-    sortDir: "asc",
+    sortLevels: [],
   };
+}
+
+/** Migrate old single-sort templates to multi-level format */
+function migrateSortLevels(tmpl: ExportTemplate): SortLevel[] {
+  if (tmpl.sortLevels && tmpl.sortLevels.length > 0) return tmpl.sortLevels;
+  if (tmpl.sortByKey) return [{ key: tmpl.sortByKey, dir: tmpl.sortDir || "asc" }];
+  return [];
 }
 
 export function loadExportTemplates(): ExportTemplate[] {
@@ -169,16 +176,23 @@ export function exportCourtEventsCsv(
 
   if (fields.length === 0) return;
 
-  // Sort rows if template specifies a sort field
+  // Multi-level sort
   let sorted = [...results];
-  if (tmpl.sortByKey) {
-    const sortField = EXPORT_FIELDS.find((f) => f.key === tmpl.sortByKey);
-    if (sortField) {
+  const levels = migrateSortLevels(tmpl);
+  if (levels.length > 0) {
+    const resolvedLevels = levels
+      .map((l) => ({ field: EXPORT_FIELDS.find((f) => f.key === l.key), dir: l.dir }))
+      .filter((l): l is { field: ExportField; dir: "asc" | "desc" } => l.field != null);
+
+    if (resolvedLevels.length > 0) {
       sorted.sort((a, b) => {
-        const va = sortField.accessor(a).toLowerCase();
-        const vb = sortField.accessor(b).toLowerCase();
-        const cmp = va < vb ? -1 : va > vb ? 1 : 0;
-        return tmpl.sortDir === "desc" ? -cmp : cmp;
+        for (const { field, dir } of resolvedLevels) {
+          const va = field.accessor(a).toLowerCase();
+          const vb = field.accessor(b).toLowerCase();
+          const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+          if (cmp !== 0) return dir === "desc" ? -cmp : cmp;
+        }
+        return 0;
       });
     }
   }

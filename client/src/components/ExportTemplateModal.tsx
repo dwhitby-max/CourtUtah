@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import {
   EXPORT_FIELDS,
   ExportTemplate,
+  SortLevel,
   loadExportTemplates,
   saveExportTemplates,
 } from "@/utils/formatters";
@@ -33,13 +34,20 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
       id: crypto.randomUUID(),
       name: "",
       fieldKeys: EXPORT_FIELDS.map((f) => f.key),
-      sortByKey: null,
-      sortDir: "asc",
+      sortLevels: [],
     });
   }
 
   function startEdit(tmpl: ExportTemplate) {
-    setEditing({ ...tmpl, fieldKeys: [...tmpl.fieldKeys] });
+    setEditing({
+      ...tmpl,
+      fieldKeys: [...tmpl.fieldKeys],
+      sortLevels: tmpl.sortLevels?.length
+        ? tmpl.sortLevels.map((l) => ({ ...l }))
+        : tmpl.sortByKey
+          ? [{ key: tmpl.sortByKey, dir: tmpl.sortDir || "asc" }]
+          : [],
+    });
   }
 
   function handleDelete(id: string) {
@@ -62,7 +70,9 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
     const keys = editing.fieldKeys.includes(key)
       ? editing.fieldKeys.filter((k) => k !== key)
       : [...editing.fieldKeys, key];
-    setEditing({ ...editing, fieldKeys: keys });
+    // Also remove from sort levels if unchecked
+    const sortLevels = editing.sortLevels.filter((l) => keys.includes(l.key));
+    setEditing({ ...editing, fieldKeys: keys, sortLevels });
   }
 
   function moveField(index: number, dir: -1 | 1) {
@@ -72,6 +82,55 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
     if (newIdx < 0 || newIdx >= keys.length) return;
     [keys[index], keys[newIdx]] = [keys[newIdx], keys[index]];
     setEditing({ ...editing, fieldKeys: keys });
+  }
+
+  // Sort level helpers
+  function addSortLevel() {
+    if (!editing) return;
+    const usedKeys = new Set(editing.sortLevels.map((l) => l.key));
+    const available = editing.fieldKeys.filter((k) => !usedKeys.has(k));
+    if (available.length === 0) return;
+    setEditing({
+      ...editing,
+      sortLevels: [...editing.sortLevels, { key: available[0], dir: "asc" }],
+    });
+  }
+
+  function removeSortLevel(index: number) {
+    if (!editing) return;
+    const sortLevels = editing.sortLevels.filter((_, i) => i !== index);
+    setEditing({ ...editing, sortLevels });
+  }
+
+  function updateSortLevel(index: number, updates: Partial<SortLevel>) {
+    if (!editing) return;
+    const sortLevels = editing.sortLevels.map((l, i) =>
+      i === index ? { ...l, ...updates } : l
+    );
+    setEditing({ ...editing, sortLevels });
+  }
+
+  function moveSortLevel(index: number, dir: -1 | 1) {
+    if (!editing) return;
+    const sortLevels = [...editing.sortLevels];
+    const newIdx = index + dir;
+    if (newIdx < 0 || newIdx >= sortLevels.length) return;
+    [sortLevels[index], sortLevels[newIdx]] = [sortLevels[newIdx], sortLevels[index]];
+    setEditing({ ...editing, sortLevels });
+  }
+
+  function sortDescription(tmpl: ExportTemplate): string {
+    const levels = tmpl.sortLevels?.length
+      ? tmpl.sortLevels
+      : tmpl.sortByKey
+        ? [{ key: tmpl.sortByKey, dir: tmpl.sortDir || "asc" }]
+        : [];
+    if (levels.length === 0) return "";
+    const names = levels.map((l) => {
+      const label = EXPORT_FIELDS.find((f) => f.key === l.key)?.label || l.key;
+      return `${label} ${l.dir === "desc" ? "Z-A" : "A-Z"}`;
+    });
+    return ` · sort: ${names.join(" → ")}`;
   }
 
   // Template list view
@@ -95,8 +154,7 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
               id: "default",
               name: "All Fields",
               fieldKeys: EXPORT_FIELDS.map((f) => f.key),
-              sortByKey: null,
-              sortDir: "asc",
+              sortLevels: [],
             })}
             className="w-full text-left px-4 py-3 rounded-lg border border-gray-200 hover:border-blue-300 hover:bg-blue-50 transition-colors mb-2"
           >
@@ -117,7 +175,7 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
                 <div className="font-medium text-gray-900">{tmpl.name}</div>
                 <div className="text-xs text-gray-500">
                   {tmpl.fieldKeys.length} field{tmpl.fieldKeys.length !== 1 ? "s" : ""}
-                  {tmpl.sortByKey && ` · sorted by ${EXPORT_FIELDS.find((f) => f.key === tmpl.sortByKey)?.label || tmpl.sortByKey}`}
+                  {sortDescription(tmpl)}
                 </div>
               </button>
               <button
@@ -156,6 +214,9 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
   const selectedFields = editing.fieldKeys
     .map((key) => EXPORT_FIELDS.find((f) => f.key === key))
     .filter((f): f is (typeof EXPORT_FIELDS)[number] => f != null);
+
+  const usedSortKeys = new Set(editing.sortLevels.map((l) => l.key));
+  const availableSortFields = selectedFields.filter((f) => !usedSortKeys.has(f.key));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -219,33 +280,78 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
           })}
         </div>
 
-        {/* Sort */}
-        <div className="flex gap-3 mb-4">
-          <div className="flex-1">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Sort By</label>
-            <select
-              value={editing.sortByKey || ""}
-              onChange={(e) => setEditing({ ...editing, sortByKey: e.target.value || null })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="">Default (no sort)</option>
-              {selectedFields.map((f) => (
-                <option key={f.key} value={f.key}>{f.label}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Direction</label>
-            <select
-              value={editing.sortDir}
-              onChange={(e) => setEditing({ ...editing, sortDir: e.target.value as "asc" | "desc" })}
-              className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="asc">A-Z / Earliest</option>
-              <option value="desc">Z-A / Latest</option>
-            </select>
-          </div>
+        {/* Multi-level sort */}
+        <label className="block text-sm font-medium text-gray-700 mb-2">Sort Priority</label>
+        <div className="space-y-2 mb-2">
+          {editing.sortLevels.map((level, i) => {
+            const fieldLabel = EXPORT_FIELDS.find((f) => f.key === level.key)?.label || level.key;
+            return (
+              <div key={i} className="flex items-center gap-2 bg-gray-50 rounded-md px-3 py-2">
+                <span className="text-xs font-medium text-gray-500 w-4">{i + 1}.</span>
+                <select
+                  value={level.key}
+                  onChange={(e) => updateSortLevel(i, { key: e.target.value })}
+                  className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value={level.key}>{fieldLabel}</option>
+                  {availableSortFields.map((f) => (
+                    <option key={f.key} value={f.key}>{f.label}</option>
+                  ))}
+                </select>
+                <select
+                  value={level.dir}
+                  onChange={(e) => updateSortLevel(i, { dir: e.target.value as "asc" | "desc" })}
+                  className="px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="asc">A-Z</option>
+                  <option value="desc">Z-A</option>
+                </select>
+                <div className="flex gap-0.5">
+                  <button
+                    onClick={() => moveSortLevel(i, -1)}
+                    disabled={i === 0}
+                    className="p-0.5 text-gray-400 hover:text-gray-700 disabled:opacity-30"
+                    title="Higher priority"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => moveSortLevel(i, 1)}
+                    disabled={i === editing.sortLevels.length - 1}
+                    className="p-0.5 text-gray-400 hover:text-gray-700 disabled:opacity-30"
+                    title="Lower priority"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                </div>
+                <button
+                  onClick={() => removeSortLevel(i)}
+                  className="p-0.5 text-gray-400 hover:text-red-600"
+                  title="Remove sort level"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            );
+          })}
         </div>
+        {availableSortFields.length > 0 && (
+          <button
+            onClick={addSortLevel}
+            className="text-sm text-blue-600 hover:text-blue-800 mb-4"
+          >
+            + Add sort level
+          </button>
+        )}
+        {editing.sortLevels.length === 0 && (
+          <p className="text-xs text-gray-400 mb-4">No sort applied — results export in default order.</p>
+        )}
 
         {/* Preview */}
         {selectedFields.length > 0 && (

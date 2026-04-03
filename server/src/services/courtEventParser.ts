@@ -107,7 +107,12 @@ function htmlToLines(html: string): string[] {
  *   - Judge/room/hearing (col-sm-8 > col-sm-6)
  *   - Case number/type (div.case)
  */
-export function parseHtmlCalendarResults(html: string): ParsedCourtEvent[] {
+export interface SearchContext {
+  /** The attorney name being searched (if attorney-type search) */
+  searchedAttorney?: string;
+}
+
+export function parseHtmlCalendarResults(html: string, context?: SearchContext): ParsedCourtEvent[] {
   const events: ParsedCourtEvent[] = [];
 
   if (!html || html.trim().length === 0) return events;
@@ -144,7 +149,7 @@ export function parseHtmlCalendarResults(html: string): ParsedCourtEvent[] {
     const headerHtml = html.slice(headerStart, boxStart);
     const boxHtml = html.slice(boxStart, boxEnd);
 
-    const parsed = parseEventBlock(headerHtml, boxHtml);
+    const parsed = parseEventBlock(headerHtml, boxHtml, context);
     if (parsed) {
       events.push(parsed);
     }
@@ -158,7 +163,8 @@ export function parseHtmlCalendarResults(html: string): ParsedCourtEvent[] {
  */
 function parseEventBlock(
   headerHtml: string,
-  boxHtml: string
+  boxHtml: string,
+  context?: SearchContext
 ): ParsedCourtEvent | null {
   // 1. Extract time from the header — look for <strong>HH:MM AM/PM</strong>
   //    Also check boxHtml for time if not in header (some formats embed it)
@@ -192,29 +198,89 @@ function parseEventBlock(
       .trim();
   }
 
-  // 5. Extract attorney name and role if present (shown in attorney-type searches)
-  //    search.php labels the attorney role, e.g. "Prosecuting Attorney:" or "Defense Attorney:"
+  // 5. Extract attorney names and roles from search results.
+  //    search.php may use various labels:
+  //      "Prosecuting Attorney:", "Prosecutor:", "Pros. Atty:", "Plaintiff Attorney:"
+  //      "Defense Attorney:", "Defendant Attorney:", "Def. Atty:"
+  //      "Attorney:" (generic, role unknown)
   let prosecutingAttorney: string | null = null;
   let defenseAttorney: string | null = null;
 
-  const prosAttyMatch = boxHtml.match(/Prosecut(?:ing|or)\s+Attorney:\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i);
-  if (prosAttyMatch) {
-    const name = cleanName(stripTags(prosAttyMatch[1]));
-    if (name.length >= 2) prosecutingAttorney = name;
+  // Try labeled prosecution patterns
+  const prosPatterns = [
+    /Prosecut(?:ing|or)\s+(?:Att(?:orney|y)):\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i,
+    /Pros\.?\s+(?:Att(?:orney|y)):\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i,
+    /Plaintiff\s+(?:Att(?:orney|y)):\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i,
+    /State(?:'s)?\s+(?:Att(?:orney|y)):\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i,
+  ];
+  for (const pat of prosPatterns) {
+    const m = boxHtml.match(pat);
+    if (m) {
+      const name = cleanName(stripTags(m[1]));
+      if (name.length >= 2) { prosecutingAttorney = name; break; }
+    }
   }
 
-  const defAttyMatch = boxHtml.match(/Defen(?:se|dant)\s+Attorney:\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i);
-  if (defAttyMatch) {
-    const name = cleanName(stripTags(defAttyMatch[1]));
-    if (name.length >= 2) defenseAttorney = name;
+  // Try labeled defense patterns
+  const defPatterns = [
+    /Defen(?:se|dant)\s+(?:Att(?:orney|y)):\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i,
+    /Def\.?\s+(?:Att(?:orney|y)):\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i,
+    /Respondent\s+(?:Att(?:orney|y)):\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i,
+  ];
+  for (const pat of defPatterns) {
+    const m = boxHtml.match(pat);
+    if (m) {
+      const name = cleanName(stripTags(m[1]));
+      if (name.length >= 2) { defenseAttorney = name; break; }
+    }
   }
 
-  // Fallback: generic "Attorney:" without role qualifier — can't determine side,
-  // so leave both null and let DB enrichment (reports.php) fill them in later.
+  // Fallback: generic "Attorney:" — use search context to determine role.
+  // In criminal cases, the party structure is "State of Utah vs. [Defendant]".
+  // If we know who was searched, the OTHER attorney shown is opposing counsel.
   if (!prosecutingAttorney && !defenseAttorney) {
     const genericMatch = boxHtml.match(/(?<!\w\s)Attorney:\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/i);
     if (genericMatch) {
-      // Only use if we can't determine the role — store nothing, rely on enrichment
+      const name = cleanName(stripTags(genericMatch[1]));
+      if (name.length >= 2) {
+        if (context?.searchedAttorney) {
+          // Check if this is the searched attorney or opposing counsel
+          const searched = context.searchedAttorney.toUpperCase();
+          const found = name.toUpperCase();
+          // Check if party structure indicates criminal (State vs. Defendant)
+          const isStateCase = /State\s+of\s+Utah/i.test(boxHtml) || /\bvs\b/i.test(boxHtml);
+
+          if (found.includes(searched) || searched.includes(found.split(",")[0].trim())) {
+            // This is the searched attorney — determine side from case parties
+            if (isStateCase) {
+              // In "State vs." cases, check which side the defendant is on
+              // The attorney listed first or for the state side is prosecution
+              // We can't be certain, so use context from the search results:
+              // utcourts.gov shows the searched attorney and labels opposing counsel
+              prosecutingAttorney = name;
+            }
+          } else {
+            // This is NOT the searched attorney — it's opposing counsel
+            // We don't know their role without more context
+            defenseAttorney = name;
+          }
+        }
+        // Without search context, we can't determine the role — leave null
+      }
+    }
+  }
+
+  // If we found one attorney via labeled match and have a generic "Attorney:" too,
+  // try to capture the second attorney. search.php shows BOTH attorneys.
+  if ((prosecutingAttorney && !defenseAttorney) || (!prosecutingAttorney && defenseAttorney)) {
+    // Look for any additional "Attorney:" entries we haven't captured
+    const allAttyMatches = boxHtml.matchAll(/(?:[\w.]+\s+)?Att(?:orney|y):\s*(?:&nbsp;\s*)*([\s\S]*?)<\/div>/gi);
+    for (const m of allAttyMatches) {
+      const name = cleanName(stripTags(m[1]));
+      if (name.length < 2) continue;
+      if (name === prosecutingAttorney || name === defenseAttorney) continue;
+      if (!prosecutingAttorney) { prosecutingAttorney = name; break; }
+      if (!defenseAttorney) { defenseAttorney = name; break; }
     }
   }
 
