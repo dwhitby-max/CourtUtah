@@ -1,8 +1,8 @@
 # CLAUDE.md — Utah Court Calendar Tracker
 
 **Project:** Utah Court Calendar Tracker
-**Version:** 0.13.0
-**Last Updated:** 2026-04-01
+**Version:** 0.14.0
+**Last Updated:** 2026-04-03
 **Platform:** Replit (Node.js 20, PostgreSQL, VM deployment)
 **Coding Standards:** `@file claudev7.md` — master coding guidebook (v7.0)
 
@@ -74,19 +74,20 @@ project-root/
 │       │   ├── Layout.tsx
 │       │   ├── ProtectedRoute.tsx
 │       │   ├── NotificationBell.tsx
-│       │   └── SearchForm.tsx
+│       │   ├── SearchForm.tsx
+│       │   ├── ExportTemplateModal.tsx  # CSV export template picker/editor modal
+│       │   └── ...
 │       ├── pages/
 │       │   ├── LoginPage.tsx
-│       │   ├── RegisterPage.tsx
-│       │   ├── ForgotPasswordPage.tsx
-│       │   ├── ResetPasswordPage.tsx
 │       │   ├── DashboardPage.tsx
 │       │   ├── SearchPage.tsx
 │       │   ├── SearchResultsPage.tsx
 │       │   ├── WatchedCasesPage.tsx
 │       │   ├── CalendarSettingsPage.tsx
-│       │   ├── NotificationSettingsPage.tsx
-│       │   └── ProfilePage.tsx
+│       │   ├── SettingsPage.tsx         # Subscription, export templates, support
+│       │   ├── BillingPage.tsx
+│       │   ├── ProfilePage.tsx
+│       │   └── ...
 │       ├── hooks/
 │       │   ├── useAuth.ts
 │       │   ├── useNotifications.ts
@@ -96,6 +97,8 @@ project-root/
 │       │   ├── auth.ts
 │       │   ├── search.ts
 │       │   ├── calendar.ts
+│       │   ├── billing.ts
+│       │   ├── exportTemplates.ts       # CRUD for export templates
 │       │   └── notifications.ts
 │       ├── store/
 │       │   └── authStore.ts
@@ -115,7 +118,12 @@ project-root/
 │   │   ├── 007_change_log.sql
 │   │   ├── 008_scrape_jobs.sql
 │   │   ├── 009_html_scraper_columns.sql
-│   │   └── ...017_saved_searches.sql
+│   │   ├── ...030_event_cancellation.sql
+│   │   ├── 031_dedup_court_events.sql
+│   │   ├── 032_drop_case_date_unique.sql
+│   │   ├── 033_fix_corrupt_attorney_data.sql
+│   │   ├── 034_fix_duplicate_attorney_data.sql
+│   │   └── 035_export_templates.sql
 │   └── src/
 │       ├── index.ts
 │       ├── app.ts
@@ -123,10 +131,12 @@ project-root/
 │       │   ├── index.ts
 │       │   ├── auth.ts
 │       │   ├── search.ts
+│       │   ├── searchHelpers.ts         # Search merge, filter, persist, enrichment helpers
 │       │   ├── calendar.ts
 │       │   ├── notifications.ts
 │       │   ├── watchedCases.ts
-│       │   ├── savedSearches.ts
+│       │   ├── exportTemplates.ts       # CRUD for export templates
+│       │   ├── billing.ts              # Stripe checkout, portal, cancel, webhook
 │       │   └── health.ts
 │       ├── services/
 │       │   ├── courtScraper.ts        # HTML court list + search.php fetcher (primary)
@@ -301,6 +311,17 @@ project-root/
 | created_at | TIMESTAMP DEFAULT NOW() | |
 | updated_at | TIMESTAMP DEFAULT NOW() | |
 
+### export_templates
+| Column | Type | Notes |
+|--------|------|-------|
+| id | SERIAL PRIMARY KEY | |
+| user_id | INTEGER REFERENCES users(id) ON DELETE CASCADE | |
+| name | VARCHAR(255) NOT NULL | User-defined template name |
+| field_keys | JSONB NOT NULL DEFAULT '[]' | Ordered list of field keys to include in CSV |
+| sort_levels | JSONB NOT NULL DEFAULT '[]' | Multi-level sort: [{key, dir}] |
+| created_at | TIMESTAMPTZ DEFAULT NOW() | |
+| updated_at | TIMESTAMPTZ DEFAULT NOW() | |
+
 ### scrape_jobs
 | Column | Type | Notes |
 |--------|------|-------|
@@ -325,6 +346,11 @@ project-root/
 5. **Scheduling:** node-cron runs daily at 2:00 AM UTC. Also supports manual trigger via `/api/admin/trigger-scrape` and Replit scheduled deployments.
 6. **Calendar Item Tracking:** Every calendar entry created by the app is tracked in `calendar_entries` table with the provider's external event ID. The app ONLY updates/deletes entries it created.
 7. **Saved Searches:** Searches are auto-saved for logged-in users. First-time searches always go live to utcourts.gov; subsequent runs use cached DB results. Live results are persisted to court_events for future queries.
+8. **Daily Search Cache:** Utah courts update once daily (5:30 AM). If a search was already run today, return cached DB results instead of re-scraping. The `last_refreshed_at` timestamp on the watched_case determines freshness.
+9. **Attorney Data Source:** search.php only shows ONE attorney with generic "Attorney:" label — no role, no opposing counsel. The details.php page (linked from each result) shows BOTH attorneys with labels: `PLA ATTY:` (prosecution) and `DEF ATTY:` (defense). We fetch details.php in parallel batches of 10 to enrich results.
+10. **Court List Parsing:** The court list is dynamically fetched from utcourts.gov and parsed from `<optgroup>/<option>` HTML. HTML comments are stripped before parsing to exclude commented-out (inactive) courts.
+11. **Export Templates:** Stored in DB (export_templates table) per user. Templates define field selection, column order, and multi-level sort priority. Available from both the export modal and the Settings page.
+12. **Subscription Cancellation:** Uses Stripe `cancel_at_period_end: true` — subscription stays active until renewal date, then cancels without charging.
 
 ---
 
@@ -384,10 +410,11 @@ SENTRY_DSN=
 | 2026-03-13 | 0.11.0 | Parser validated against real utcourts.gov HTML — pipe-delimiter fix for defendant/judge separation. Mobile responsive: hamburger nav, card layouts. Smoke test script. 139 tests |
 | 2026-03-13 | 0.12.0 | Full search parity with utcourts.gov: judge name + attorney search (9 fields total). Notification frequency: immediate/daily/weekly digest with digestService.ts + cron jobs. ProfilePage frequency selector UI. 139 tests |
 | 2026-03-15 | 0.13.0 | Auto-saved searches: live-first scraping on first run, persists results to DB, auto-saves for logged-in users. Saved searches UI with re-run/delete. Date/time display fixes. Coding standards compliance fixes (type guards, req.user capture, no Math.random IDs). 139 tests |
+| 2026-04-02 | 0.14.0 | Search dedup fix (case+date+time for DB, live-first merge). Attorney enrichment from details.php (PLA ATTY/DEF ATTY labels). Daily search cache. CSV export templates with multi-level sort (DB-backed). Both attorneys shown in UI/CSV with "-" fallback. Court list comment stripping. Settings page (subscription management, Stripe cancel, export templates, support). Migrations 031-035. |
 
 ---
 
-## ALL FEATURES COMPLETE (v0.13.0)
+## ALL FEATURES (v0.14.0)
 
 ### Core
 - ✅ User auth: register, login, password reset, email verification with resend
@@ -398,6 +425,10 @@ SENTRY_DSN=
 - ✅ Search: 9 fields (defendant, case#, court, date, OTN, citation, charges, judge, attorney) — full parity with utcourts.gov + 3 extras
 - ✅ Watched cases: CRUD + manual sync + auto-matching (all 9 search types)
 - ✅ Saved searches: auto-saved on first run, live-first scraping, persists results, re-run/delete UI
+- ✅ Daily search cache: same-day repeat searches return cached DB results (courts update once daily)
+- ✅ Details page enrichment: fetches details.php for each result to get both attorneys (PLA ATTY / DEF ATTY)
+- ✅ Attorney display: both prosecution and defense shown in search results and CSV export, "-" for blank
+- ✅ CSV export templates: DB-backed per-user templates with field selection, column order, multi-level sort
 - ✅ Change detection: SHA-256 content hashing + 9-field diff → change_log + user notifications
 
 ### Calendar Integrations
@@ -428,6 +459,8 @@ SENTRY_DSN=
 - ✅ Admin dashboard: scrape job history, pool stats, manual trigger, aggregate counts
 - ✅ Search results: expandable detail rows (attorneys, OTN, DOB, charges), virtual hearing badges
 - ✅ Login page: verification banner (success/invalid/expired), registered redirect
+- ✅ Settings page: subscription management, export template CRUD, support contact (ops@1564hub.com)
+- ✅ Stripe cancel subscription: cancel_at_period_end via in-app button (no further charges)
 
 ### Testing & DevOps
 - ✅ 139 tests across 10 suites (vitest): changeDetector, courtEventParser, courtScraper, calendarSync, scheduler, integration, poolMonitor, sentryService, reportParser, watchedCaseMatcher
@@ -435,8 +468,18 @@ SENTRY_DSN=
 
 ## NEXT STEPS (TODO)
 
-1. **Deploy to Replit** — Run smoke-test.sh, trigger manual scrape, verify DB inserts and auto-matching
-2. **Reports.php validation** — Test parser against real rendered HTML (server-side fetcher bypasses robots.txt)
-3. **Notification delivery testing** — Wire real SMTP + Twilio credentials, test email/SMS end-to-end
-4. **Parser edge cases** — Run scrape across all 135+ courts, log/tune failures for non-standard formats
-5. **Digest service tests** — Unit tests for digestService.ts aggregation + delivery logic
+1. **Details page enrichment in scheduler** — The daily cron scrape should also fetch details.php pages to populate attorney data for all scraped events (currently only happens during user searches)
+2. **Notification delivery testing** — Wire real SMTP + Twilio credentials, test email/SMS end-to-end
+3. **Parser edge cases** — Run scrape across all 135+ courts, log/tune failures for non-standard formats
+4. **Digest service tests** — Unit tests for digestService.ts aggregation + delivery logic
+5. **Export template validation** — Verify templates persist correctly across logout/login cycles
+
+## CRITICAL LESSONS LEARNED (v0.14.0)
+
+- **search.php only shows ONE attorney** with generic "Attorney:" label. No role label, no opposing counsel. Must fetch details.php for both attorneys with PLA ATTY / DEF ATTY labels.
+- **Court list has commented-out courts** — HTML comment stripping required when parsing `<option>` tags from `<optgroup>` sections.
+- **DB upsert key must include event_time** — a case can have multiple hearings on the same day at different times. Removing time from the key collapses legitimate separate hearings.
+- **Live results are authoritative for scheduling** (time, date, courtroom) but DB may have richer enrichment data (attorneys, OTN, charges). Enrich live results from DB BEFORE filtering.
+- **Attorney filter must run AFTER enrichment** — otherwise live results with null attorneys get dropped before DB backfill can populate them.
+- **Old parser corrupted defense_attorney** by blindly assigning the generic "Attorney:" field. Migration 033/034 cleans this up.
+- **Details page HTML has newlines in names** (e.g., "RYAN\nROBINSON") — must normalize with `.replace(/\s+/g, " ")` before storing.
