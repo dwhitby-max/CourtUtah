@@ -6,11 +6,9 @@ import CourtPicker from "./CourtPicker";
 interface SearchFormProps {
   onSearch: (params: Record<string, string>) => void;
   loading?: boolean;
-  hasCalendarConnection?: boolean;
-  initialAutoAdd?: boolean;
 }
 
-export default function SearchForm({ onSearch, loading, hasCalendarConnection, initialAutoAdd }: SearchFormProps) {
+export default function SearchForm({ onSearch, loading }: SearchFormProps) {
   const { user } = useAuth();
   const isPro = user?.subscriptionPlan === "pro" && (user?.subscriptionStatus === "active" || user?.subscriptionStatus === "grandfathered");
   const [defendantName, setDefendantName] = useState("");
@@ -26,7 +24,6 @@ export default function SearchForm({ onSearch, loading, hasCalendarConnection, i
   const [charges, setCharges] = useState("");
   const [judgeName, setJudgeName] = useState("");
   const [attorney, setAttorney] = useState("");
-  const [autoAddToCalendar, setAutoAddToCalendar] = useState(initialAutoAdd ?? false);
   const [watchedCase, setWatchedCase] = useState(false);
   const [validationError, setValidationError] = useState("");
   const [coverage, setCoverage] = useState<{
@@ -57,6 +54,12 @@ export default function SearchForm({ onSearch, loading, hasCalendarConnection, i
       return;
     }
 
+    // Require explicit court selection to prevent accidental all-court searches
+    if (!allCourts && selectedCourts.length === 0) {
+      setValidationError("Please select one or more courts, or check \"All Courts\" to search everywhere.");
+      return;
+    }
+
     const params: Record<string, string> = {};
     if (defendantName) params.defendant_name = defendantName;
     if (caseNumber) params.case_number = caseNumber;
@@ -76,7 +79,6 @@ export default function SearchForm({ onSearch, loading, hasCalendarConnection, i
     if (judgeName) params.judge_name = judgeName;
     if (attorney) params.attorney = attorney;
 
-    if (autoAddToCalendar) params._autoAddToCalendar = "true";
     if (watchedCase) params._watchedCase = "true";
     onSearch(params);
   }
@@ -126,46 +128,63 @@ export default function SearchForm({ onSearch, loading, hasCalendarConnection, i
           />
         </div>
 
-        {!watchedCase && (
-          <>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Date From</label>
-              <input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => {
-                  setDateFrom(e.target.value);
-                  // Free plan: auto-cap dateTo to 7 days from dateFrom
-                  if (!isPro && e.target.value) {
-                    const maxDate = new Date(e.target.value);
-                    maxDate.setDate(maxDate.getDate() + 7);
-                    const maxStr = maxDate.toISOString().split("T")[0];
-                    if (dateTo && dateTo > maxStr) setDateTo(maxStr);
-                  }
-                }}
-                max={dateTo || undefined}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-amber-500 focus:border-amber-500"
-              />
-            </div>
+        {!watchedCase && (() => {
+          // Utah courts only publish calendars up to ~1 month out
+          const maxDateLimit = new Date();
+          maxDateLimit.setMonth(maxDateLimit.getMonth() + 1);
+          const maxDateStr = maxDateLimit.toISOString().split("T")[0];
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Date To
-                {!isPro && <span className="text-xs text-gray-400 ml-1">(max 1 week)</span>}
-              </label>
-              <input
-                type="date"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-                min={dateFrom || undefined}
-                max={!isPro && dateFrom
-                  ? new Date(new Date(dateFrom).getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
-                  : undefined}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-amber-500 focus:border-amber-500"
-              />
-            </div>
-          </>
-        )}
+          // Free plan: dateTo capped to 7 days from dateFrom (within the 1-month limit)
+          const dateToMax = (() => {
+            if (!isPro && dateFrom) {
+              const freeMax = new Date(new Date(dateFrom).getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+              return freeMax < maxDateStr ? freeMax : maxDateStr;
+            }
+            return maxDateStr;
+          })();
+
+          return (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Date From</label>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => {
+                    setDateFrom(e.target.value);
+                    if (!isPro && e.target.value) {
+                      const capDate = new Date(e.target.value);
+                      capDate.setDate(capDate.getDate() + 7);
+                      const capStr = capDate.toISOString().split("T")[0];
+                      const effectiveCap = capStr < maxDateStr ? capStr : maxDateStr;
+                      if (dateTo && dateTo > effectiveCap) setDateTo(effectiveCap);
+                    }
+                    if (dateTo && dateTo > maxDateStr) setDateTo(maxDateStr);
+                  }}
+                  max={dateTo && dateTo < maxDateStr ? dateTo : maxDateStr}
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-amber-500 focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Date To
+                  {!isPro
+                    ? <span className="text-xs text-gray-400 ml-1">(max 1 week, courts publish up to 1 month)</span>
+                    : <span className="text-xs text-gray-400 ml-1">(courts publish up to 1 month)</span>}
+                </label>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  min={dateFrom || undefined}
+                  max={dateToMax}
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-amber-500 focus:border-amber-500"
+                />
+              </div>
+            </>
+          );
+        })()}
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Offender Tracking # (OTN)</label>
@@ -264,21 +283,6 @@ export default function SearchForm({ onSearch, loading, hasCalendarConnection, i
           )}
         </label>
 
-        {hasCalendarConnection && (
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <div className="relative">
-              <input
-                type="checkbox"
-                checked={autoAddToCalendar}
-                onChange={(e) => setAutoAddToCalendar(e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-9 h-5 bg-gray-300 rounded-full peer-checked:bg-green-500 transition-colors"></div>
-              <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow peer-checked:translate-x-4 transition-transform"></div>
-            </div>
-            <span className="text-sm text-gray-700 font-medium">Auto-add results to calendar</span>
-          </label>
-        )}
       </div>
     </form>
   );

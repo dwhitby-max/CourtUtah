@@ -188,6 +188,20 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     }
   }
 
+  // Utah courts only publish calendars ~1 month out — cap dates
+  const maxDate = new Date();
+  maxDate.setMonth(maxDate.getMonth() + 1);
+  const maxDateStr = maxDate.toISOString().split("T")[0];
+  if (searchParams.dateFrom && searchParams.dateFrom > maxDateStr) {
+    searchParams.dateFrom = maxDateStr;
+  }
+  if (searchParams.dateTo && searchParams.dateTo > maxDateStr) {
+    searchParams.dateTo = maxDateStr;
+  }
+  if (searchParams.courtDate && searchParams.courtDate > maxDateStr) {
+    searchParams.courtDate = maxDateStr;
+  }
+
   // Free plan: enforce 1-week max date range
   if (!isPro && searchParams.dateFrom && searchParams.dateTo) {
     const from = new Date(searchParams.dateFrom);
@@ -206,6 +220,12 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     const liveBase = toLiveSearchBase(searchParams);
     const courts = await getCourts();
     const courtCodes = resolveCourtCodes(searchParams, courts);
+
+    // Require explicit court selection — don't silently search all courts
+    if (liveBase && courtCodes.length === 0 && searchParams.allCourts !== "true") {
+      res.status(400).json({ error: "Please select one or more courts, or check \"All Courts\" to search everywhere." });
+      return;
+    }
 
     // No live-searchable field (OTN, citation, charges) → DB only
     if (!liveBase) {
@@ -228,11 +248,11 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     }
 
     // Determine search strategy:
-    // - No courts selected, "all courts", or many courts (>3): use loc=all&d=all
+    // - "All courts" or many courts (>3): use loc=all&d=all
     //   in a SINGLE request (same approach the scheduler uses — fast)
     // - 1-3 specific courts: use loc=CODE&d=all per court (1-3 requests)
     // Then filter by date range locally after parsing.
-    const useBroadSearch = courtCodes.length === 0 || courtCodes.length > 3 || searchParams.allCourts === "true";
+    const useBroadSearch = searchParams.allCourts === "true" || courtCodes.length > 3;
 
     // Build a lookup from location code → full court info so we can annotate parsed events
     const courtByLoc = new Map(courts.map((c) => [c.locationCode, c]));

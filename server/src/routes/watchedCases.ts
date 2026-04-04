@@ -121,6 +121,120 @@ router.post("/", async (req: Request, res: Response) => {
   });
 });
 
+// POST /api/watched-cases/auto-sync — enable/disable auto-sync for events already on the user's calendar
+router.post("/auto-sync", async (req: Request, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const currentUser = req.user;
+  const pool = getPool();
+  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
+
+  const { courtEventIds, enable } = req.body;
+  if (!Array.isArray(courtEventIds) || courtEventIds.length === 0) {
+    res.status(400).json({ error: "courtEventIds array is required" });
+    return;
+  }
+
+  // Filter out invalid IDs (negative IDs are live results not yet persisted)
+  const validIds = courtEventIds.filter((id: unknown) => typeof id === "number" && id > 0);
+  if (validIds.length === 0) {
+    res.status(400).json({ error: "No valid court event IDs provided. Events must be persisted before enabling auto-sync." });
+    return;
+  }
+
+  const client = await pool.connect();
+  try {
+    // Look up court events to get case numbers and defendant names
+    const events = await client.query<{ id: number; case_number: string; defendant_name: string; court_name: string }>(
+      `SELECT id, case_number, defendant_name, court_name FROM court_events WHERE id = ANY($1)`,
+      [validIds]
+    );
+
+    if (enable) {
+      const watchedCaseIds: number[] = [];
+      const seen = new Set<string>();
+
+      for (const event of events.rows) {
+        const searchType = event.case_number ? "case_number" : "defendant_name";
+        const searchValue = event.case_number || event.defendant_name;
+        if (!searchValue) continue;
+        const dedup = `${searchType}:${searchValue.toUpperCase()}`;
+        if (seen.has(dedup)) continue;
+        seen.add(dedup);
+
+        // Check if a watched case already exists for this case
+        const existing = await client.query(
+          `SELECT id FROM watched_cases
+           WHERE user_id = $1 AND search_type = $2 AND UPPER(search_value) = UPPER($3) AND is_active = true
+           LIMIT 1`,
+          [currentUser.userId, searchType, searchValue]
+        );
+
+        if (existing.rows.length > 0) {
+          await client.query(
+            `UPDATE watched_cases SET monitor_changes = true, auto_add_new = true, updated_at = NOW() WHERE id = $1`,
+            [existing.rows[0].id]
+          );
+          watchedCaseIds.push(existing.rows[0].id);
+        } else {
+          const label = event.case_number
+            ? `${event.case_number} - ${event.defendant_name || "Unknown"} (${event.court_name || ""})`
+            : `${event.defendant_name} (${event.court_name || ""})`;
+
+          const result = await client.query(
+            `INSERT INTO watched_cases (user_id, search_type, search_value, label, monitor_changes, auto_add_new, source)
+             VALUES ($1, $2, $3, $4, true, true, 'auto_sync')
+             RETURNING id`,
+            [currentUser.userId, searchType, searchValue, label]
+          );
+          watchedCaseIds.push(result.rows[0].id);
+        }
+      }
+
+      res.json({
+        enabled: true,
+        watchedCaseIds,
+        casesMonitored: watchedCaseIds.length,
+        message: `Auto-sync enabled for ${watchedCaseIds.length} case${watchedCaseIds.length !== 1 ? "s" : ""}. Calendar entries will update automatically when changes are detected.`,
+      });
+    } else {
+      // Disable: find watched cases matching these court events and turn off monitorChanges
+      const caseNumbers = [...new Set(events.rows.map(e => e.case_number).filter(Boolean))];
+      const defNames = [...new Set(events.rows.filter(e => !e.case_number).map(e => e.defendant_name).filter(Boolean))];
+
+      let updated = 0;
+      if (caseNumbers.length > 0) {
+        const result = await client.query(
+          `UPDATE watched_cases SET monitor_changes = false, auto_add_new = false, updated_at = NOW()
+           WHERE user_id = $1 AND search_type = 'case_number'
+             AND UPPER(search_value) = ANY($2) AND is_active = true`,
+          [currentUser.userId, caseNumbers.map(c => c.toUpperCase())]
+        );
+        updated += result.rowCount || 0;
+      }
+      if (defNames.length > 0) {
+        const result = await client.query(
+          `UPDATE watched_cases SET monitor_changes = false, auto_add_new = false, updated_at = NOW()
+           WHERE user_id = $1 AND search_type = 'defendant_name'
+             AND UPPER(search_value) = ANY($2) AND is_active = true`,
+          [currentUser.userId, defNames.map(n => n.toUpperCase())]
+        );
+        updated += result.rowCount || 0;
+      }
+
+      res.json({
+        enabled: false,
+        casesUpdated: updated,
+        message: `Auto-sync disabled for ${updated} case${updated !== 1 ? "s" : ""}.`,
+      });
+    }
+  } catch (err) {
+    console.error("❌ POST /api/watched-cases/auto-sync failed:", err);
+    res.status(500).json({ error: "Failed to update auto-sync settings" });
+  } finally {
+    client.release();
+  }
+});
+
 // PATCH /api/watched-cases/:id — update watched case settings (autoAddNew, monitorChanges)
 router.patch("/:id", async (req: Request, res: Response) => {
   if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
@@ -473,20 +587,13 @@ router.delete("/:id/calendar-entries", async (req: Request, res: Response) => {
       return;
     }
 
-    // Find ALL calendar entries for this watched case — both those linked by
-    // watched_case_id AND those manually added for the same court events.
-    // This ensures past and future events are all removed from the calendar.
+    // Only remove calendar entries directly linked to THIS watched case.
+    // Entries linked to other watched cases (or manually added) are left untouched.
     const entries = await client.query(
-      `SELECT DISTINCT ce.id FROM calendar_entries ce
+      `SELECT ce.id FROM calendar_entries ce
        WHERE ce.user_id = $1
-         AND ce.sync_status != 'removed'
-         AND (
-           ce.watched_case_id = $2
-           OR ce.court_event_id IN (
-             SELECT ce2.court_event_id FROM calendar_entries ce2
-             WHERE ce2.watched_case_id = $2 AND ce2.user_id = $1
-           )
-         )`,
+         AND ce.watched_case_id = $2
+         AND ce.sync_status != 'removed'`,
       [currentUser.userId, watchedCaseId]
     );
 

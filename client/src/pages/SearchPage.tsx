@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import SearchForm from "@/components/SearchForm";
 import { searchCourtEvents } from "@/api/search";
-import { addAllEventsToCalendar, removeCalendarEntriesForCase } from "@/api/calendar";
+import { removeCalendarEntriesForCase } from "@/api/calendar";
 import { apiFetch } from "@/api/client";
 import EventDetailRow from "@/components/EventDetailRow";
 import NewEntriesSection from "@/components/NewEntriesSection";
@@ -90,8 +90,6 @@ export default function SearchPage() {
   const [loadingSaved, setLoadingSaved] = useState(false);
   const [lastSearchParams, setLastSearchParams] = useState<Record<string, string> | null>(null);
   const [lastSearchSavedId, setLastSearchSavedId] = useState<number | null>(null);
-  const [addingAll, setAddingAll] = useState(false);
-  const [addedAll, setAddedAll] = useState(false);
   const [removingAll, setRemovingAll] = useState(false);
   const [previousRunAt, setPreviousRunAt] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; label: string } | null>(null);
@@ -138,10 +136,8 @@ export default function SearchPage() {
   }
 
   async function handleSearch(params: Record<string, string>, opts?: { isRerun?: boolean }) {
-    const autoAdd = params._autoAddToCalendar === "true";
     const isWatchedCase = params._watchedCase === "true";
     const searchParams = { ...params };
-    delete searchParams._autoAddToCalendar;
     delete searchParams._watchedCase;
 
     // Block duplicate searches unless this is a "Run Again" from a saved search
@@ -171,7 +167,6 @@ export default function SearchPage() {
       setPreviousRunAt(data.previousRunAt ?? null);
       setDetectedChanges(data.detectedChanges ?? []);
       setCachedToday(data.cachedToday ?? false);
-      setAddedAll(false);
       fetchSavedSearches();
 
       // Show upgrade prompt if saved search limit was reached
@@ -188,9 +183,6 @@ export default function SearchPage() {
         await createSearchWatch(searchParams);
       }
 
-      if (autoAdd && cal.hasCalendarConnection && data.results.length > 0) {
-        await autoAddResults(data.results, currentSynced, data.savedSearchId ?? undefined);
-      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Search failed";
       // Check if it's an upgrade-required error
@@ -205,119 +197,8 @@ export default function SearchPage() {
     }
   }
 
-  async function autoAddResults(
-    searchResults: CourtEvent[],
-    currentSynced: Set<number>,
-    savedSearchId?: number
-  ) {
-    const unsyncedIds = searchResults
-      .filter(e => e.id > 0 && !currentSynced.has(e.id))
-      .map(e => e.id);
-
-    if (unsyncedIds.length === 0) {
-      setWatchSuccess("All events are already on your calendar.");
-      setAddedAll(true);
-      return;
-    }
-
-    setAddingAll(true);
-    setWatchSuccess("");
-
-    try {
-      const data = await addAllEventsToCalendar(unsyncedIds);
-      const newSyncedIds = new Set(currentSynced);
-      const newEntryMap = { ...cal.calEntryMap };
-
-      for (const r of data.results) {
-        if (r.synced) {
-          newSyncedIds.add(r.courtEventId);
-          newEntryMap[r.courtEventId] = r.calendarEntryId;
-        }
-      }
-
-      // Refresh to pick up the new entries
-      await cal.refreshSyncedEvents();
-
-      // Create watched cases with monitorChanges + autoAddNew
-      const seen = new Set<string>();
-      let watchCount = 0;
-
-      for (const event of searchResults) {
-        if (event.caseNumber) {
-          const key = `case_number:${event.caseNumber}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            try {
-              const res = await apiFetch("/watched-cases", {
-                method: "POST",
-                body: JSON.stringify({
-                  searchType: "case_number",
-                  searchValue: event.caseNumber,
-                  label: `${event.caseNumber} - ${event.defendantName || "Unknown"} (${event.courtName})`,
-                  monitorChanges: true,
-                  autoAddNew: true,
-                }),
-              });
-              if (res.ok) watchCount++;
-            } catch {
-              // non-fatal
-            }
-          }
-        } else if (event.defendantName) {
-          const key = `defendant_name:${event.defendantName}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            try {
-              const res = await apiFetch("/watched-cases", {
-                method: "POST",
-                body: JSON.stringify({
-                  searchType: "defendant_name",
-                  searchValue: event.defendantName,
-                  label: `${event.defendantName} (${event.courtName})`,
-                  monitorChanges: true,
-                  autoAddNew: true,
-                }),
-              });
-              if (res.ok) watchCount++;
-            } catch {
-              // non-fatal
-            }
-          }
-        }
-      }
-
-      if (savedSearchId && savedSearchId > 0) {
-        try {
-          await apiFetch(`/watched-cases/${savedSearchId}`, {
-            method: "PATCH",
-            body: JSON.stringify({ autoAddToCalendar: true }),
-          });
-        } catch {
-          // non-fatal
-        }
-      }
-
-      const added = data.results.filter(r => r.synced).length;
-      const parts: string[] = [];
-      parts.push(`Auto-added ${added} event${added !== 1 ? "s" : ""} to ${cal.calLabel}`);
-      if (watchCount > 0) parts.push(`monitoring ${watchCount} case${watchCount !== 1 ? "s" : ""} for changes`);
-      setWatchSuccess(parts.join(". ") + ". Your calendar will stay up to date automatically.");
-      setAddedAll(true);
-
-      fetchSavedSearches();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to auto-add events";
-      setError(msg);
-    } finally {
-      setAddingAll(false);
-    }
-  }
-
   async function handleRunSavedSearch(saved: SavedSearchRow) {
     const queryParams = toQueryParams(saved.search_params);
-    if (saved.search_params._autoAddToCalendar) {
-      queryParams._autoAddToCalendar = "true";
-    }
     await handleSearch(queryParams, { isRerun: true });
   }
 
@@ -524,30 +405,6 @@ export default function SearchPage() {
     }
   }
 
-  async function handleAddAllToCalendar() {
-    if (results.length === 0) return;
-    setAddingAll(true);
-    setError("");
-    let added = 0;
-    let failed = 0;
-    for (const event of results) {
-      if (cal.calSyncedIds.has(event.id)) continue;
-      try {
-        await cal.handleAddToCalendar(event.id);
-        added++;
-      } catch {
-        failed++;
-      }
-    }
-    setAddingAll(false);
-    setAddedAll(true);
-    if (failed > 0) {
-      setWatchSuccess(`Added ${added} event${added !== 1 ? "s" : ""} to ${cal.calLabel}. ${failed} failed.`);
-    } else {
-      setWatchSuccess(`Added all ${added} event${added !== 1 ? "s" : ""} to ${cal.calLabel}`);
-    }
-  }
-
   async function handleRemoveAllFromCalendar() {
     const syncedInResults = results.filter(e => cal.calSyncedIds.has(e.id) && cal.calEntryMap[e.id]);
     if (syncedInResults.length === 0) return;
@@ -568,7 +425,6 @@ export default function SearchPage() {
     }
 
     setRemovingAll(false);
-    setAddedAll(false);
     if (failed > 0) {
       setWatchSuccess(`Removed ${removed} event${removed !== 1 ? "s" : ""} from ${cal.calLabel}. ${failed} failed.`);
     } else {
@@ -598,7 +454,7 @@ export default function SearchPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-gray-900">Search Court Calendars</h1>
 
-      <SearchForm onSearch={handleSearch} loading={loading} hasCalendarConnection={cal.hasCalendarConnection} />
+      <SearchForm onSearch={handleSearch} loading={loading} />
 
       {/* Saved Searches */}
       {savedSearches.length > 0 && (
@@ -792,23 +648,10 @@ export default function SearchPage() {
                 {cal.hasCalendarConnection && anySynced && (
                   <button
                     onClick={handleRemoveAllFromCalendar}
-                    disabled={removingAll || addingAll}
+                    disabled={removingAll}
                     className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md disabled:opacity-50"
                   >
                     {removingAll ? "Removing..." : `Remove all from ${cal.calLabel}`}
-                  </button>
-                )}
-                {cal.hasCalendarConnection && (
-                  <button
-                    onClick={handleAddAllToCalendar}
-                    disabled={addingAll || addedAll || removingAll}
-                    className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-amber-700 hover:bg-amber-800 rounded-md disabled:opacity-50"
-                  >
-                    {addingAll
-                      ? `Adding ${results.length} to ${cal.calLabel}...`
-                      : addedAll
-                        ? `All added to ${cal.calLabel}`
-                        : `Add all ${results.length} to ${cal.calLabel}`}
                   </button>
                 )}
                 {watchSearchActive && (

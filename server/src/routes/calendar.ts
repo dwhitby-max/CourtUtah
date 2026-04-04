@@ -174,8 +174,8 @@ router.post("/events", authenticateToken, heavyLimiter, async (req: Request, res
   const currentUser = req.user;
 
   const { courtEventId } = req.body;
-  if (!courtEventId) {
-    res.status(400).json({ error: "courtEventId is required" });
+  if (!courtEventId || typeof courtEventId !== "number" || courtEventId <= 0) {
+    res.status(400).json({ error: "A valid courtEventId is required" });
     return;
   }
 
@@ -232,7 +232,7 @@ router.post("/events", authenticateToken, heavyLimiter, async (req: Request, res
     const plan = userPlan.rows[0]?.subscription_plan || "free";
     if (plan === "free") {
       const entryCount = await client.query(
-        "SELECT COUNT(*) as cnt FROM calendar_entries WHERE user_id = $1",
+        "SELECT COUNT(*) as cnt FROM calendar_entries WHERE user_id = $1 AND sync_status != 'removed'",
         [currentUser.userId]
       );
       if (parseInt(entryCount.rows[0].cnt, 10) >= 5) {
@@ -359,7 +359,7 @@ router.post("/events/batch", authenticateToken, heavyLimiter, async (req: Reques
     let remainingSlots = Infinity;
     if (plan === "free") {
       const entryCount = await client.query(
-        "SELECT COUNT(*) as cnt FROM calendar_entries WHERE user_id = $1",
+        "SELECT COUNT(*) as cnt FROM calendar_entries WHERE user_id = $1 AND sync_status != 'removed'",
         [currentUser.userId]
       );
       const currentCount = parseInt(entryCount.rows[0].cnt, 10);
@@ -374,11 +374,16 @@ router.post("/events/batch", authenticateToken, heavyLimiter, async (req: Reques
     }
 
     const results: Array<{ courtEventId: number; calendarEntryId: number; synced: boolean; error?: string }> = [];
-    let synced = 0;
+    let entriesUsed = 0;
 
     for (const courtEventId of courtEventIds) {
-      // Stop if free user hit limit
-      if (plan === "free" && synced >= remainingSlots) {
+      // Skip invalid IDs (negative IDs are live results not yet persisted)
+      if (typeof courtEventId !== "number" || courtEventId <= 0) {
+        results.push({ courtEventId, calendarEntryId: 0, synced: false, error: "Invalid event ID" });
+        continue;
+      }
+      // Stop if free user hit limit (count inserts, not just successful syncs)
+      if (plan === "free" && entriesUsed >= remainingSlots) {
         results.push({ courtEventId, calendarEntryId: 0, synced: false, error: "Free plan limit reached" });
         continue;
       }
@@ -395,18 +400,21 @@ router.post("/events/batch", authenticateToken, heavyLimiter, async (req: Reques
 
         // Check for existing entry
         const existingEntry = await client.query(
-          `SELECT id FROM calendar_entries
+          `SELECT id, sync_status FROM calendar_entries
            WHERE user_id = $1 AND court_event_id = $2 AND calendar_connection_id = $3`,
           [currentUser.userId, courtEventId, connectionId]
         );
 
         let entryId: number;
+        let isNewEntry = false;
         if (existingEntry.rows.length > 0) {
           entryId = existingEntry.rows[0].id;
           await client.query(
             `UPDATE calendar_entries SET sync_status = 'pending', last_synced_content_hash = NULL, updated_at = NOW() WHERE id = $1`,
             [entryId]
           );
+          // Re-activating a removed entry counts against the limit
+          if (existingEntry.rows[0].sync_status === "removed") isNewEntry = true;
         } else {
           const insertResult = await client.query(
             `INSERT INTO calendar_entries
@@ -416,10 +424,12 @@ router.post("/events/batch", authenticateToken, heavyLimiter, async (req: Reques
             [currentUser.userId, courtEventId, connectionId]
           );
           entryId = insertResult.rows[0].id;
+          isNewEntry = true;
         }
 
+        if (isNewEntry) entriesUsed++;
+
         const success = await syncCalendarEntry(entryId);
-        if (success) synced++;
         results.push({ courtEventId, calendarEntryId: entryId, synced: success });
       } catch (err) {
         results.push({ courtEventId, calendarEntryId: 0, synced: false, error: err instanceof Error ? err.message : "Sync failed" });
