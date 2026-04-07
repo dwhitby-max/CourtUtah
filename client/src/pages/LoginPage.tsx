@@ -19,7 +19,11 @@ export default function LoginPage() {
 
   useEffect(() => {
     const err = searchParams.get("error");
-    if (err) setError(errorMessages[err] || "Sign-in failed. Please try again.");
+    const detail = searchParams.get("detail");
+    if (err) {
+      const base = errorMessages[err] || "Sign-in failed. Please try again.";
+      setError(detail ? `${base} (${detail})` : base);
+    }
   }, [searchParams]);
 
   return (

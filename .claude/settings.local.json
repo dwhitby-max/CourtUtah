@@ -47,7 +47,11 @@
       "Bash(replit deploy:*)",
       "Bash(ls:*)",
       "Bash(git:*)",
-      "Bash(bash build.sh)"
+      "Bash(bash build.sh)",
+      "Bash(printenv GOOGLE_REDIRECT_URI)",
+      "Read(//home/runner/workspace/**)",
+      "Bash(printenv ENCRYPTION_KEY)",
+      "Bash(printenv)"
     ]
   }
 }

@@ -19,10 +19,21 @@ export default function LoginCallbackPage() {
     // Store token and fetch user profile
     setToken(token);
 
-    apiFetch("/auth/me")
+    // Fetch profile directly (bypass apiFetch's 401 redirect which races with our error handling)
+    fetch("/api/auth/me", {
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+      },
+    })
       .then(async (res) => {
-        if (!res.ok) throw new Error("Failed to fetch profile");
-        const data = await res.json();
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          throw new Error(`Profile fetch failed: ${res.status} ${res.statusText} ${body}`);
+        }
+        return res.json();
+      })
+      .then((data) => {
         setUser(data.user);
         // Clear the Google connect attempt flag — successful login means it worked
         sessionStorage.removeItem("google_connect_attempted");
@@ -32,9 +43,10 @@ export default function LoginCallbackPage() {
           navigate("/dashboard", { replace: true });
         }
       })
-      .catch(() => {
-        setError("Failed to complete sign-in. Please try again.");
-        navigate("/login?error=callback_failed", { replace: true });
+      .catch((err) => {
+        console.error("Login callback failed:", err);
+        setError(`Failed to complete sign-in: ${err.message}`);
+        navigate(`/login?error=callback_failed&detail=${encodeURIComponent(err.message)}`, { replace: true });
       });
   }, []);
 
