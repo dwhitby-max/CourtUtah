@@ -1,485 +1,98 @@
 # CLAUDE.md — Utah Court Calendar Tracker
 
-**Project:** Utah Court Calendar Tracker
-**Version:** 0.14.0
-**Last Updated:** 2026-04-03
+**Version:** 0.14.0 | **Last Updated:** 2026-04-03
 **Platform:** Replit (Node.js 20, PostgreSQL, VM deployment)
-**Coding Standards:** `@file claudev7.md` — master coding guidebook (v7.0)
-
----
-
-## DEVELOPMENT RULES (MUST FOLLOW)
-
-### Deployment & File Paths
-- **Path resolution is context-dependent (see claudev7.md §9 Project Structure).** Prefer `__dirname`-based resolution with existence checks. `process.cwd()` is acceptable when the Replit monorepo root is the working directory at runtime. Always verify the resolved path exists before serving.
-- **After any code change, both client AND server must be rebuilt** (`npm --prefix client run build && npm --prefix server run build`) before restarting. Stale builds are the #1 cause of "my change didn't work."
-- **`start-production.sh` must verify build artifacts exist** before starting the server. If `client/build/index.html` or `server/dist/server/src/index.js` is missing, rebuild.
-
-### Authentication & OAuth
-- **Google OAuth is the ONLY login method.** There is no email/password login. Every user goes through `/api/auth/google` which creates the user AND the calendar connection in one transaction.
-- **The auth callback MUST create the `calendar_connections` row.** Never assume the calendar connection exists separately from account creation.
-- **Write to localStorage synchronously in `setUser()`**, not via `useEffect`. React navigations can happen before async effects run, causing stale state. This was the root cause of the OAuth redirect loop.
-- **Never use `clearToken()` in ProtectedRoute.** Clearing the JWT before an OAuth redirect creates a logged-out flash and can cause loops. Just redirect — the OAuth callback issues a new JWT.
-- **Use `sessionStorage` flags to prevent redirect loops.** If ProtectedRoute redirects to OAuth, set a flag so it only attempts once per browser session.
-
-### Frontend Guards
-- **Pages behind `ProtectedRoute` should NOT re-check `isLoggedIn`.** The route wrapper guarantees auth. Adding `isLoggedIn` guards to buttons/UI inside protected pages hides functionality and creates confusion.
-- **If an API call fails with "no calendar connected", redirect to `/api/auth/google`** instead of showing an error. This forces the OAuth flow which creates the connection.
-
-### Token Lifecycle
-- **Google refresh tokens must be stored with `COALESCE`** so existing tokens aren't overwritten with NULL when Google doesn't return a new one.
-- **Token refresh must persist rotated refresh tokens** — Google and Microsoft can both rotate refresh tokens during a refresh. Always save if present.
-- **Calendar changes require user confirmation** before syncing to calendar. Set `sync_status = 'pending_update'` and notify the user, don't auto-sync.
-
-### Testing Changes
-- **Simulate deployment locally** before committing: run `bash build.sh && bash start-production.sh` and test. Also test from a different CWD (`cd / && node /path/to/index.js`).
-- **Check the actual database** after OAuth flows to verify rows were created: `SELECT * FROM calendar_connections` and `SELECT google_id FROM users`.
+**Coding Standards:** `@file claudev7.md` (v7.0)
 
 ---
 
 ## PROJECT OVERVIEW
 
-A full-stack application that:
-1. Scrapes Utah court calendar HTML results from legacy.utcourts.gov/cal/search.php (PDF fallback for legacy courts), enriches with reports.php data (attorneys, charges, OTN/DOB)
-2. Allows users to search court schedules by 9 fields: defendant name, case number, court, date, OTN, citation number, charges, judge name, attorney — matching all utcourts.gov search options plus 3 extras
-3. Creates calendar entries in the user's connected calendar (Google, Microsoft Outlook, Apple iCloud, or generic CalDAV/ICS)
-4. Runs a daily scrape (2 AM UTC) across 135+ courts × 15 dates, auto-matches new events against watched cases, and syncs to calendars
-5. Detects schedule changes via field-level diff and notifies users via email, in-app, and SMS — with frequency control (immediate, daily digest, weekly digest)
-6. Only touches calendar items the app created — never edits/deletes anything else
+Full-stack app that scrapes Utah court calendars (legacy.utcourts.gov), lets users search by 9 fields, syncs events to connected calendars (Google/Microsoft/Apple/CalDAV), detects schedule changes, and notifies users via email/in-app/SMS.
+
+**Stack:** React 18 + TypeScript + Vite + Tailwind | Express + TypeScript | PostgreSQL | node-cron | Socket.io | Nodemailer | Twilio
+
+**Monorepo:** `client/` (React frontend), `server/` (Express backend), `shared/` (types)
 
 ---
 
-## ARCHITECTURE
+## DEVELOPMENT RULES (MUST FOLLOW)
 
-### Stack
-- **Frontend:** React 18 + TypeScript + Vite + Tailwind CSS
-- **Backend:** Express + TypeScript
-- **Database:** Replit PostgreSQL (SSL required)
-- **Background Jobs:** node-cron (in-process) + Replit scheduled deployment (external trigger)
-- **Notifications:** Email (Nodemailer/SendGrid), In-App (WebSocket via Socket.io), SMS (Twilio)
+### Build & Deploy
+- **Rebuild both client AND server after any code change:** `npm --prefix client run build && npm --prefix server run build`. Stale builds are the #1 cause of "my change didn't work."
+- **`start-production.sh` must verify build artifacts exist** (`client/build/index.html`, `server/dist/server/src/index.js`) before starting. If missing, rebuild.
+- **Prefer `__dirname`-based path resolution** with existence checks. `process.cwd()` is OK when Replit monorepo root is the CWD at runtime.
+- **Simulate deployment locally** before committing: `bash build.sh && bash start-production.sh`. Also test from a different CWD.
 
-### Monorepo Structure
-```
-project-root/
-├── client/                    # React frontend (Vite)
-│   ├── index.html
-│   ├── vite.config.ts
-│   ├── tsconfig.json
-│   ├── tsconfig.node.json
-│   ├── package.json
-│   └── src/
-│       ├── main.tsx
-│       ├── App.tsx
-│       ├── components/
-│       │   ├── Layout.tsx
-│       │   ├── ProtectedRoute.tsx
-│       │   ├── NotificationBell.tsx
-│       │   ├── SearchForm.tsx
-│       │   ├── ExportTemplateModal.tsx  # CSV export template picker/editor modal
-│       │   └── ...
-│       ├── pages/
-│       │   ├── LoginPage.tsx
-│       │   ├── DashboardPage.tsx
-│       │   ├── SearchPage.tsx
-│       │   ├── SearchResultsPage.tsx
-│       │   ├── WatchedCasesPage.tsx
-│       │   ├── CalendarSettingsPage.tsx
-│       │   ├── SettingsPage.tsx         # Subscription, export templates, support
-│       │   ├── BillingPage.tsx
-│       │   ├── ProfilePage.tsx
-│       │   └── ...
-│       ├── hooks/
-│       │   ├── useAuth.ts
-│       │   ├── useNotifications.ts
-│       │   └── useSearch.ts
-│       ├── api/
-│       │   ├── client.ts
-│       │   ├── auth.ts
-│       │   ├── search.ts
-│       │   ├── calendar.ts
-│       │   ├── billing.ts
-│       │   ├── exportTemplates.ts       # CRUD for export templates
-│       │   └── notifications.ts
-│       ├── store/
-│       │   └── authStore.ts
-│       └── utils/
-│           └── formatters.ts
-│
-├── server/
-│   ├── package.json
-│   ├── tsconfig.json
-│   ├── migrations/
-│   │   ├── 001_users.sql
-│   │   ├── 002_calendar_connections.sql
-│   │   ├── 003_court_events.sql
-│   │   ├── 004_watched_cases.sql
-│   │   ├── 005_calendar_entries.sql
-│   │   ├── 006_notifications.sql
-│   │   ├── 007_change_log.sql
-│   │   ├── 008_scrape_jobs.sql
-│   │   ├── 009_html_scraper_columns.sql
-│   │   ├── ...030_event_cancellation.sql
-│   │   ├── 031_dedup_court_events.sql
-│   │   ├── 032_drop_case_date_unique.sql
-│   │   ├── 033_fix_corrupt_attorney_data.sql
-│   │   ├── 034_fix_duplicate_attorney_data.sql
-│   │   └── 035_export_templates.sql
-│   └── src/
-│       ├── index.ts
-│       ├── app.ts
-│       ├── routes/
-│       │   ├── index.ts
-│       │   ├── auth.ts
-│       │   ├── search.ts
-│       │   ├── searchHelpers.ts         # Search merge, filter, persist, enrichment helpers
-│       │   ├── calendar.ts
-│       │   ├── notifications.ts
-│       │   ├── watchedCases.ts
-│       │   ├── exportTemplates.ts       # CRUD for export templates
-│       │   ├── billing.ts              # Stripe checkout, portal, cancel, webhook
-│       │   └── health.ts
-│       ├── services/
-│       │   ├── courtScraper.ts        # HTML court list + search.php fetcher (primary)
-│       │   ├── pdfScraper.ts          # Deprecated re-export → courtScraper
-│       │   ├── courtEventParser.ts    # HTML result parser + legacy PDF parser
-│       │   ├── reportParser.ts        # reports.php Full Court Calendar parser (attorneys + charges)
-│       │   ├── searchService.ts
-│       │   ├── calendarSync.ts
-│       │   ├── googleCalendar.ts
-│       │   ├── microsoftCalendar.ts
-│       │   ├── appleCalendar.ts
-│       │   ├── caldavCalendar.ts
-│       │   ├── schedulerService.ts
-│       │   ├── changeDetector.ts
-│       │   ├── notificationService.ts
-│       │   ├── emailService.ts
-│       │   ├── smsService.ts
-│       │   ├── encryptionService.ts
-│       │   ├── watchedCaseMatcher.ts  # Auto-matches scraped events → watched cases → calendar entries
-│       │   └── sentryService.ts       # Sentry error tracking with correlation IDs
-│       ├── middleware/
-│       │   ├── auth.ts
-│       │   ├── rateLimiter.ts
-│       │   ├── requestLogger.ts
-│       │   └── errorHandler.ts
-│       ├── config/
-│       │   └── env.ts
-│       ├── db/
-│       │   ├── pool.ts
-│       │   └── migrate.ts
-│       └── utils/
-│           └── logger.ts
-│
-├── shared/
-│   └── types.ts
-│
-├── package.json               # Root monorepo scripts
-├── start.sh
-├── .replit
-├── replit.nix
-├── .env.example
-├── .gitignore
-└── CLAUDE.md
-```
+### Authentication & OAuth
+- **Google OAuth is the ONLY login method.** No email/password. `/api/auth/google` creates user + calendar_connections row in one transaction.
+- **Write to localStorage synchronously in `setUser()`**, not via `useEffect`. React navigations happen before async effects → stale state → redirect loops.
+- **Never use `clearToken()` in ProtectedRoute.** Just redirect; the OAuth callback issues a new JWT.
+- **Use `sessionStorage` flags to prevent redirect loops** (one attempt per browser session).
+
+### Frontend Guards
+- **Pages behind `ProtectedRoute` should NOT re-check `isLoggedIn`.** The wrapper guarantees auth.
+- **"No calendar connected" API errors → redirect to `/api/auth/google`**, not an error message.
+
+### Token Lifecycle
+- **Store refresh tokens with `COALESCE`** — don't overwrite existing tokens with NULL.
+- **Persist rotated refresh tokens** — Google and Microsoft can rotate during refresh.
+- **Calendar changes require user confirmation** — set `sync_status = 'pending_update'`, don't auto-sync.
 
 ---
 
-## DATABASE SCHEMA
+## CRITICAL LESSONS LEARNED
 
-### users
-| Column | Type | Notes |
-|--------|------|-------|
-| id | SERIAL PRIMARY KEY | |
-| email | VARCHAR(255) UNIQUE NOT NULL | |
-| password_hash | VARCHAR(255) NOT NULL | bcrypt |
-| phone | VARCHAR(20) | For SMS notifications |
-| email_verified | BOOLEAN DEFAULT false | |
-| email_verification_token | VARCHAR(255) | |
-| reset_password_token | VARCHAR(255) | |
-| reset_password_expires | TIMESTAMP | |
-| notification_preferences | JSONB DEFAULT '{}' | email/sms/in-app toggles |
-| created_at | TIMESTAMP DEFAULT NOW() | |
-| updated_at | TIMESTAMP DEFAULT NOW() | |
-
-### calendar_connections
-| Column | Type | Notes |
-|--------|------|-------|
-| id | SERIAL PRIMARY KEY | |
-| user_id | INTEGER REFERENCES users(id) | |
-| provider | VARCHAR(50) NOT NULL | google, microsoft, apple, caldav |
-| access_token_encrypted | TEXT | AES-256 encrypted |
-| refresh_token_encrypted | TEXT | AES-256 encrypted |
-| token_expires_at | TIMESTAMP | |
-| calendar_id | VARCHAR(255) | Selected calendar within the provider |
-| caldav_url | TEXT | For generic CalDAV connections |
-| is_active | BOOLEAN DEFAULT true | |
-| created_at | TIMESTAMP DEFAULT NOW() | |
-| updated_at | TIMESTAMP DEFAULT NOW() | |
-
-### court_events
-| Column | Type | Notes |
-|--------|------|-------|
-| id | SERIAL PRIMARY KEY | |
-| court_type | VARCHAR(50) | DistrictCourt, JusticeCourt |
-| court_name | VARCHAR(255) | |
-| court_room | VARCHAR(100) | |
-| event_date | DATE | |
-| event_time | VARCHAR(20) | |
-| hearing_type | VARCHAR(255) | |
-| case_number | VARCHAR(255) | |
-| case_type | VARCHAR(255) | |
-| defendant_name | VARCHAR(255) | |
-| defendant_otn | VARCHAR(255) | Offender Tracking Number |
-| defendant_dob | DATE | |
-| citation_number | VARCHAR(255) | |
-| sheriff_number | VARCHAR(255) | |
-| lea_number | VARCHAR(255) | Law enforcement agency # |
-| prosecuting_attorney | VARCHAR(255) | |
-| defense_attorney | VARCHAR(255) | |
-| judge_name | VARCHAR(255) | From HTML scraper (migration 009) |
-| hearing_location | VARCHAR(255) | City where hearing is held (migration 009) |
-| is_virtual | BOOLEAN DEFAULT false | Virtual hearing flag (migration 009) |
-| source_pdf_url | TEXT | Legacy PDF URL |
-| source_url | TEXT | HTML calendar URL (migration 009) |
-| source_page_number | INTEGER | |
-| content_hash | VARCHAR(64) | SHA-256 of event data for change detection |
-| scraped_at | TIMESTAMP DEFAULT NOW() | |
-| created_at | TIMESTAMP DEFAULT NOW() | |
-| updated_at | TIMESTAMP DEFAULT NOW() | |
-
-### watched_cases
-| Column | Type | Notes |
-|--------|------|-------|
-| id | SERIAL PRIMARY KEY | |
-| user_id | INTEGER REFERENCES users(id) | |
-| search_type | VARCHAR(50) | defendant_name, case_number, etc. |
-| search_value | VARCHAR(255) | The search term |
-| label | VARCHAR(255) | User-friendly label |
-| is_active | BOOLEAN DEFAULT true | |
-| created_at | TIMESTAMP DEFAULT NOW() | |
-| updated_at | TIMESTAMP DEFAULT NOW() | |
-
-### calendar_entries
-| Column | Type | Notes |
-|--------|------|-------|
-| id | SERIAL PRIMARY KEY | |
-| user_id | INTEGER REFERENCES users(id) | |
-| watched_case_id | INTEGER REFERENCES watched_cases(id) | |
-| court_event_id | INTEGER REFERENCES court_events(id) | |
-| calendar_connection_id | INTEGER REFERENCES calendar_connections(id) | |
-| external_event_id | VARCHAR(255) | ID from the calendar provider |
-| external_calendar_id | VARCHAR(255) | Calendar ID from provider |
-| last_synced_content_hash | VARCHAR(64) | For change detection |
-| sync_status | VARCHAR(50) DEFAULT 'pending' | pending, synced, error |
-| sync_error | TEXT | |
-| created_at | TIMESTAMP DEFAULT NOW() | |
-| updated_at | TIMESTAMP DEFAULT NOW() | |
-
-### notifications
-| Column | Type | Notes |
-|--------|------|-------|
-| id | SERIAL PRIMARY KEY | |
-| user_id | INTEGER REFERENCES users(id) | |
-| type | VARCHAR(50) | schedule_change, new_event, sync_error |
-| title | VARCHAR(255) | |
-| message | TEXT | |
-| metadata | JSONB DEFAULT '{}' | Related IDs, old/new values |
-| read | BOOLEAN DEFAULT false | |
-| channels_sent | JSONB DEFAULT '[]' | ['email','sms','in_app'] |
-| created_at | TIMESTAMP DEFAULT NOW() | |
-
-### change_log
-| Column | Type | Notes |
-|--------|------|-------|
-| id | SERIAL PRIMARY KEY | |
-| court_event_id | INTEGER REFERENCES court_events(id) | |
-| field_changed | VARCHAR(100) | |
-| old_value | TEXT | |
-| new_value | TEXT | |
-| detected_at | TIMESTAMP DEFAULT NOW() | |
-
-### saved_searches
-| Column | Type | Notes |
-|--------|------|-------|
-| id | SERIAL PRIMARY KEY | |
-| user_id | INTEGER REFERENCES users(id) ON DELETE CASCADE | |
-| search_params | JSONB NOT NULL | Full multi-field search params with _key for dedup |
-| label | VARCHAR(255) NOT NULL | Auto-generated from search fields |
-| results_count | INTEGER DEFAULT 0 | Updated on each run |
-| last_run_at | TIMESTAMP DEFAULT NOW() | |
-| is_active | BOOLEAN DEFAULT true | Soft delete |
-| created_at | TIMESTAMP DEFAULT NOW() | |
-| updated_at | TIMESTAMP DEFAULT NOW() | |
-
-### export_templates
-| Column | Type | Notes |
-|--------|------|-------|
-| id | SERIAL PRIMARY KEY | |
-| user_id | INTEGER REFERENCES users(id) ON DELETE CASCADE | |
-| name | VARCHAR(255) NOT NULL | User-defined template name |
-| field_keys | JSONB NOT NULL DEFAULT '[]' | Ordered list of field keys to include in CSV |
-| sort_levels | JSONB NOT NULL DEFAULT '[]' | Multi-level sort: [{key, dir}] |
-| created_at | TIMESTAMPTZ DEFAULT NOW() | |
-| updated_at | TIMESTAMPTZ DEFAULT NOW() | |
-
-### scrape_jobs
-| Column | Type | Notes |
-|--------|------|-------|
-| id | SERIAL PRIMARY KEY | |
-| status | VARCHAR(50) | pending, running, completed, failed |
-| courts_processed | INTEGER DEFAULT 0 | |
-| events_found | INTEGER DEFAULT 0 | |
-| events_changed | INTEGER DEFAULT 0 | |
-| error_message | TEXT | |
-| started_at | TIMESTAMP | |
-| completed_at | TIMESTAMP | |
-| created_at | TIMESTAMP DEFAULT NOW() | |
+- **search.php shows only ONE attorney** with generic "Attorney:" label. Must fetch details.php for both attorneys (PLA ATTY / DEF ATTY labels).
+- **Court list has commented-out courts** — strip HTML comments before parsing `<option>` tags.
+- **DB upsert key must include event_time** — same case can have multiple hearings per day at different times.
+- **Live results are authoritative for scheduling** (time, date, courtroom) but DB has richer enrichment (attorneys, OTN, charges). Enrich live results from DB BEFORE filtering.
+- **Attorney filter must run AFTER enrichment** — otherwise live results with null attorneys get dropped before DB backfill.
+- **Old parser corrupted defense_attorney** by blindly assigning generic "Attorney:" field. Migrations 033/034 clean this up.
+- **Details page HTML has newlines in names** (e.g., "RYAN\nROBINSON") — normalize with `.replace(/\s+/g, " ")`.
 
 ---
 
 ## KEY DECISIONS
 
-1. **PDF Scraping:** Use `pdf-parse` (Node.js) to download and parse court calendar PDFs from utcourts.gov. The PDF structure is documented in the existing Rails repo's `court_calendar_extraction_process.rb`.
-2. **Calendar OAuth:** Google Calendar API (OAuth 2.0), Microsoft Graph API (OAuth 2.0), Apple iCloud (CalDAV with app-specific password), generic CalDAV.
-3. **Token Storage:** All OAuth tokens encrypted with AES-256-GCM using ENCRYPTION_KEY env var.
-4. **Change Detection:** SHA-256 hash of event data fields. Compare on each scrape cycle.
-5. **Scheduling:** node-cron runs daily at 2:00 AM UTC. Also supports manual trigger via `/api/admin/trigger-scrape` and Replit scheduled deployments.
-6. **Calendar Item Tracking:** Every calendar entry created by the app is tracked in `calendar_entries` table with the provider's external event ID. The app ONLY updates/deletes entries it created.
-7. **Saved Searches:** Searches are auto-saved for logged-in users. First-time searches always go live to utcourts.gov; subsequent runs use cached DB results. Live results are persisted to court_events for future queries.
-8. **Daily Search Cache:** Utah courts update once daily (5:30 AM). If a search was already run today, return cached DB results instead of re-scraping. The `last_refreshed_at` timestamp on the watched_case determines freshness.
-9. **Attorney Data Source:** search.php only shows ONE attorney with generic "Attorney:" label — no role, no opposing counsel. The details.php page (linked from each result) shows BOTH attorneys with labels: `PLA ATTY:` (prosecution) and `DEF ATTY:` (defense). We fetch details.php in parallel batches of 10 to enrich results.
-10. **Court List Parsing:** The court list is dynamically fetched from utcourts.gov and parsed from `<optgroup>/<option>` HTML. HTML comments are stripped before parsing to exclude commented-out (inactive) courts.
-11. **Export Templates:** Stored in DB (export_templates table) per user. Templates define field selection, column order, and multi-level sort priority. Available from both the export modal and the Settings page.
-12. **Subscription Cancellation:** Uses Stripe `cancel_at_period_end: true` — subscription stays active until renewal date, then cancels without charging.
+1. **Scraping:** HTML from search.php (primary), pdf-parse fallback for legacy courts. details.php fetched in parallel batches of 10 for attorney enrichment.
+2. **Tokens:** AES-256-GCM encrypted via ENCRYPTION_KEY env var.
+3. **Change detection:** SHA-256 content hash per event, field-level diff on each scrape cycle.
+4. **Scheduling:** node-cron daily at 2:00 AM UTC + manual `/api/admin/trigger-scrape` + Replit scheduled deployments.
+5. **Calendar safety:** Only updates/deletes entries the app created (tracked in `calendar_entries` with provider's external event ID).
+6. **Search caching:** First-time searches go live to utcourts.gov and persist results. Same-day repeats return cached DB results (courts update once daily at 5:30 AM).
+7. **Saved searches:** Auto-saved for logged-in users. `search_params` JSONB with `_key` for dedup.
+8. **Stripe cancellation:** `cancel_at_period_end: true` — stays active until renewal date.
+
+---
+
+## DATABASE TABLES
+
+`users`, `calendar_connections`, `court_events`, `watched_cases`, `calendar_entries`, `notifications`, `change_log`, `saved_searches`, `export_templates`, `scrape_jobs`
+
+See `server/migrations/` (001–035) for full schema. Key relationships:
+- `calendar_connections.user_id` → `users.id`
+- `calendar_entries` links `user_id`, `watched_case_id`, `court_event_id`, `calendar_connection_id`
+- `court_events.content_hash` (SHA-256) drives change detection
 
 ---
 
 ## ENVIRONMENT VARIABLES
 
-```
-PORT=5000
-HOST=0.0.0.0
-NODE_ENV=development
-DATABASE_URL=              # Replit PostgreSQL connection string
-JWT_SECRET=                # Generate: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-ENCRYPTION_KEY=            # Generate: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-
-# Google Calendar OAuth
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-GOOGLE_REDIRECT_URI=       # https://your-app.replit.app/api/calendar/google/callback
-
-# Microsoft OAuth
-MICROSOFT_CLIENT_ID=
-MICROSOFT_CLIENT_SECRET=
-MICROSOFT_REDIRECT_URI=    # https://your-app.replit.app/api/calendar/microsoft/callback
-
-# Email (SendGrid or SMTP)
-SMTP_HOST=
-SMTP_PORT=
-SMTP_USER=
-SMTP_PASS=
-FROM_EMAIL=
-
-# SMS (Twilio)
-TWILIO_ACCOUNT_SID=
-TWILIO_AUTH_TOKEN=
-TWILIO_PHONE_NUMBER=
-
-# Sentry Error Tracking (optional — leave blank to disable)
-SENTRY_DSN=
-```
+See `.env.example` for full list. Required: `DATABASE_URL`, `JWT_SECRET`, `ENCRYPTION_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`. Optional: Microsoft OAuth, SMTP, Twilio, Sentry.
 
 ---
-
-## CHANGE LOG
-
-| Date | Version | Changes |
-|------|---------|---------|
-| 2026-03-13 | 0.1.0 | Initial architecture, schema, and project plan |
-| 2026-03-13 | 0.2.0 | Full server scaffolding: all services, routes, middleware |
-| 2026-03-13 | 0.3.0 | Full client scaffolding: React + Tailwind, all pages and API layer |
-| 2026-03-13 | 0.4.0 | Coding standards compliance audit: requestLogger, graceful shutdown, heavyLimiter, typed pool.query() |
-| 2026-03-13 | 0.5.0 | Google Calendar API v3: full CRUD, token refresh, typed sync functions |
-| 2026-03-13 | 0.6.0 | Microsoft Graph API, CalDAV/Apple iCloud, Socket.io notifications, email verification, AM/PM time fix, 33 tests |
-| 2026-03-13 | 0.7.0 | HTML scraper rewrite (search.php), court list parser, judge/location/virtual fields, 48 tests |
-| 2026-03-13 | 0.7.1 | Multi-date scraping (today + 14 weekdays), CORS tightened, token expiry UI, 72 tests |
-| 2026-03-13 | 0.8.0 | Pool monitoring, Sentry error tracking, reports.php parser (attorneys/charges/OTN/DOB), 108 tests |
-| 2026-03-13 | 0.9.0 | Admin dashboard, charges search + display, comprehensive integration tests, 130 tests |
-| 2026-03-13 | 0.10.0 | Watched case auto-matching (matchWatchedCases in scheduler post-scrape), 139 tests |
-| 2026-03-13 | 0.11.0 | Parser validated against real utcourts.gov HTML — pipe-delimiter fix for defendant/judge separation. Mobile responsive: hamburger nav, card layouts. Smoke test script. 139 tests |
-| 2026-03-13 | 0.12.0 | Full search parity with utcourts.gov: judge name + attorney search (9 fields total). Notification frequency: immediate/daily/weekly digest with digestService.ts + cron jobs. ProfilePage frequency selector UI. 139 tests |
-| 2026-03-15 | 0.13.0 | Auto-saved searches: live-first scraping on first run, persists results to DB, auto-saves for logged-in users. Saved searches UI with re-run/delete. Date/time display fixes. Coding standards compliance fixes (type guards, req.user capture, no Math.random IDs). 139 tests |
-| 2026-04-02 | 0.14.0 | Search dedup fix (case+date+time for DB, live-first merge). Attorney enrichment from details.php (PLA ATTY/DEF ATTY labels). Daily search cache. CSV export templates with multi-level sort (DB-backed). Both attorneys shown in UI/CSV with "-" fallback. Court list comment stripping. Settings page (subscription management, Stripe cancel, export templates, support). Migrations 031-035. |
-
----
-
-## ALL FEATURES (v0.14.0)
-
-### Core
-- ✅ User auth: register, login, password reset, email verification with resend
-- ✅ HTML scraper: fetches 135+ courts from legacy.utcourts.gov/cal/search.php, multi-date (today + 14 weekdays)
-- ✅ Parser: validated against real court HTML, pipe-delimiter injection for clean field separation
-- ✅ reports.php enrichment: attorneys, charges, OTN, DOB, citation/sheriff/LEA numbers
-- ✅ PDF fallback: legacy divider-based parser for any courts still producing PDFs
-- ✅ Search: 9 fields (defendant, case#, court, date, OTN, citation, charges, judge, attorney) — full parity with utcourts.gov + 3 extras
-- ✅ Watched cases: CRUD + manual sync + auto-matching (all 9 search types)
-- ✅ Saved searches: auto-saved on first run, live-first scraping, persists results, re-run/delete UI
-- ✅ Daily search cache: same-day repeat searches return cached DB results (courts update once daily)
-- ✅ Details page enrichment: fetches details.php for each result to get both attorneys (PLA ATTY / DEF ATTY)
-- ✅ Attorney display: both prosecution and defense shown in search results and CSV export, "-" for blank
-- ✅ CSV export templates: DB-backed per-user templates with field selection, column order, multi-level sort
-- ✅ Change detection: SHA-256 content hashing + 9-field diff → change_log + user notifications
-
-### Calendar Integrations
-- ✅ Google Calendar API v3: OAuth 2.0, token refresh, POST/PATCH events, America/Denver timezone
-- ✅ Microsoft Graph API: OAuth 2.0, rotating refresh tokens, POST/PATCH /me/events
-- ✅ Apple iCloud / CalDAV: RFC 5545 VCALENDAR/VEVENT, Basic auth, ICS UID tracking
-- ✅ Calendar entry tracking: only touches app-created items, re-syncs on event changes
-
-### Notifications
-- ✅ In-app: real-time via Socket.io push to user rooms, NotificationBell with unread count, 30s polling fallback
-- ✅ Email: Nodemailer with SMTP, schedule change emails with HTML diff table, verification + password reset emails
-- ✅ SMS: Twilio integration, schedule change summary messages
-- ✅ Frequency control: immediate / daily digest (6 AM UTC) / weekly digest (Monday 6 AM UTC)
-- ✅ Digest service: aggregates deferred notifications, sends HTML summary email + SMS, marks as delivered
-
-### Production Hardening
-- ✅ Per-request correlation IDs (UUID) on all API responses
-- ✅ Rate limiting: global (100/15min), heavy/calendar (20/min), auth (10/15min)
-- ✅ AES-256-GCM token encryption via ENCRYPTION_KEY env var
-- ✅ CORS tightened for production (CORS_ORIGIN env var)
-- ✅ Connection pool monitoring: periodic stats logging, 80%+ utilization warnings, /health pool stats
-- ✅ Sentry error tracking: lazy-init, correlation IDs + tags, errorHandler integration
-- ✅ Graceful shutdown: Socket.io + HTTP + pool monitor + Sentry flush, 10s timeout
-- ✅ Token expiry UI: Active/Expiring/Expired badges, re-auth buttons
-
-### Client
-- ✅ Mobile responsive: hamburger nav menu, card layouts on small screens, overflow-x-auto tables
-- ✅ Admin dashboard: scrape job history, pool stats, manual trigger, aggregate counts
-- ✅ Search results: expandable detail rows (attorneys, OTN, DOB, charges), virtual hearing badges
-- ✅ Login page: verification banner (success/invalid/expired), registered redirect
-- ✅ Settings page: subscription management, export template CRUD, support contact (ops@1564hub.com)
-- ✅ Stripe cancel subscription: cancel_at_period_end via in-app button (no further charges)
-
-### Testing & DevOps
-- ✅ 139 tests across 10 suites (vitest): changeDetector, courtEventParser, courtScraper, calendarSync, scheduler, integration, poolMonitor, sentryService, reportParser, watchedCaseMatcher
-- ✅ Smoke test script: `bash smoke-test.sh [url]` — 15+ checks for health, auth, headers, rate limiting, SPA, DB
 
 ## NEXT STEPS (TODO)
 
-1. **Details page enrichment in scheduler** — The daily cron scrape should also fetch details.php pages to populate attorney data for all scraped events (currently only happens during user searches)
-2. **Notification delivery testing** — Wire real SMTP + Twilio credentials, test email/SMS end-to-end
-3. **Parser edge cases** — Run scrape across all 135+ courts, log/tune failures for non-standard formats
-4. **Digest service tests** — Unit tests for digestService.ts aggregation + delivery logic
-5. **Export template validation** — Verify templates persist correctly across logout/login cycles
+1. **Details page enrichment in scheduler** — daily cron should fetch details.php for attorney data (currently only during user searches)
+2. **Notification delivery testing** — wire real SMTP + Twilio, test end-to-end
+3. **Parser edge cases** — scrape all 135+ courts, log/tune failures
+4. **Digest service tests** — unit tests for digestService.ts
+5. **Export template validation** — verify persistence across logout/login cycles
 
-## CRITICAL LESSONS LEARNED (v0.14.0)
+---
 
-- **search.php only shows ONE attorney** with generic "Attorney:" label. No role label, no opposing counsel. Must fetch details.php for both attorneys with PLA ATTY / DEF ATTY labels.
-- **Court list has commented-out courts** — HTML comment stripping required when parsing `<option>` tags from `<optgroup>` sections.
-- **DB upsert key must include event_time** — a case can have multiple hearings on the same day at different times. Removing time from the key collapses legitimate separate hearings.
-- **Live results are authoritative for scheduling** (time, date, courtroom) but DB may have richer enrichment data (attorneys, OTN, charges). Enrich live results from DB BEFORE filtering.
-- **Attorney filter must run AFTER enrichment** — otherwise live results with null attorneys get dropped before DB backfill can populate them.
-- **Old parser corrupted defense_attorney** by blindly assigning the generic "Attorney:" field. Migration 033/034 cleans this up.
-- **Details page HTML has newlines in names** (e.g., "RYAN\nROBINSON") — must normalize with `.replace(/\s+/g, " ")` before storing.
+## TESTING
+
+139 tests across 10 vitest suites. Smoke test: `bash smoke-test.sh [url]` (15+ checks).

@@ -165,13 +165,16 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
 
     if (sameDay) {
       console.log(`📋 Search already run today (${lastRun.toISOString()}) — returning cached results`);
-      const dbResults = await searchCourtEvents(searchParams);
-      // For cached results, skip the attorney filter — the DB records were
-      // found via attorney search originally but may not have attorney fields
-      // populated yet (details.php enrichment only runs during live searches).
-      const cacheParams = { ...searchParams };
-      delete cacheParams.attorney;
-      const filtered = applyAllFilters(dbResults, cacheParams);
+      // For cached attorney searches, skip the attorney filter in BOTH the
+      // SQL query and local filter — the DB records were found via attorney
+      // search on utcourts.gov originally but may not have attorney fields
+      // populated (details.php enrichment only runs during live searches).
+      const cacheDbParams = { ...searchParams };
+      if (cacheDbParams.attorney) delete cacheDbParams.attorney;
+      const dbResults = await searchCourtEvents(cacheDbParams);
+      const cacheFilterParams = { ...searchParams };
+      if (cacheFilterParams.attorney) delete cacheFilterParams.attorney;
+      const filtered = applyAllFilters(dbResults, cacheFilterParams);
       markNewEvents(filtered, existing.last_refreshed_at);
       res.json({
         results: filtered,
