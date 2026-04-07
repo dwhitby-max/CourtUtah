@@ -176,14 +176,17 @@ router.get("/google/callback", async (req: Request, res: Response) => {
           // Create new user — auto-approved, admin notified
           const signupIp = req.ip || req.headers["x-forwarded-for"] || null;
           // Grandfathered accounts get Pro access on signup
-          const grandfatheredEmails = ["dwhitby@gmail.com", "kittrellcourt@gmail.com"];
+          const grandfatheredEmails = ["dwhitby@gmail.com", "kittrellcourt@gmail.com", "yvetulia@gmail.com"];
           const isGrandfathered = grandfatheredEmails.includes(userinfo.email.toLowerCase());
+          // Agency-grandfathered accounts get agency account type on signup
+          const agencyEmails = ["yvetulia@gmail.com"];
+          const grandfatheredAccountType = agencyEmails.includes(userinfo.email.toLowerCase()) ? "agency" : "individual_attorney";
 
           const newUser = await client.query(
-            `INSERT INTO users (email, google_id, email_verified, signup_ip, is_approved, notification_preferences, subscription_plan, subscription_status)
-             VALUES ($1, $2, true, $3, true, '{"emailEnabled": true, "smsEnabled": false, "inAppEnabled": true, "frequency": "immediate"}', $4, $5)
+            `INSERT INTO users (email, google_id, email_verified, signup_ip, is_approved, notification_preferences, subscription_plan, subscription_status, account_type)
+             VALUES ($1, $2, true, $3, true, '{"emailEnabled": true, "smsEnabled": false, "inAppEnabled": true, "frequency": "immediate"}', $4, $5, $6)
              RETURNING id`,
-            [userinfo.email.toLowerCase(), userinfo.id, signupIp, isGrandfathered ? "pro" : "free", isGrandfathered ? "grandfathered" : "none"]
+            [userinfo.email.toLowerCase(), userinfo.id, signupIp, isGrandfathered ? "pro" : "free", isGrandfathered ? "grandfathered" : "none", isGrandfathered ? grandfatheredAccountType : null]
           );
           userId = newUser.rows[0].id;
 
@@ -416,14 +419,16 @@ router.get("/microsoft/callback", async (req: Request, res: Response) => {
         } else {
           // Create new user — auto-approved, admin notified
           const signupIp = req.ip || req.headers["x-forwarded-for"] || null;
-          const grandfatheredEmails = ["dwhitby@gmail.com", "kittrellcourt@gmail.com"];
+          const grandfatheredEmails = ["dwhitby@gmail.com", "kittrellcourt@gmail.com", "yvetulia@gmail.com"];
           const isGrandfathered = grandfatheredEmails.includes(email);
+          const agencyEmails = ["yvetulia@gmail.com"];
+          const grandfatheredAccountType = agencyEmails.includes(email) ? "agency" : "individual_attorney";
 
           const newUser = await client.query(
-            `INSERT INTO users (email, microsoft_id, email_verified, signup_ip, is_approved, notification_preferences, subscription_plan, subscription_status)
-             VALUES ($1, $2, true, $3, true, '{"emailEnabled": true, "smsEnabled": false, "inAppEnabled": true, "frequency": "immediate"}', $4, $5)
+            `INSERT INTO users (email, microsoft_id, email_verified, signup_ip, is_approved, notification_preferences, subscription_plan, subscription_status, account_type)
+             VALUES ($1, $2, true, $3, true, '{"emailEnabled": true, "smsEnabled": false, "inAppEnabled": true, "frequency": "immediate"}', $4, $5, $6)
              RETURNING id`,
-            [email, userinfo.id, signupIp, isGrandfathered ? "pro" : "free", isGrandfathered ? "grandfathered" : "none"]
+            [email, userinfo.id, signupIp, isGrandfathered ? "pro" : "free", isGrandfathered ? "grandfathered" : "none", isGrandfathered ? grandfatheredAccountType : null]
           );
           userId = newUser.rows[0].id;
 
