@@ -140,9 +140,22 @@ export async function runWatchedCaseSearch(watchedCaseId: number): Promise<{
       return { eventsFound: 0, newEntries: 0, changes: 0 };
     }
 
-    // Single request to utcourts.gov with loc=all — works for all search types
+    // Check user's account type to determine search strategy
+    const userResult = await client.query<{ account_type: string | null }>(
+      "SELECT account_type FROM users WHERE id = $1",
+      [wc.user_id]
+    );
+    const userAccountType = userResult.rows[0]?.account_type || null;
+
+    // Agency accounts don't auto-refresh — they only re-run when the user triggers manually
+    if (userAccountType === "agency") {
+      console.log(`⏭️ Skipping watched case ${wc.id} — agency accounts only refresh on demand`);
+      return { eventsFound: 0, newEntries: 0, changes: 0 };
+    }
+
+    // Individual attorney / default: single request with d=all
     const allParsed: ParsedCourtEvent[] = [];
-    console.log(`🔍 Searching utcourts.gov for watched case ${wc.id}: ${wc.search_type}="${wc.search_value}"`);
+    console.log(`🔍 Searching utcourts.gov for watched case ${wc.id}: ${wc.search_type}="${wc.search_value}" (account: ${userAccountType || "default"})`);
     try {
       const html = await liveSearchUtcourts({ ...liveParams, date: "all", locationCode: "all" });
       allParsed.push(...parseHtmlCalendarResults(html));

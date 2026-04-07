@@ -2,17 +2,19 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { apiFetch } from "@/api/client";
 import { useAuth } from "@/store/authStore";
+import { AccountType } from "@shared/types";
 
 export default function AcceptTermsPage() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [accountType, setAccountType] = useState<AccountType | "">("");
   const [agreed, setAgreed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const { setUser } = useAuth();
   const navigate = useNavigate();
 
-  const canSubmit = agreed && firstName.trim() && lastName.trim();
+  const canSubmit = agreed && firstName.trim() && lastName.trim() && accountType;
 
   async function handleAccept() {
     if (!canSubmit) return;
@@ -23,7 +25,7 @@ export default function AcceptTermsPage() {
       const res = await apiFetch("/auth/accept-terms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ firstName: firstName.trim(), lastName: lastName.trim() }),
+        body: JSON.stringify({ firstName: firstName.trim(), lastName: lastName.trim(), accountType }),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -81,6 +83,56 @@ export default function AcceptTermsPage() {
                 placeholder="Enter your last name"
                 autoComplete="family-name"
               />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">I am a...</label>
+            <div className="grid grid-cols-1 gap-3">
+              <label
+                className={`flex items-start gap-3 p-4 border-2 rounded-lg cursor-pointer transition-colors ${
+                  accountType === "individual_attorney"
+                    ? "border-amber-600 bg-amber-50"
+                    : "border-gray-200 hover:border-gray-300"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="accountType"
+                  value="individual_attorney"
+                  checked={accountType === "individual_attorney"}
+                  onChange={() => setAccountType("individual_attorney")}
+                  className="mt-0.5 h-4 w-4 text-amber-700 border-gray-300 focus:ring-amber-700"
+                />
+                <div>
+                  <div className="text-sm font-medium text-gray-900">Individual Attorney</div>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    Search for your cases across all available dates (next 30 days). Searches run automatically and stay up to date.
+                  </div>
+                </div>
+              </label>
+              <label
+                className={`flex items-start gap-3 p-4 border-2 rounded-lg cursor-pointer transition-colors ${
+                  accountType === "agency"
+                    ? "border-amber-600 bg-amber-50"
+                    : "border-gray-200 hover:border-gray-300"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="accountType"
+                  value="agency"
+                  checked={accountType === "agency"}
+                  onChange={() => setAccountType("agency")}
+                  className="mt-0.5 h-4 w-4 text-amber-700 border-gray-300 focus:ring-amber-700"
+                />
+                <div>
+                  <div className="text-sm font-medium text-gray-900">Agency</div>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    Search on behalf of multiple attorneys with date-specific lookups (up to 1 week at a time).
+                  </div>
+                </div>
+              </label>
             </div>
           </div>
 

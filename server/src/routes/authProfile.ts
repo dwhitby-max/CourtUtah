@@ -16,7 +16,7 @@ router.get("/me", authenticateToken, async (req: Request, res: Response) => {
     const result = await client.query(
       `SELECT id, email, first_name, last_name, phone, email_verified, google_id, microsoft_id, is_admin, is_approved,
               notification_preferences, calendar_preferences, search_preferences, tos_agreed_at, created_at,
-              subscription_plan, subscription_status, subscription_current_period_end
+              subscription_plan, subscription_status, subscription_current_period_end, account_type
        FROM users WHERE id = $1`,
       [req.user.userId]
     );
@@ -47,6 +47,7 @@ router.get("/me", authenticateToken, async (req: Request, res: Response) => {
         subscriptionPlan: user.subscription_plan || "free",
         subscriptionStatus: user.subscription_status || "none",
         subscriptionCurrentPeriodEnd: user.subscription_current_period_end || null,
+        accountType: user.account_type || null,
       },
     });
   } catch (err) {
@@ -61,9 +62,13 @@ router.get("/me", authenticateToken, async (req: Request, res: Response) => {
 router.post("/accept-terms", authenticateToken, async (req: Request, res: Response) => {
   if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
 
-  const { firstName, lastName } = req.body;
+  const { firstName, lastName, accountType } = req.body;
   if (!firstName || !lastName || typeof firstName !== "string" || typeof lastName !== "string") {
     res.status(400).json({ error: "First name and last name are required" });
+    return;
+  }
+  if (!accountType || !["individual_attorney", "agency"].includes(accountType)) {
+    res.status(400).json({ error: "Account type is required (individual_attorney or agency)" });
     return;
   }
 
@@ -81,14 +86,14 @@ router.post("/accept-terms", authenticateToken, async (req: Request, res: Respon
   try {
     const tosIp = req.ip || req.headers["x-forwarded-for"] || null;
     await client.query(
-      `UPDATE users SET first_name = $1, last_name = $2, tos_agreed_at = NOW(), tos_agreed_ip = $3, updated_at = NOW() WHERE id = $4`,
-      [trimmedFirst, trimmedLast, tosIp, req.user.userId]
+      `UPDATE users SET first_name = $1, last_name = $2, tos_agreed_at = NOW(), tos_agreed_ip = $3, account_type = $4, updated_at = NOW() WHERE id = $5`,
+      [trimmedFirst, trimmedLast, tosIp, accountType, req.user.userId]
     );
 
     const result = await client.query(
       `SELECT id, email, first_name, last_name, phone, email_verified, google_id, microsoft_id, is_admin, is_approved,
               notification_preferences, calendar_preferences, search_preferences, tos_agreed_at, created_at,
-              subscription_plan, subscription_status, subscription_current_period_end
+              subscription_plan, subscription_status, subscription_current_period_end, account_type
        FROM users WHERE id = $1`,
       [req.user.userId]
     );
@@ -114,6 +119,7 @@ router.post("/accept-terms", authenticateToken, async (req: Request, res: Respon
         subscriptionPlan: user.subscription_plan || "free",
         subscriptionStatus: user.subscription_status || "none",
         subscriptionCurrentPeriodEnd: user.subscription_current_period_end || null,
+        accountType: user.account_type || null,
       },
     });
   } catch (err) {
@@ -131,7 +137,7 @@ router.patch("/profile", authenticateToken, async (req: Request, res: Response) 
   const pool = getPool();
   if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
 
-  const { phone, notificationPreferences, calendarPreferences, searchPreferences } = req.body;
+  const { phone, notificationPreferences, calendarPreferences, searchPreferences, accountType } = req.body;
 
   const client = await pool.connect();
   try {
@@ -156,6 +162,14 @@ router.patch("/profile", authenticateToken, async (req: Request, res: Response) 
       setClauses.push(`search_preferences = $${paramIdx++}`);
       values.push(JSON.stringify(searchPreferences));
     }
+    if (accountType !== undefined) {
+      if (!["individual_attorney", "agency"].includes(accountType)) {
+        res.status(400).json({ error: "Invalid account type" });
+        return;
+      }
+      setClauses.push(`account_type = $${paramIdx++}`);
+      values.push(accountType);
+    }
 
     values.push(req.user.userId);
     await client.query(
@@ -166,7 +180,7 @@ router.patch("/profile", authenticateToken, async (req: Request, res: Response) 
     const result = await client.query(
       `SELECT id, email, first_name, last_name, phone, email_verified, google_id, microsoft_id, is_admin, is_approved,
               notification_preferences, calendar_preferences, search_preferences, tos_agreed_at, created_at,
-              subscription_plan, subscription_status, subscription_current_period_end
+              subscription_plan, subscription_status, subscription_current_period_end, account_type
        FROM users WHERE id = $1`,
       [req.user.userId]
     );
@@ -194,6 +208,10 @@ router.patch("/profile", authenticateToken, async (req: Request, res: Response) 
         searchPreferences: user.search_preferences || { defaultCourts: [] },
         tosAgreedAt: user.tos_agreed_at || null,
         createdAt: user.created_at,
+        subscriptionPlan: user.subscription_plan || "free",
+        subscriptionStatus: user.subscription_status || "none",
+        subscriptionCurrentPeriodEnd: user.subscription_current_period_end || null,
+        accountType: user.account_type || null,
       },
     });
   } catch (err) {

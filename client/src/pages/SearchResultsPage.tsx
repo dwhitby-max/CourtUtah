@@ -294,59 +294,74 @@ export default function SearchResultsPage() {
                 </button>
               )}
             </div>
-            {results.length > 0 && cal.calendarProvider && (
+            {results.length > 0 && (
               <div className="flex items-center gap-2 flex-wrap mt-3">
-                {!allSynced && (
+                {cal.calendarProvider ? (
+                  <>
+                    {!allSynced && (
+                      <button
+                        onClick={handleAddAllToCalendar}
+                        disabled={batchAdding || batchRemoving}
+                        className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed bg-amber-600 text-white hover:bg-amber-700 transition-colors"
+                        title={`Add all ${results.length} events to ${providerLabels[cal.calendarProvider] || "Calendar"}`}
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                        {batchAdding ? batchProgress : `Add All to ${providerLabels[cal.calendarProvider] || "Calendar"}`}
+                      </button>
+                    )}
+                    {anySynced && (
+                      <button
+                        onClick={handleRemoveAllFromCalendar}
+                        disabled={batchRemoving || batchAdding}
+                        className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed bg-red-600 text-white hover:bg-red-700 transition-colors"
+                        title={`Remove all synced events from ${providerLabels[cal.calendarProvider] || "Calendar"}`}
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        {batchRemoving ? batchProgress : "Remove All"}
+                      </button>
+                    )}
+                    {anySynced && (
+                      <label className="flex items-center gap-2 cursor-pointer select-none ml-2 group relative">
+                        <div className="relative">
+                          <input
+                            type="checkbox"
+                            checked={autoSyncEnabled}
+                            onChange={(e) => handleToggleAutoSync(e.target.checked)}
+                            disabled={autoSyncLoading || batchAdding || batchRemoving}
+                            className="sr-only peer"
+                          />
+                          <div className={`w-9 h-5 rounded-full transition-colors ${autoSyncLoading ? "bg-gray-200" : "bg-gray-300"} peer-checked:bg-green-500`}></div>
+                          <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow peer-checked:translate-x-4 transition-transform"></div>
+                        </div>
+                        <span className="text-sm text-gray-700 font-medium">
+                          {autoSyncLoading ? "Updating..." : "Auto-sync"}
+                        </span>
+                        <span className="relative">
+                          <svg className="w-4 h-4 text-gray-400 hover:text-gray-600 cursor-help" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 px-3 py-2 text-xs text-white bg-gray-800 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                            Monitors your calendar events for schedule changes and automatically updates them. New hearings found for these cases will also be added to your calendar.
+                          </span>
+                        </span>
+                      </label>
+                    )}
+                  </>
+                ) : (
                   <button
-                    onClick={handleAddAllToCalendar}
-                    disabled={batchAdding || batchRemoving}
-                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed bg-amber-600 text-white hover:bg-amber-700 transition-colors"
-                    title={`Add all ${results.length} events to ${providerLabels[cal.calendarProvider] || "Calendar"}`}
+                    onClick={() => navigate("/calendar-settings")}
+                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md bg-amber-600 text-white hover:bg-amber-700 transition-colors"
+                    title="Connect a calendar to add events"
                   >
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                     </svg>
-                    {batchAdding ? batchProgress : `Add All to ${providerLabels[cal.calendarProvider] || "Calendar"}`}
+                    Add All to Calendar
                   </button>
-                )}
-                {anySynced && (
-                  <button
-                    onClick={handleRemoveAllFromCalendar}
-                    disabled={batchRemoving || batchAdding}
-                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed bg-red-600 text-white hover:bg-red-700 transition-colors"
-                    title={`Remove all synced events from ${providerLabels[cal.calendarProvider] || "Calendar"}`}
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                    {batchRemoving ? batchProgress : "Remove All"}
-                  </button>
-                )}
-                {anySynced && (
-                  <label className="flex items-center gap-2 cursor-pointer select-none ml-2 group relative">
-                    <div className="relative">
-                      <input
-                        type="checkbox"
-                        checked={autoSyncEnabled}
-                        onChange={(e) => handleToggleAutoSync(e.target.checked)}
-                        disabled={autoSyncLoading || batchAdding || batchRemoving}
-                        className="sr-only peer"
-                      />
-                      <div className={`w-9 h-5 rounded-full transition-colors ${autoSyncLoading ? "bg-gray-200" : "bg-gray-300"} peer-checked:bg-green-500`}></div>
-                      <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow peer-checked:translate-x-4 transition-transform"></div>
-                    </div>
-                    <span className="text-sm text-gray-700 font-medium">
-                      {autoSyncLoading ? "Updating..." : "Auto-sync"}
-                    </span>
-                    <span className="relative">
-                      <svg className="w-4 h-4 text-gray-400 hover:text-gray-600 cursor-help" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 px-3 py-2 text-xs text-white bg-gray-800 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
-                        Monitors your calendar events for schedule changes and automatically updates them. New hearings found for these cases will also be added to your calendar.
-                      </span>
-                    </span>
-                  </label>
                 )}
               </div>
             )}

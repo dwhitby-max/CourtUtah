@@ -16,6 +16,7 @@ import {
   markNewEvents,
   toCourtEvent,
   applyAllFilters,
+  expandDates,
 } from "./searchHelpers";
 
 
@@ -133,24 +134,33 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
   const userId = req.user.userId;
   const pKey = searchParamsKey(searchParams);
 
-  // Get user plan for limit enforcement
+  // Get user plan and account type for limit enforcement
   let userPlan = "free";
+  let accountType: string | null = null;
   try {
     const pool = getPool();
     if (pool) {
       const client = await pool.connect();
       try {
-        const planResult = await client.query<{ subscription_plan: string }>(
-          "SELECT subscription_plan FROM users WHERE id = $1",
+        const planResult = await client.query<{ subscription_plan: string; account_type: string | null }>(
+          "SELECT subscription_plan, account_type FROM users WHERE id = $1",
           [userId]
         );
         userPlan = planResult.rows[0]?.subscription_plan || "free";
+        accountType = planResult.rows[0]?.account_type || null;
       } finally {
         client.release();
       }
     }
   } catch { /* default to free */ }
   const isPro = userPlan === "pro";
+
+  // Individual attorneys: strip date filters (always search all dates)
+  if (accountType === "individual_attorney") {
+    delete searchParams.dateFrom;
+    delete searchParams.dateTo;
+    delete searchParams.courtDate;
+  }
 
   // If this exact search was already run today, return cached DB results.
   // Utah courts only update once daily, so re-scraping is unnecessary.
@@ -165,16 +175,15 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
 
     if (sameDay) {
       console.log(`📋 Search already run today (${lastRun.toISOString()}) — returning cached results`);
-      // For cached attorney searches, skip the attorney filter in BOTH the
-      // SQL query and local filter — the DB records were found via attorney
-      // search on utcourts.gov originally but may not have attorney fields
-      // populated (details.php enrichment only runs during live searches).
+      // For cached attorney searches, skip the attorney filter in the SQL
+      // query — DB records were found via attorney search on utcourts.gov
+      // originally but may not have attorney fields populated (details.php
+      // enrichment only runs during live searches). The local filter in
+      // applyAllFilters still applies the attorney filter for enriched rows.
       const cacheDbParams = { ...searchParams };
       if (cacheDbParams.attorney) delete cacheDbParams.attorney;
       const dbResults = await searchCourtEvents(cacheDbParams);
-      const cacheFilterParams = { ...searchParams };
-      if (cacheFilterParams.attorney) delete cacheFilterParams.attorney;
-      const filtered = applyAllFilters(dbResults, cacheFilterParams);
+      const filtered = applyAllFilters(dbResults, searchParams);
       markNewEvents(filtered, existing.last_refreshed_at);
       res.json({
         results: filtered,
@@ -205,18 +214,35 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     searchParams.courtDate = maxDateStr;
   }
 
-  // Free plan: enforce 1-week max date range
-  if (!isPro && searchParams.dateFrom && searchParams.dateTo) {
+  // Free plan or agency: enforce 1-week max date range
+  const enforceWeekLimit = !isPro || accountType === "agency";
+  if (enforceWeekLimit && searchParams.dateFrom && searchParams.dateTo) {
     const from = new Date(searchParams.dateFrom);
     const to = new Date(searchParams.dateTo);
     const diffDays = Math.ceil((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24));
     if (diffDays > 7) {
+      const msg = accountType === "agency"
+        ? "Agency accounts are limited to a 1-week date range. Searches are run day by day."
+        : "Free plan is limited to a 1-week date range. Upgrade to Pro for unlimited date ranges.";
       res.status(403).json({
-        error: "Free plan is limited to a 1-week date range. Upgrade to Pro for unlimited date ranges.",
-        upgradeRequired: true,
+        error: msg,
+        upgradeRequired: accountType !== "agency",
       });
       return;
     }
+  }
+
+  // Agency: default dates to current Mon–Fri week if not provided
+  if (accountType === "agency" && !searchParams.dateFrom && !searchParams.dateTo && !searchParams.courtDate) {
+    const today = new Date();
+    const day = today.getDay();
+    const diffToMon = day === 0 ? -6 : 1 - day;
+    const monday = new Date(today);
+    monday.setDate(monday.getDate() + diffToMon);
+    const friday = new Date(monday);
+    friday.setDate(friday.getDate() + 4);
+    searchParams.dateFrom = monday.toISOString().split("T")[0];
+    searchParams.dateTo = friday.toISOString().split("T")[0];
   }
 
   try {
@@ -258,9 +284,10 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     }
 
     // Determine search strategy:
-    // - "All courts" or many courts (>3): use loc=all&d=all
-    //   in a SINGLE request (same approach the scheduler uses — fast)
-    // - 1-3 specific courts: use loc=CODE&d=all per court (1-3 requests)
+    // - Agency accounts: search day by day (one request per weekday)
+    // - Individual attorneys / default: use d=all
+    //   - "All courts" or many courts (>3): use loc=all&d=all (single request)
+    //   - 1-3 specific courts: use loc=CODE&d=all per court (1-3 requests)
     // Then filter by date range locally after parsing.
     const useBroadSearch = searchParams.allCourts === "true" || courtCodes.length > 3;
 
@@ -273,7 +300,38 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       searchedAttorney: searchParams.attorney || undefined,
     };
 
-    if (useBroadSearch) {
+    if (accountType === "agency") {
+      // Agency: search one day at a time
+      const dates = expandDates(searchParams);
+      const locationCodes = useBroadSearch ? ["all"] : courtCodes;
+      console.log(`🌐 Agency day-by-day search: ${dates.length} date(s) x ${locationCodes.length} location(s) = ${dates.length * locationCodes.length} request(s)`);
+
+      for (const date of dates) {
+        const dayResults = await Promise.all(
+          locationCodes.map((loc) =>
+            liveSearchUtcourts({ ...liveBase, locationCode: loc, date })
+              .then((html) => ({ html, loc }))
+              .catch((err) => {
+                console.warn(`⚠️ Search failed for loc=${loc} date=${date}:`, err instanceof Error ? err.message : err);
+                return { html: "", loc };
+              })
+          )
+        );
+        for (const { html, loc } of dayResults) {
+          if (html.length === 0) continue;
+          const parsed = parseHtmlCalendarResults(html, parseContext);
+          if (!useBroadSearch) {
+            const courtInfo = courtByLoc.get(loc);
+            for (const event of parsed) {
+              event.courtName = courtInfo?.name ?? null;
+              event.courtLocationCode = loc;
+            }
+          }
+          allParsed.push(...parsed);
+        }
+      }
+      console.log(`  📋 Parsed ${allParsed.length} events total (agency day-by-day)`);
+    } else if (useBroadSearch) {
       // Single request with loc=all — searches ALL courts at once
       console.log(`🌐 Broad search: loc=all&d=all (1 request for all ${courtCodes.length} courts)`);
       try {

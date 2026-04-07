@@ -11,6 +11,8 @@ interface SearchFormProps {
 export default function SearchForm({ onSearch, loading }: SearchFormProps) {
   const { user } = useAuth();
   const isPro = user?.subscriptionPlan === "pro" && (user?.subscriptionStatus === "active" || user?.subscriptionStatus === "grandfathered");
+  const isIndividualAttorney = user?.accountType === "individual_attorney";
+  const isAgency = user?.accountType === "agency";
   const [defendantName, setDefendantName] = useState("");
   const [caseNumber, setCaseNumber] = useState("");
   const [selectedCourts, setSelectedCourts] = useState<string[]>(
@@ -68,8 +70,9 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
     } else if (selectedCourts.length > 0) {
       params.court_names = selectedCourts.join(",");
     }
+    // Individual attorneys: always search all dates, always watched case
     // Watched case searches ignore dates — they search all available dates (up to 4 weeks)
-    if (!watchedCase) {
+    if (!isIndividualAttorney && !watchedCase) {
       if (dateFrom) params.date_from = dateFrom;
       if (dateTo) params.date_to = dateTo;
     }
@@ -79,7 +82,7 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
     if (judgeName) params.judge_name = judgeName;
     if (attorney) params.attorney = attorney;
 
-    if (watchedCase) params._watchedCase = "true";
+    if (isIndividualAttorney || watchedCase) params._watchedCase = "true";
     onSearch(params);
   }
 
@@ -128,17 +131,102 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
           />
         </div>
 
-        {!watchedCase && (() => {
-          // Utah courts only publish calendars up to ~1 month out
+        {isIndividualAttorney && !watchedCase && (
+          <div className="flex items-center col-span-2">
+            <span className="inline-flex items-center gap-1.5 text-sm text-amber-700 bg-amber-50 px-3 py-2 rounded-md">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Searching next 30 days of court calendars
+            </span>
+          </div>
+        )}
+
+        {isAgency && !watchedCase && (() => {
+          // Agency: pick a week (Mon–Fri). We build a list of upcoming Mondays.
+          const maxDateLimit = new Date();
+          maxDateLimit.setMonth(maxDateLimit.getMonth() + 1);
+
+          // Find the Monday of the current week
+          function getMondayOf(d: Date): Date {
+            const copy = new Date(d);
+            const day = copy.getDay();
+            const diff = day === 0 ? -6 : 1 - day; // Sunday → previous Monday
+            copy.setDate(copy.getDate() + diff);
+            return copy;
+          }
+
+          function formatDate(d: Date): string {
+            return d.toISOString().split("T")[0];
+          }
+
+          function formatShort(d: Date): string {
+            return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+          }
+
+          // Build week options: current week + next 4 weeks (up to maxDateLimit)
+          const weeks: { monday: Date; friday: Date; label: string; value: string }[] = [];
+          const thisMonday = getMondayOf(new Date());
+          for (let i = 0; i < 5; i++) {
+            const mon = new Date(thisMonday);
+            mon.setDate(mon.getDate() + i * 7);
+            if (mon > maxDateLimit) break;
+            const fri = new Date(mon);
+            fri.setDate(fri.getDate() + 4);
+            weeks.push({
+              monday: mon,
+              friday: fri,
+              label: `${formatShort(mon)} – ${formatShort(fri)}`,
+              value: formatDate(mon),
+            });
+          }
+
+          // Sync dateFrom/dateTo when a week is selected
+          function handleWeekChange(mondayStr: string) {
+            if (!mondayStr) {
+              setDateFrom("");
+              setDateTo("");
+              return;
+            }
+            const mon = new Date(mondayStr + "T00:00:00");
+            const fri = new Date(mon);
+            fri.setDate(fri.getDate() + 4);
+            setDateFrom(formatDate(mon));
+            setDateTo(formatDate(fri));
+          }
+
+          return (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Week
+                <span className="text-xs text-gray-400 ml-1">(Mon–Fri, searched day by day)</span>
+              </label>
+              <select
+                value={dateFrom || ""}
+                onChange={(e) => handleWeekChange(e.target.value)}
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-amber-500 focus:border-amber-500"
+              >
+                <option value="">Select a week...</option>
+                {weeks.map((w) => (
+                  <option key={w.value} value={w.value}>
+                    {w.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          );
+        })()}
+
+        {!isIndividualAttorney && !isAgency && !watchedCase && (() => {
+          // Default (legacy/unset account type): original date range picker
           const maxDateLimit = new Date();
           maxDateLimit.setMonth(maxDateLimit.getMonth() + 1);
           const maxDateStr = maxDateLimit.toISOString().split("T")[0];
 
-          // Free plan: dateTo capped to 7 days from dateFrom (within the 1-month limit)
           const dateToMax = (() => {
             if (!isPro && dateFrom) {
-              const freeMax = new Date(new Date(dateFrom).getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-              return freeMax < maxDateStr ? freeMax : maxDateStr;
+              const weekMax = new Date(new Date(dateFrom).getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+              return weekMax < maxDateStr ? weekMax : maxDateStr;
             }
             return maxDateStr;
           })();
@@ -255,33 +343,39 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
           {loading ? "Searching..." : "Search"}
         </button>
 
-        <label className="flex items-center gap-2 cursor-pointer select-none group relative">
-          <input
-            type="checkbox"
-            checked={watchedCase}
-            onChange={(e) => {
-              if (!isPro && e.target.checked) {
-                setValidationError("Watched Case is a Pro feature. Upgrade to continuously monitor searches and get notified of new hearings.");
-                return;
-              }
-              setWatchedCase(e.target.checked);
-            }}
-            className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-          />
-          <span className="text-sm text-gray-700 font-medium">Watched Case</span>
-          <span className="relative">
-            <svg className="w-4 h-4 text-gray-400 hover:text-gray-600 cursor-help" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 px-3 py-2 text-xs text-white bg-gray-800 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
-              Continuously monitors this search daily for up to 4 weeks out. You'll be notified by email of new hearings, schedule changes, and cancellations. Pro plan allows up to 5 watched cases.
-              {!isPro && <span className="block mt-1 text-amber-300 font-medium">Pro plan only</span>}
-            </span>
+        {isIndividualAttorney ? (
+          <span className="text-xs text-amber-700 bg-amber-50 px-3 py-1 rounded-full">
+            Auto-monitored — this search refreshes daily
           </span>
-          {watchedCase && (
-            <span className="text-xs text-indigo-600">(searches all dates up to 4 weeks, refreshes daily)</span>
-          )}
-        </label>
+        ) : (
+          <label className="flex items-center gap-2 cursor-pointer select-none group relative">
+            <input
+              type="checkbox"
+              checked={watchedCase}
+              onChange={(e) => {
+                if (!isPro && e.target.checked) {
+                  setValidationError("Watched Case is a Pro feature. Upgrade to continuously monitor searches and get notified of new hearings.");
+                  return;
+                }
+                setWatchedCase(e.target.checked);
+              }}
+              className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            <span className="text-sm text-gray-700 font-medium">Watched Case</span>
+            <span className="relative">
+              <svg className="w-4 h-4 text-gray-400 hover:text-gray-600 cursor-help" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 px-3 py-2 text-xs text-white bg-gray-800 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                Continuously monitors this search daily for up to 4 weeks out. You'll be notified by email of new hearings, schedule changes, and cancellations. Pro plan allows up to 5 watched cases.
+                {!isPro && <span className="block mt-1 text-amber-300 font-medium">Pro plan only</span>}
+              </span>
+            </span>
+            {watchedCase && (
+              <span className="text-xs text-indigo-600">(searches all dates up to 4 weeks, refreshes daily)</span>
+            )}
+          </label>
+        )}
 
       </div>
     </form>

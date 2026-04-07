@@ -7,6 +7,7 @@
 
 export type SubscriptionPlan = "free" | "pro";
 export type SubscriptionStatus = "none" | "active" | "canceled" | "past_due" | "trialing" | "grandfathered";
+export type AccountType = "individual_attorney" | "agency";
 
 export interface UserPublic {
   id: number;
@@ -25,6 +26,7 @@ export interface UserPublic {
   subscriptionPlan: SubscriptionPlan;
   subscriptionStatus: SubscriptionStatus;
   subscriptionCurrentPeriodEnd: string | null;
+  accountType: AccountType | null;
 }
 
 export type NotificationFrequency = "immediate" | "daily_digest" | "weekly_digest";
