@@ -448,8 +448,10 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     const isAttorneySearch = !!searchParams.attorney;
 
     const liveKeys = new Set<string>();
+    const liveCaseDateKeys = new Set<string>();
     for (const event of liveEvents) {
       liveKeys.add(`${event.caseNumber}|${event.eventDate}|${event.eventTime || ""}`);
+      liveCaseDateKeys.add(`${event.caseNumber}|${event.eventDate}`);
       const dbMatches = dbByCase.get(`${event.caseNumber}|${event.eventDate}`);
       if (dbMatches) {
         for (const dbMatch of dbMatches) {
@@ -473,9 +475,14 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     if (isAttorneySearch) delete liveFilterParams.attorney;
     const filteredLive = applyAllFilters(liveEvents, liveFilterParams);
 
-    // Add DB-only results (not in live) and merge
+    // Add DB-only results (not in live) and merge.
+    // When live results exist for a case+date, exclude ALL DB entries for that
+    // case+date — even if times differ. Live results are authoritative for
+    // scheduling (time, date, courtroom). Without this, a court rescheduling a
+    // hearing (e.g. 11:00→9:00) would show both the stale and current times.
     const extraDb = dbResults.filter(
       (r) => !liveKeys.has(`${r.caseNumber}|${r.eventDate}|${r.eventTime || ""}`)
+        && !liveCaseDateKeys.has(`${r.caseNumber}|${r.eventDate}`)
     );
     const merged = [...filteredLive, ...extraDb].slice(0, 2000);
 

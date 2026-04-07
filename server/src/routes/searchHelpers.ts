@@ -219,7 +219,8 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
   try {
     for (const event of parsed) {
       // Upsert by case_number + event_date + event_time — a case can have
-      // multiple hearings on the same day at different times
+      // multiple hearings on the same day at different times.
+      // Also check for same case+date with different time (rescheduled hearing).
       if (!event.caseNumber || !event.eventDate) continue;
       try {
         const existing = await client.query(
@@ -231,6 +232,26 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
            WHERE case_number = $1 AND event_date = $2 AND COALESCE(event_time, '') = COALESCE($3, '') LIMIT 1`,
           [event.caseNumber, event.eventDate, event.eventTime]
         );
+
+        // If no exact match, check for same case+date with a DIFFERENT time.
+        // This catches rescheduled hearings — update the existing row's time
+        // rather than creating a duplicate.
+        if (existing.rows.length === 0) {
+          const rescheduled = await client.query(
+            `SELECT id, court_room, event_date::text, event_time, hearing_type,
+                    case_number, case_type, defendant_name,
+                    prosecuting_attorney, defense_attorney,
+                    judge_name, hearing_location, content_hash
+             FROM court_events
+             WHERE case_number = $1 AND event_date = $2 AND COALESCE(event_time, '') != COALESCE($3, '')
+             LIMIT 1`,
+            [event.caseNumber, event.eventDate, event.eventTime]
+          );
+          if (rescheduled.rows.length > 0) {
+            // Treat as an update to the existing row (time changed)
+            existing.rows = rescheduled.rows;
+          }
+        }
 
         if (existing.rows.length > 0) {
           const row = existing.rows[0];

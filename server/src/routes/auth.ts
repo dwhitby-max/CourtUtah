@@ -176,10 +176,10 @@ router.get("/google/callback", async (req: Request, res: Response) => {
           // Create new user — auto-approved, admin notified
           const signupIp = req.ip || req.headers["x-forwarded-for"] || null;
           // Grandfathered accounts get Pro access on signup
-          const grandfatheredEmails = ["dwhitby@gmail.com", "kittrellcourt@gmail.com", "yvetulia@gmail.com"];
+          const grandfatheredEmails = ["dwhitby@gmail.com", "kittrellcourt@gmail.com", "yvetulia@gmail.com", "1564ventures@gmail.com"];
           const isGrandfathered = grandfatheredEmails.includes(userinfo.email.toLowerCase());
           // Agency-grandfathered accounts get agency account type on signup
-          const agencyEmails = ["yvetulia@gmail.com"];
+          const agencyEmails = ["yvetulia@gmail.com", "1564ventures@gmail.com"];
           const grandfatheredAccountType = agencyEmails.includes(userinfo.email.toLowerCase()) ? "agency" : "individual_attorney";
 
           const newUser = await client.query(
@@ -419,9 +419,9 @@ router.get("/microsoft/callback", async (req: Request, res: Response) => {
         } else {
           // Create new user — auto-approved, admin notified
           const signupIp = req.ip || req.headers["x-forwarded-for"] || null;
-          const grandfatheredEmails = ["dwhitby@gmail.com", "kittrellcourt@gmail.com", "yvetulia@gmail.com"];
+          const grandfatheredEmails = ["dwhitby@gmail.com", "kittrellcourt@gmail.com", "yvetulia@gmail.com", "1564ventures@gmail.com"];
           const isGrandfathered = grandfatheredEmails.includes(email);
-          const agencyEmails = ["yvetulia@gmail.com"];
+          const agencyEmails = ["yvetulia@gmail.com", "1564ventures@gmail.com"];
           const grandfatheredAccountType = agencyEmails.includes(email) ? "agency" : "individual_attorney";
 
           const newUser = await client.query(
