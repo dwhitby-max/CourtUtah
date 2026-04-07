@@ -420,6 +420,13 @@ router.delete("/:id", async (req: Request, res: Response) => {
       [watchedCaseId, currentUser.userId]
     );
 
+    // Clean up notifications linked to this watched case
+    await client.query(
+      `DELETE FROM notifications
+       WHERE user_id = $1 AND metadata->>'watchedCaseId' = $2`,
+      [currentUser.userId, String(watchedCaseId)]
+    );
+
     await client.query(
       `DELETE FROM watched_cases WHERE id = $1 AND user_id = $2`,
       [watchedCaseId, currentUser.userId]

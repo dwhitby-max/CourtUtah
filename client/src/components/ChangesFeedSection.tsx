@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { getChangesFeed, markChangesSeen, ChangeFeedItem } from "@/api/notifications";
 
 interface ChangesFeedSectionProps {
@@ -8,15 +8,11 @@ interface ChangesFeedSectionProps {
 
 export default function ChangesFeedSection({ refreshKey }: ChangesFeedSectionProps) {
   const [changes, setChanges] = useState<ChangeFeedItem[]>([]);
-  const [dismissed, setDismissed] = useState(false);
-  const seenRef = useRef(false);
 
   const fetchChanges = useCallback(async () => {
     try {
       const items = await getChangesFeed();
       setChanges(items);
-      seenRef.current = false;
-      setDismissed(false);
     } catch (err) {
       console.error("Failed to fetch changes feed:", err);
     }
@@ -26,29 +22,26 @@ export default function ChangesFeedSection({ refreshKey }: ChangesFeedSectionPro
     fetchChanges();
   }, [fetchChanges, refreshKey]);
 
-  // Mark as seen when user has viewed them (after 3 seconds of visibility)
-  useEffect(() => {
-    if (changes.length === 0 || seenRef.current || dismissed) return;
-    const timer = setTimeout(() => {
-      const ids = changes.map(c => c.id);
-      markChangesSeen(ids).catch(console.error);
-      seenRef.current = true;
-    }, 3000);
-    return () => clearTimeout(timer);
-  }, [changes, dismissed]);
-
-  function handleDismissAll() {
+  async function handleDismissAll() {
     const ids = changes.map(c => c.id);
-    markChangesSeen(ids).catch(console.error);
-    setDismissed(true);
+    try {
+      await markChangesSeen(ids);
+      setChanges([]);
+    } catch (err) {
+      console.error("Failed to dismiss notifications:", err);
+    }
   }
 
-  function handleDismissOne(id: number) {
-    markChangesSeen([id]).catch(console.error);
-    setChanges(prev => prev.filter(c => c.id !== id));
+  async function handleDismissOne(id: number) {
+    try {
+      await markChangesSeen([id]);
+      setChanges(prev => prev.filter(c => c.id !== id));
+    } catch (err) {
+      console.error("Failed to dismiss notification:", err);
+    }
   }
 
-  if (dismissed || changes.length === 0) return null;
+  if (changes.length === 0) return null;
 
   const cancelled = changes.filter(c => c.type === "event_cancelled");
   const modified = changes.filter(c => c.type === "schedule_change");
