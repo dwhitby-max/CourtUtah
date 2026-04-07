@@ -413,9 +413,11 @@ router.delete("/:id", async (req: Request, res: Response) => {
       return;
     }
 
-    // Detach calendar entries but leave them on the user's calendar
+    // Detach calendar entries and clear pending status (leave them on the user's calendar)
     await client.query(
-      `UPDATE calendar_entries SET watched_case_id = NULL, updated_at = NOW()
+      `UPDATE calendar_entries SET watched_case_id = NULL,
+       sync_status = CASE WHEN sync_status = 'pending_update' THEN 'synced' ELSE sync_status END,
+       updated_at = NOW()
        WHERE watched_case_id = $1 AND user_id = $2`,
       [watchedCaseId, currentUser.userId]
     );
@@ -494,7 +496,10 @@ router.get("/pending-updates", async (req: Request, res: Response) => {
        FROM calendar_entries ce
        JOIN court_events ev ON ev.id = ce.court_event_id
        JOIN change_log cl ON cl.court_event_id = ce.court_event_id
-       WHERE ce.user_id = $1 AND cl.detected_at > NOW() - INTERVAL '7 days'
+       WHERE ce.user_id = $1
+         AND ce.sync_status = 'pending_update'
+         AND ce.watched_case_id IS NOT NULL
+         AND cl.detected_at > NOW() - INTERVAL '7 days'
        ORDER BY cl.detected_at DESC`,
       [currentUser.userId]
     );

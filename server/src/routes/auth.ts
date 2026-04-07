@@ -152,13 +152,29 @@ router.get("/google/callback", async (req: Request, res: Response) => {
         [userinfo.id]
       );
 
+      // Grandfathered account lists (shared across login paths)
+      const grandfatheredEmails = ["dwhitby@gmail.com", "kittrellcourt@gmail.com", "yvetulia@gmail.com", "1564ventures@gmail.com"];
+      const agencyEmails = ["yvetulia@gmail.com", "1564ventures@gmail.com"];
+      const isGrandfathered = grandfatheredEmails.includes(userinfo.email.toLowerCase());
+
       if (byGoogleId.rows.length > 0) {
-        // Existing Google user — update email if changed
+        // Existing Google user — update email if changed + ensure grandfathered status
         userId = byGoogleId.rows[0].id;
-        await client.query(
-          `UPDATE users SET email = $1, email_verified = true, updated_at = NOW() WHERE id = $2`,
-          [userinfo.email.toLowerCase(), userId]
-        );
+        if (isGrandfathered) {
+          const grandfatheredAccountType = agencyEmails.includes(userinfo.email.toLowerCase()) ? "agency" : "individual_attorney";
+          await client.query(
+            `UPDATE users SET email = $1, email_verified = true,
+             subscription_plan = 'pro', subscription_status = 'grandfathered',
+             account_type = $3,
+             updated_at = NOW() WHERE id = $2`,
+            [userinfo.email.toLowerCase(), userId, grandfatheredAccountType]
+          );
+        } else {
+          await client.query(
+            `UPDATE users SET email = $1, email_verified = true, updated_at = NOW() WHERE id = $2`,
+            [userinfo.email.toLowerCase(), userId]
+          );
+        }
       } else {
         // Check if email already exists (link accounts)
         const byEmail = await client.query(
@@ -168,18 +184,24 @@ router.get("/google/callback", async (req: Request, res: Response) => {
 
         if (byEmail.rows.length > 0) {
           userId = byEmail.rows[0].id;
-          await client.query(
-            `UPDATE users SET google_id = $1, email_verified = true, updated_at = NOW() WHERE id = $2`,
-            [userinfo.id, userId]
-          );
+          if (isGrandfathered) {
+            const grandfatheredAccountType = agencyEmails.includes(userinfo.email.toLowerCase()) ? "agency" : "individual_attorney";
+            await client.query(
+              `UPDATE users SET google_id = $1, email_verified = true,
+               subscription_plan = 'pro', subscription_status = 'grandfathered',
+               account_type = $3,
+               updated_at = NOW() WHERE id = $2`,
+              [userinfo.id, userId, grandfatheredAccountType]
+            );
+          } else {
+            await client.query(
+              `UPDATE users SET google_id = $1, email_verified = true, updated_at = NOW() WHERE id = $2`,
+              [userinfo.id, userId]
+            );
+          }
         } else {
           // Create new user — auto-approved, admin notified
           const signupIp = req.ip || req.headers["x-forwarded-for"] || null;
-          // Grandfathered accounts get Pro access on signup
-          const grandfatheredEmails = ["dwhitby@gmail.com", "kittrellcourt@gmail.com", "yvetulia@gmail.com", "1564ventures@gmail.com"];
-          const isGrandfathered = grandfatheredEmails.includes(userinfo.email.toLowerCase());
-          // Agency-grandfathered accounts get agency account type on signup
-          const agencyEmails = ["yvetulia@gmail.com", "1564ventures@gmail.com"];
           const grandfatheredAccountType = agencyEmails.includes(userinfo.email.toLowerCase()) ? "agency" : "individual_attorney";
 
           const newUser = await client.query(
@@ -396,13 +418,29 @@ router.get("/microsoft/callback", async (req: Request, res: Response) => {
         [userinfo.id]
       );
 
+      // Grandfathered account lists (shared across login paths)
+      const grandfatheredEmails = ["dwhitby@gmail.com", "kittrellcourt@gmail.com", "yvetulia@gmail.com", "1564ventures@gmail.com"];
+      const agencyEmails = ["yvetulia@gmail.com", "1564ventures@gmail.com"];
+      const isGrandfathered = grandfatheredEmails.includes(email);
+
       if (byMicrosoftId.rows.length > 0) {
         // Existing Microsoft user — update email if changed
         userId = byMicrosoftId.rows[0].id;
-        await client.query(
-          `UPDATE users SET email = $1, email_verified = true, updated_at = NOW() WHERE id = $2`,
-          [email, userId]
-        );
+        if (isGrandfathered) {
+          const grandfatheredAccountType = agencyEmails.includes(email) ? "agency" : "individual_attorney";
+          await client.query(
+            `UPDATE users SET email = $1, email_verified = true,
+             subscription_plan = 'pro', subscription_status = 'grandfathered',
+             account_type = $3,
+             updated_at = NOW() WHERE id = $2`,
+            [email, userId, grandfatheredAccountType]
+          );
+        } else {
+          await client.query(
+            `UPDATE users SET email = $1, email_verified = true, updated_at = NOW() WHERE id = $2`,
+            [email, userId]
+          );
+        }
       } else {
         // Check if email already exists (link accounts)
         const byEmail = await client.query(
@@ -412,16 +450,24 @@ router.get("/microsoft/callback", async (req: Request, res: Response) => {
 
         if (byEmail.rows.length > 0) {
           userId = byEmail.rows[0].id;
-          await client.query(
-            `UPDATE users SET microsoft_id = $1, email_verified = true, updated_at = NOW() WHERE id = $2`,
-            [userinfo.id, userId]
-          );
+          if (isGrandfathered) {
+            const grandfatheredAccountType = agencyEmails.includes(email) ? "agency" : "individual_attorney";
+            await client.query(
+              `UPDATE users SET microsoft_id = $1, email_verified = true,
+               subscription_plan = 'pro', subscription_status = 'grandfathered',
+               account_type = $3,
+               updated_at = NOW() WHERE id = $2`,
+              [userinfo.id, userId, grandfatheredAccountType]
+            );
+          } else {
+            await client.query(
+              `UPDATE users SET microsoft_id = $1, email_verified = true, updated_at = NOW() WHERE id = $2`,
+              [userinfo.id, userId]
+            );
+          }
         } else {
           // Create new user — auto-approved, admin notified
           const signupIp = req.ip || req.headers["x-forwarded-for"] || null;
-          const grandfatheredEmails = ["dwhitby@gmail.com", "kittrellcourt@gmail.com", "yvetulia@gmail.com", "1564ventures@gmail.com"];
-          const isGrandfathered = grandfatheredEmails.includes(email);
-          const agencyEmails = ["yvetulia@gmail.com", "1564ventures@gmail.com"];
           const grandfatheredAccountType = agencyEmails.includes(email) ? "agency" : "individual_attorney";
 
           const newUser = await client.query(
