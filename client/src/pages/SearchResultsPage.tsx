@@ -324,31 +324,26 @@ export default function SearchResultsPage() {
                         {batchRemoving ? batchProgress : "Remove All"}
                       </button>
                     )}
-                    {anySynced && (
-                      <label className="flex items-center gap-2 cursor-pointer select-none ml-2 group relative">
-                        <div className="relative">
-                          <input
-                            type="checkbox"
-                            checked={autoSyncEnabled}
-                            onChange={(e) => handleToggleAutoSync(e.target.checked)}
-                            disabled={autoSyncLoading || batchAdding || batchRemoving}
-                            className="sr-only peer"
-                          />
-                          <div className={`w-9 h-5 rounded-full transition-colors ${autoSyncLoading ? "bg-gray-200" : "bg-gray-300"} peer-checked:bg-green-500`}></div>
-                          <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow peer-checked:translate-x-4 transition-transform"></div>
-                        </div>
-                        <span className="text-sm text-gray-700 font-medium">
-                          {autoSyncLoading ? "Updating..." : "Auto-sync"}
-                        </span>
-                        <span className="relative">
-                          <svg className="w-4 h-4 text-gray-400 hover:text-gray-600 cursor-help" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                          <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 px-3 py-2 text-xs text-white bg-gray-800 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
-                            Monitors your calendar events for schedule changes and automatically updates them. New hearings found for these cases will also be added to your calendar.
-                          </span>
-                        </span>
-                      </label>
+                    <label className="flex items-center gap-2 cursor-pointer select-none ml-2 group relative">
+                      <div className="relative">
+                        <input
+                          type="checkbox"
+                          checked={autoSyncEnabled}
+                          onChange={(e) => handleToggleAutoSync(e.target.checked)}
+                          disabled={autoSyncLoading || batchAdding || batchRemoving}
+                          className="sr-only peer"
+                        />
+                        <div className={`w-9 h-5 rounded-full transition-colors ${autoSyncLoading ? "bg-gray-200" : "bg-gray-300"} peer-checked:bg-green-500`}></div>
+                        <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow peer-checked:translate-x-4 transition-transform"></div>
+                      </div>
+                      <span className="text-sm text-gray-700 font-medium">
+                        {autoSyncLoading ? "Updating..." : "Auto-sync"}
+                      </span>
+                    </label>
+                    {autoSyncEnabled && (
+                      <span className="text-xs text-green-700 bg-green-50 px-3 py-1 rounded-full">
+                        Calendar events will auto-update when schedules change. New hearings for these cases will be added automatically.
+                      </span>
                     )}
                   </>
                 ) : (

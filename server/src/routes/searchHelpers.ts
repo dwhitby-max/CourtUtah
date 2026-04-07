@@ -235,7 +235,10 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
         if (existing.rows.length > 0) {
           const row = existing.rows[0];
 
-          // Build incoming record in DB column format for change detection
+          // Build incoming record in DB column format for change detection.
+          // Don't overwrite existing DB values with empty strings — enrichment
+          // may have failed (e.g. details.php timeout), and blanking out known
+          // attorney data triggers false "change" notifications.
           const incoming: Record<string, unknown> = {
             court_room: event.courtRoom || "",
             event_date: event.eventDate || "",
@@ -244,8 +247,8 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
             case_number: event.caseNumber || "",
             case_type: event.caseType || "",
             defendant_name: event.defendantName || "",
-            prosecuting_attorney: event.prosecutingAttorney || "",
-            defense_attorney: event.defenseAttorney || "",
+            prosecuting_attorney: event.prosecutingAttorney || row.prosecuting_attorney || "",
+            defense_attorney: event.defenseAttorney || row.defense_attorney || "",
             judge_name: event.judgeName || "",
             hearing_location: event.hearingLocation || "",
           };

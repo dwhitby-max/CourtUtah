@@ -9,6 +9,7 @@ import Pagination from "@/components/Pagination";
 import { exportCourtEventsCsv, extractLastName, ExportTemplate } from "@/utils/formatters";
 import ExportTemplateModal from "@/components/ExportTemplateModal";
 import { useCalendarActions } from "@/hooks/useCalendarActions";
+import { useAuth } from "@/store/authStore";
 import { formatDate, hasDetails, timeAgo } from "@/utils/courtEventUtils";
 import { CourtEvent, DetectedChange } from "@shared/types";
 
@@ -91,6 +92,7 @@ export default function SearchPage() {
   const [lastSearchParams, setLastSearchParams] = useState<Record<string, string> | null>(null);
   const [lastSearchSavedId, setLastSearchSavedId] = useState<number | null>(null);
   const [removingAll, setRemovingAll] = useState(false);
+  const [batchAdding, setBatchAdding] = useState(false);
   const [previousRunAt, setPreviousRunAt] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; label: string } | null>(null);
   const [detectedChanges, setDetectedChanges] = useState<DetectedChange[]>([]);
@@ -98,6 +100,8 @@ export default function SearchPage() {
   const [watchSearchActive, setWatchSearchActive] = useState(false);
   const [upgradeMessage, setUpgradeMessage] = useState("");
 
+  const { user } = useAuth();
+  const isIndividualAttorney = user?.accountType === "individual_attorney";
   const cal = useCalendarActions();
 
   // Load saved searches on mount
@@ -140,8 +144,10 @@ export default function SearchPage() {
     const searchParams = { ...params };
     delete searchParams._watchedCase;
 
-    // Block duplicate searches unless this is a "Run Again" from a saved search
-    if (!opts?.isRerun && savedSearches.length > 0) {
+    // Block duplicate searches unless this is a "Run Again" from a saved search.
+    // Individual attorneys always auto-save, so skip the blocker for them —
+    // their searches should re-run seamlessly each time.
+    if (!isIndividualAttorney && !opts?.isRerun && savedSearches.length > 0) {
       const key = buildParamsKey(searchParams);
       const match = savedSearches.find(s => s.search_params._key === key);
       if (match) {
@@ -410,6 +416,35 @@ export default function SearchPage() {
     }
   }
 
+  async function handleAddAllToCalendar() {
+    const unsyncedIds = results
+      .filter(e => e.id > 0 && !cal.calSyncedIds.has(e.id))
+      .map(e => e.id);
+
+    if (unsyncedIds.length === 0) {
+      setWatchSuccess("All events are already on your calendar.");
+      return;
+    }
+
+    setBatchAdding(true);
+    setError("");
+    setWatchSuccess("");
+
+    try {
+      const data = await cal.handleBatchAdd(unsyncedIds);
+      setWatchSuccess(data.message);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to add events to calendar";
+      if (msg.includes("No calendar connected")) {
+        window.location.href = "/api/auth/google";
+        return;
+      }
+      setError(msg);
+    } finally {
+      setBatchAdding(false);
+    }
+  }
+
   async function handleRemoveAllFromCalendar() {
     const syncedInResults = results.filter(e => cal.calSyncedIds.has(e.id) && cal.calEntryMap[e.id]);
     if (syncedInResults.length === 0) return;
@@ -447,6 +482,7 @@ export default function SearchPage() {
   }
 
   const anySynced = results.some(e => cal.calSyncedIds.has(e.id));
+  const allSynced = results.length > 0 && results.every(e => cal.calSyncedIds.has(e.id));
 
   const { newResults, existingResults } = useMemo(() => {
     if (!previousRunAt) return { newResults: [], existingResults: results };
@@ -466,7 +502,15 @@ export default function SearchPage() {
         <div className="bg-white shadow rounded-lg p-5">
           <h2 className="text-lg font-semibold text-gray-900 mb-3">Your Saved Searches</h2>
           <div className="space-y-3">
-            {savedSearches.map((saved) => (
+            {savedSearches.map((saved) => {
+              const ranToday = saved.last_refreshed_at && (() => {
+                const lastRun = new Date(saved.last_refreshed_at!);
+                const now = new Date();
+                return lastRun.getUTCFullYear() === now.getUTCFullYear() &&
+                  lastRun.getUTCMonth() === now.getUTCMonth() &&
+                  lastRun.getUTCDate() === now.getUTCDate();
+              })();
+              return (
               <div key={saved.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 p-3 bg-gray-50 rounded-md">
                 <button
                   className="flex-1 min-w-0 text-left hover:bg-gray-100 rounded p-1 -m-1 transition-colors"
@@ -477,6 +521,7 @@ export default function SearchPage() {
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400 mt-1">
                     <span>{saved.results_count} result{saved.results_count !== 1 ? "s" : ""}</span>
                     {saved.last_refreshed_at && <span>Last run {timeAgo(saved.last_refreshed_at)}</span>}
+                    {ranToday && <span className="text-green-600">Up to date</span>}
                   </div>
                 </button>
                 <div className="flex items-center gap-3 shrink-0">
@@ -500,7 +545,7 @@ export default function SearchPage() {
                     disabled={loading}
                     className="text-amber-700 hover:text-slate-800 text-sm font-medium disabled:opacity-50"
                   >
-                    Run Again
+                    {ranToday ? "View Results" : "Run Again"}
                   </button>
                   <button
                     onClick={() => handleDeleteSavedSearch(saved.id)}
@@ -510,7 +555,8 @@ export default function SearchPage() {
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -642,21 +688,42 @@ export default function SearchPage() {
             </div>
             {results.length > 0 && (
               <div className="flex items-center gap-2 flex-wrap mt-3">
-                {!cal.hasCalendarConnection && (
+                {cal.calendarProvider ? (
+                  <>
+                    {!allSynced && (
+                      <button
+                        onClick={handleAddAllToCalendar}
+                        disabled={batchAdding || removingAll}
+                        className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed bg-amber-600 text-white hover:bg-amber-700 transition-colors"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                        {batchAdding ? "Adding..." : `Add All to ${cal.calLabel}`}
+                      </button>
+                    )}
+                    {anySynced && (
+                      <button
+                        onClick={handleRemoveAllFromCalendar}
+                        disabled={removingAll || batchAdding}
+                        className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed bg-red-600 text-white hover:bg-red-700 transition-colors"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        {removingAll ? "Removing..." : "Remove All"}
+                      </button>
+                    )}
+                  </>
+                ) : (
                   <button
                     onClick={connectGoogleCalendar}
-                    className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md"
+                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md bg-amber-600 text-white hover:bg-amber-700 transition-colors"
                   >
-                    Connect Google Calendar
-                  </button>
-                )}
-                {cal.hasCalendarConnection && anySynced && (
-                  <button
-                    onClick={handleRemoveAllFromCalendar}
-                    disabled={removingAll}
-                    className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md disabled:opacity-50"
-                  >
-                    {removingAll ? "Removing..." : `Remove all from ${cal.calLabel}`}
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    Add All to Calendar
                   </button>
                 )}
                 {watchSearchActive && (
