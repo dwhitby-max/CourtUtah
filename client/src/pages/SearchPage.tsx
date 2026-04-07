@@ -199,6 +199,11 @@ export default function SearchPage() {
 
   async function handleRunSavedSearch(saved: SavedSearchRow) {
     const queryParams = toQueryParams(saved.search_params);
+    // Ensure court selection is present — saved searches from before court
+    // selection was required may lack both courtNames and allCourts
+    if (!queryParams.court_names && !queryParams.all_courts) {
+      queryParams.all_courts = "true";
+    }
     await handleSearch(queryParams, { isRerun: true });
   }
 

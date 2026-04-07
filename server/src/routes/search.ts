@@ -222,9 +222,16 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     const courtCodes = resolveCourtCodes(searchParams, courts);
 
     // Require explicit court selection — don't silently search all courts
+    // Exception: re-running a saved search (existing) or when courtNames were
+    // provided but didn't resolve (court list may have changed since save)
     if (liveBase && courtCodes.length === 0 && searchParams.allCourts !== "true") {
-      res.status(400).json({ error: "Please select one or more courts, or check \"All Courts\" to search everywhere." });
-      return;
+      if (existing || searchParams.courtNames) {
+        // Saved search or unresolved court names — default to all courts
+        searchParams.allCourts = "true";
+      } else {
+        res.status(400).json({ error: "Please select one or more courts, or check \"All Courts\" to search everywhere." });
+        return;
+      }
     }
 
     // No live-searchable field (OTN, citation, charges) → DB only
