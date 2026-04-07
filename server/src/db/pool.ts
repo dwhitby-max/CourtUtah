@@ -27,8 +27,14 @@ export function getPool(): Pool | null {
 
   if (!pool) {
     // Respect the sslmode in DATABASE_URL. Replit's local PostgreSQL uses sslmode=disable.
-    const dbUrl = config.databaseUrl;
+    let dbUrl = config.databaseUrl;
     const sslDisabled = dbUrl.includes("sslmode=disable");
+
+    // Silence pg v9 deprecation warning about sslmode semantics
+    if (!sslDisabled && !dbUrl.includes("uselibpqcompat")) {
+      const sep = dbUrl.includes("?") ? "&" : "?";
+      dbUrl += `${sep}uselibpqcompat=true`;
+    }
 
     pool = new Pool({
       connectionString: dbUrl,

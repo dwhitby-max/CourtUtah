@@ -46,7 +46,8 @@
       "Read(//home/runner/.config/**)",
       "Bash(replit deploy:*)",
       "Bash(ls:*)",
-      "Bash(git:*)"
+      "Bash(git:*)",
+      "Bash(bash build.sh)"
     ]
   }
 }
