@@ -51,7 +51,8 @@
       "Bash(printenv GOOGLE_REDIRECT_URI)",
       "Read(//home/runner/workspace/**)",
       "Bash(printenv ENCRYPTION_KEY)",
-      "Bash(printenv)"
+      "Bash(printenv)",
+      "Bash(kill:*)"
     ]
   }
 }
