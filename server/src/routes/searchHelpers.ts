@@ -218,9 +218,8 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
   const client = await pool.connect();
   try {
     for (const event of parsed) {
-      // Dedup by case_number + event_date — a case only has one hearing per day.
-      // If the time changed between scrapes, we update the existing row rather
-      // than creating a duplicate.
+      // Dedup by case_number + event_date + event_time — a case can have
+      // multiple hearings per day at different times.
       if (!event.caseNumber || !event.eventDate) continue;
       try {
         const existing = await client.query(
@@ -230,8 +229,9 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
                   judge_name, hearing_location, content_hash
            FROM court_events
            WHERE case_number = $1 AND event_date = $2
+             AND event_time = COALESCE($3, '')
            ORDER BY updated_at DESC LIMIT 1`,
-          [event.caseNumber, event.eventDate]
+          [event.caseNumber, event.eventDate, event.eventTime]
         );
 
         if (existing.rows.length > 0) {
@@ -362,10 +362,9 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
             lea_number, content_hash,
             judge_name, hearing_location, is_virtual
           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
-          ON CONFLICT (case_number, event_date) DO UPDATE SET
+          ON CONFLICT (case_number, event_date, event_time) DO UPDATE SET
             court_name = COALESCE(NULLIF(EXCLUDED.court_name, ''), court_events.court_name),
             court_room = COALESCE(NULLIF(EXCLUDED.court_room, ''), court_events.court_room),
-            event_time = COALESCE(NULLIF(EXCLUDED.event_time, ''), court_events.event_time),
             hearing_type = COALESCE(NULLIF(EXCLUDED.hearing_type, ''), court_events.hearing_type),
             case_type = COALESCE(NULLIF(EXCLUDED.case_type, ''), court_events.case_type),
             defendant_name = COALESCE(NULLIF(EXCLUDED.defendant_name, ''), court_events.defendant_name),
@@ -377,7 +376,7 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
             updated_at = NOW()`,
           [
             "", event.courtName || "", event.courtRoom, event.eventDate,
-            event.eventTime, event.hearingType, event.caseNumber,
+            event.eventTime || "", event.hearingType, event.caseNumber,
             event.caseType, event.defendantName, event.defendantOtn,
             event.defendantDob, event.prosecutingAttorney,
             event.defenseAttorney, event.citationNumber,
