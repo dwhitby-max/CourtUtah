@@ -5,6 +5,7 @@ import { config } from "./config/env";
 import { testConnection } from "./db/pool";
 import { stopPoolMonitor } from "./db/pool";
 import { startScheduler } from "./services/schedulerService";
+import { cleanupOrphanedCalendarEntries } from "./services/calendarSync";
 import { setSocketServer } from "./services/notificationService";
 import { initSentry, flushSentry } from "./services/sentryService";
 import type { ServerToClientEvents, ClientToServerEvents } from "@shared/types";
@@ -68,6 +69,11 @@ server.listen(config.port, config.host, () => {
     const dbConnected = await testConnection();
     if (dbConnected) {
       console.log("✅ Database connected");
+
+      // Clean up orphaned calendar entries from dedup migration 037
+      cleanupOrphanedCalendarEntries().catch(err =>
+        console.warn("⚠️  Orphan calendar cleanup failed:", err)
+      );
     } else {
       console.warn("⚠️  Database connection failed — DB features unavailable");
     }

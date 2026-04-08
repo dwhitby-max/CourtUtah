@@ -24,7 +24,15 @@ function getTransporter(): nodemailer.Transporter | null {
   return transporter;
 }
 
+// Set to true once a working SMTP provider is configured
+const EMAIL_ENABLED = false;
+
 export async function sendEmail(to: string, subject: string, html: string): Promise<boolean> {
+  if (!EMAIL_ENABLED) {
+    console.log(`📧 Email suppressed (SMTP not set up yet) — to: ${to}, subject: ${subject}`);
+    return false;
+  }
+
   const t = getTransporter();
   if (!t) {
     console.warn("⚠️  Email skipped (SMTP not configured):", subject);

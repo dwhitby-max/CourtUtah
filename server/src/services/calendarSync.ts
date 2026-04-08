@@ -340,6 +340,61 @@ export async function deleteAllEntriesForConnection(
 }
 
 /**
+ * Clean up orphaned calendar entries marked 'pending_delete' by migration 037.
+ * These are duplicate entries from the old dedup key that were re-parented but
+ * still have events on the user's external calendar (Google/Microsoft/CalDAV).
+ * This function deletes them from the provider and marks them as 'removed'.
+ * Runs once on server startup.
+ */
+export async function cleanupOrphanedCalendarEntries(): Promise<{ deleted: number; errors: number }> {
+  const pool = getPool();
+  if (!pool) return { deleted: 0, errors: 0 };
+
+  const client = await pool.connect();
+  try {
+    const result = await client.query<{ id: number; user_id: number }>(
+      `SELECT id, user_id FROM calendar_entries WHERE sync_status = 'pending_delete'`
+    );
+
+    if (result.rows.length === 0) return { deleted: 0, errors: 0 };
+
+    console.log(`🧹 Cleaning up ${result.rows.length} orphaned calendar entries from dedup migration...`);
+
+    let deleted = 0;
+    let errors = 0;
+
+    for (const row of result.rows) {
+      try {
+        const success = await deleteCalendarEntry(row.id, row.user_id);
+        if (success) {
+          deleted++;
+        } else {
+          // deleteCalendarEntry returns false if entry not found — just mark removed
+          await client.query(
+            `UPDATE calendar_entries SET sync_status = 'removed', external_event_id = NULL, updated_at = NOW() WHERE id = $1`,
+            [row.id]
+          );
+          deleted++;
+        }
+      } catch (err) {
+        console.warn(`⚠️ Failed to clean up orphaned entry ${row.id}:`, err instanceof Error ? err.message : err);
+        // Mark as removed anyway — don't leave pending_delete entries forever
+        await client.query(
+          `UPDATE calendar_entries SET sync_status = 'removed', sync_error = $1, updated_at = NOW() WHERE id = $2`,
+          [err instanceof Error ? err.message : String(err), row.id]
+        );
+        errors++;
+      }
+    }
+
+    console.log(`🧹 Orphan cleanup complete: ${deleted} deleted, ${errors} errors`);
+    return { deleted, errors };
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Sync all pending or outdated calendar entries for a user.
  */
 export async function syncAllForUser(userId: number): Promise<{ synced: number; errors: number }> {

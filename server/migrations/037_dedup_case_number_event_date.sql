@@ -64,13 +64,17 @@ AND event_date IS NOT NULL;
 
 -- Step 3: De-duplicate any calendar_entries that now point to the same
 -- (user_id, court_event_id, calendar_connection_id) after re-parenting.
--- Keep the most recently updated one.
-DELETE FROM calendar_entries
+-- Keep the most recently updated one; mark the rest as 'pending_delete'
+-- so the server can remove them from Google/Microsoft/CalDAV on startup
+-- before clearing them from the DB.
+UPDATE calendar_entries
+SET sync_status = 'pending_delete', updated_at = NOW()
 WHERE id NOT IN (
   SELECT DISTINCT ON (user_id, court_event_id, calendar_connection_id) id
   FROM calendar_entries
   ORDER BY user_id, court_event_id, calendar_connection_id, updated_at DESC NULLS LAST, id DESC
-);
+)
+AND sync_status != 'removed';
 
 -- Step 4: Add unique constraint to prevent future duplicates.
 ALTER TABLE court_events
