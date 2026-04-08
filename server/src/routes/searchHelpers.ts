@@ -218,9 +218,9 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
   const client = await pool.connect();
   try {
     for (const event of parsed) {
-      // Upsert by case_number + event_date + event_time — a case can have
-      // multiple hearings on the same day at different times.
-      // Also check for same case+date with different time (rescheduled hearing).
+      // Dedup by case_number + event_date — a case only has one hearing per day.
+      // If the time changed between scrapes, we update the existing row rather
+      // than creating a duplicate.
       if (!event.caseNumber || !event.eventDate) continue;
       try {
         const existing = await client.query(
@@ -229,29 +229,10 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
                   prosecuting_attorney, defense_attorney,
                   judge_name, hearing_location, content_hash
            FROM court_events
-           WHERE case_number = $1 AND event_date = $2 AND COALESCE(event_time, '') = COALESCE($3, '') LIMIT 1`,
-          [event.caseNumber, event.eventDate, event.eventTime]
+           WHERE case_number = $1 AND event_date = $2
+           ORDER BY updated_at DESC LIMIT 1`,
+          [event.caseNumber, event.eventDate]
         );
-
-        // If no exact match, check for same case+date with a DIFFERENT time.
-        // This catches rescheduled hearings — update the existing row's time
-        // rather than creating a duplicate.
-        if (existing.rows.length === 0) {
-          const rescheduled = await client.query(
-            `SELECT id, court_room, event_date::text, event_time, hearing_type,
-                    case_number, case_type, defendant_name,
-                    prosecuting_attorney, defense_attorney,
-                    judge_name, hearing_location, content_hash
-             FROM court_events
-             WHERE case_number = $1 AND event_date = $2 AND COALESCE(event_time, '') != COALESCE($3, '')
-             LIMIT 1`,
-            [event.caseNumber, event.eventDate, event.eventTime]
-          );
-          if (rescheduled.rows.length > 0) {
-            // Treat as an update to the existing row (time changed)
-            existing.rows = rescheduled.rows;
-          }
-        }
 
         if (existing.rows.length > 0) {
           const row = existing.rows[0];
@@ -295,18 +276,20 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
               `UPDATE court_events SET
                 court_name = COALESCE(NULLIF($1, ''), court_name),
                 court_room = COALESCE(NULLIF($2, ''), court_room),
-                hearing_type = COALESCE(NULLIF($3, ''), hearing_type),
-                case_type = COALESCE(NULLIF($4, ''), case_type),
-                defendant_name = COALESCE(NULLIF($5, ''), defendant_name),
-                prosecuting_attorney = COALESCE(NULLIF($6, ''), prosecuting_attorney),
-                defense_attorney = COALESCE(NULLIF($7, ''), defense_attorney),
-                judge_name = COALESCE(NULLIF($8, ''), judge_name),
-                hearing_location = COALESCE(NULLIF($9, ''), hearing_location),
-                content_hash = COALESCE(NULLIF($10, ''), content_hash),
+                event_time = COALESCE(NULLIF($3, ''), event_time),
+                hearing_type = COALESCE(NULLIF($4, ''), hearing_type),
+                case_type = COALESCE(NULLIF($5, ''), case_type),
+                defendant_name = COALESCE(NULLIF($6, ''), defendant_name),
+                prosecuting_attorney = COALESCE(NULLIF($7, ''), prosecuting_attorney),
+                defense_attorney = COALESCE(NULLIF($8, ''), defense_attorney),
+                judge_name = COALESCE(NULLIF($9, ''), judge_name),
+                hearing_location = COALESCE(NULLIF($10, ''), hearing_location),
+                content_hash = COALESCE(NULLIF($11, ''), content_hash),
                 updated_at = NOW()
-              WHERE id = $11`,
+              WHERE id = $12`,
               [
-                event.courtName || "", event.courtRoom, event.hearingType, event.caseType,
+                event.courtName || "", event.courtRoom, event.eventTime || "",
+                event.hearingType, event.caseType,
                 event.defendantName, event.prosecutingAttorney,
                 event.defenseAttorney, event.judgeName,
                 event.hearingLocation, event.contentHash, row.id,
@@ -378,7 +361,20 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
             defense_attorney, citation_number, sheriff_number,
             lea_number, content_hash,
             judge_name, hearing_location, is_virtual
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+          ON CONFLICT (case_number, event_date) DO UPDATE SET
+            court_name = COALESCE(NULLIF(EXCLUDED.court_name, ''), court_events.court_name),
+            court_room = COALESCE(NULLIF(EXCLUDED.court_room, ''), court_events.court_room),
+            event_time = COALESCE(NULLIF(EXCLUDED.event_time, ''), court_events.event_time),
+            hearing_type = COALESCE(NULLIF(EXCLUDED.hearing_type, ''), court_events.hearing_type),
+            case_type = COALESCE(NULLIF(EXCLUDED.case_type, ''), court_events.case_type),
+            defendant_name = COALESCE(NULLIF(EXCLUDED.defendant_name, ''), court_events.defendant_name),
+            prosecuting_attorney = COALESCE(NULLIF(EXCLUDED.prosecuting_attorney, ''), court_events.prosecuting_attorney),
+            defense_attorney = COALESCE(NULLIF(EXCLUDED.defense_attorney, ''), court_events.defense_attorney),
+            judge_name = COALESCE(NULLIF(EXCLUDED.judge_name, ''), court_events.judge_name),
+            hearing_location = COALESCE(NULLIF(EXCLUDED.hearing_location, ''), court_events.hearing_location),
+            content_hash = COALESCE(NULLIF(EXCLUDED.content_hash, ''), court_events.content_hash),
+            updated_at = NOW()`,
           [
             "", event.courtName || "", event.courtRoom, event.eventDate,
             event.eventTime, event.hearingType, event.caseNumber,

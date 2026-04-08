@@ -407,13 +407,15 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
         try {
           const caseNumbers = [...new Set(allParsed.map(e => e.caseNumber).filter(Boolean))];
           if (caseNumbers.length > 0) {
-            const result = await client.query<{ id: number; case_number: string; event_date: string; event_time: string }>(
-              `SELECT id, case_number, event_date::text, COALESCE(event_time, '') as event_time
-               FROM court_events WHERE case_number = ANY($1)`,
+            const result = await client.query<{ id: number; case_number: string; event_date: string }>(
+              `SELECT id, case_number, event_date::text
+               FROM court_events WHERE case_number = ANY($1)
+               ORDER BY updated_at DESC`,
               [caseNumbers]
             );
             for (const row of result.rows) {
-              dbIdLookup.set(`${row.case_number}|${row.event_date}|${row.event_time}`, row.id);
+              const key = `${row.case_number}|${row.event_date}`;
+              if (!dbIdLookup.has(key)) dbIdLookup.set(key, row.id);
             }
           }
         } finally {
@@ -427,7 +429,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     // Convert live-parsed results to CourtEvent format, using real DB IDs when available
     const liveEvents = allParsed.map((event) => {
       const ce = toCourtEvent(event);
-      const dbId = dbIdLookup.get(`${event.caseNumber}|${event.eventDate}|${event.eventTime || ""}`);
+      const dbId = dbIdLookup.get(`${event.caseNumber}|${event.eventDate}`);
       if (dbId) ce.id = dbId;
       return ce;
     });
@@ -447,10 +449,8 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     // to defenseAttorney regardless of their actual role.
     const isAttorneySearch = !!searchParams.attorney;
 
-    const liveKeys = new Set<string>();
     const liveCaseDateKeys = new Set<string>();
     for (const event of liveEvents) {
-      liveKeys.add(`${event.caseNumber}|${event.eventDate}|${event.eventTime || ""}`);
       liveCaseDateKeys.add(`${event.caseNumber}|${event.eventDate}`);
       const dbMatches = dbByCase.get(`${event.caseNumber}|${event.eventDate}`);
       if (dbMatches) {
@@ -481,8 +481,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     // scheduling (time, date, courtroom). Without this, a court rescheduling a
     // hearing (e.g. 11:00→9:00) would show both the stale and current times.
     const extraDb = dbResults.filter(
-      (r) => !liveKeys.has(`${r.caseNumber}|${r.eventDate}|${r.eventTime || ""}`)
-        && !liveCaseDateKeys.has(`${r.caseNumber}|${r.eventDate}`)
+      (r) => !liveCaseDateKeys.has(`${r.caseNumber}|${r.eventDate}`)
     );
     const merged = [...filteredLive, ...extraDb].slice(0, 2000);
 

@@ -169,13 +169,18 @@ function parseEventBlock(
   boxHtml: string,
   context?: SearchContext
 ): ParsedCourtEvent | null {
-  // 1. Extract time from the header — look for <strong>HH:MM AM/PM</strong>
-  //    Also check boxHtml for time if not in header (some formats embed it)
-  let timeMatch = headerHtml.match(/(\d{1,2}:\d{2}\s*[AP]M)/i);
+  // 1. Extract time from the header — grab the LAST match (closest to this
+  //    event box) to avoid picking up a preceding event's time header.
+  const headerTimeMatches = [...headerHtml.matchAll(/(\d{1,2}:\d{2}\s*[AP]M)/gi)];
+  let timeMatch: RegExpMatchArray | null = headerTimeMatches.length > 0
+    ? headerTimeMatches[headerTimeMatches.length - 1]
+    : null;
   if (!timeMatch) {
-    timeMatch = boxHtml.match(/(\d{1,2}:\d{2}\s*[AP]M)/i);
+    // Fallback: check boxHtml for time if not in header (some formats embed it)
+    const boxTimeMatches = [...boxHtml.matchAll(/(\d{1,2}:\d{2}\s*[AP]M)/gi)];
+    timeMatch = boxTimeMatches.length > 0 ? boxTimeMatches[boxTimeMatches.length - 1] : null;
   }
-  const eventTime = timeMatch ? timeMatch[1].trim() : null;
+  const eventTime = timeMatch ? timeMatch[1].trim().toUpperCase() : null;
 
   // 2. Extract date from header — look for <strong>M/D/YYYY</strong>
   //    Also check boxHtml for date if not in header
@@ -470,7 +475,7 @@ export function parseCourtCalendarText(
 
     const timeMatch = firstRow.match(/\d{1,2}:\d{2}\s*[AP]M/i);
     if (timeMatch) {
-      currentTime = timeMatch[0].trim();
+      currentTime = timeMatch[0].trim().toUpperCase();
     }
 
     let caseNumber: string | null = null;

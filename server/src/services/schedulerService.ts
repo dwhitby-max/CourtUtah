@@ -209,9 +209,9 @@ async function detectCancelledEvents(
   scrapedEvents: ParsedCourtEvent[],
   client: { query: <T = Record<string, unknown>>(q: string, p?: unknown[]) => Promise<{ rows: T[] }> }
 ): Promise<number> {
-  // Build a set of scraped event identifiers (case_number + date + time)
+  // Build a set of scraped event identifiers (case_number + date)
   const scrapedKeys = new Set(
-    scrapedEvents.map(e => `${e.caseNumber}|${e.eventDate}|${e.eventTime}`)
+    scrapedEvents.map(e => `${e.caseNumber}|${e.eventDate}`)
   );
 
   // Find future court_events in DB that match this watched case's criteria
@@ -238,7 +238,7 @@ async function detectCancelledEvents(
     const dateStr = rawDate instanceof Date
       ? rawDate.toISOString().split("T")[0]
       : typeof rawDate === "string" ? rawDate.split("T")[0] : String(rawDate);
-    const key = `${dbEvent.case_number}|${dateStr}|${dbEvent.event_time}`;
+    const key = `${dbEvent.case_number}|${dateStr}`;
 
     if (!scrapedKeys.has(key)) {
       // This event was in DB but not in scrape results — likely cancelled
@@ -780,14 +780,13 @@ async function upsertCourtEvent(event: ParsedCourtEvent): Promise<boolean> {
 
   const client = await pool.connect();
   try {
-    // Look for existing event by case_number + event_date + event_time
-    // Including event_time prevents collapsing separate hearings for the
-    // same case at different times on the same day (e.g. 9:00 AM vs 10:30 AM)
+    // Look for existing event by case_number + event_date only.
+    // A case has one hearing per day — if the time changed, it's a reschedule.
     const existing = await client.query(
       `SELECT * FROM court_events
-       WHERE case_number = $1 AND event_date = $2 AND COALESCE(event_time, '') = COALESCE($3, '')
-       LIMIT 1`,
-      [event.caseNumber, event.eventDate, event.eventTime]
+       WHERE case_number = $1 AND event_date = $2
+       ORDER BY updated_at DESC LIMIT 1`,
+      [event.caseNumber, event.eventDate]
     );
 
     if (existing.rows.length > 0) {
@@ -905,7 +904,8 @@ async function upsertCourtEvent(event: ParsedCourtEvent): Promise<boolean> {
       return false;
     }
 
-    // Insert new event
+    // Insert new event — ON CONFLICT handles race conditions where another
+    // request inserts the same case+date between our SELECT and INSERT.
     await client.query(
       `INSERT INTO court_events (
         court_type, court_name, court_room, event_date, event_time,
@@ -914,7 +914,20 @@ async function upsertCourtEvent(event: ParsedCourtEvent): Promise<boolean> {
         defense_attorney, citation_number, sheriff_number,
         lea_number, content_hash,
         judge_name, hearing_location, is_virtual
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+      ON CONFLICT (case_number, event_date) DO UPDATE SET
+        court_name = COALESCE(NULLIF(EXCLUDED.court_name, ''), court_events.court_name),
+        court_room = COALESCE(NULLIF(EXCLUDED.court_room, ''), court_events.court_room),
+        event_time = COALESCE(NULLIF(EXCLUDED.event_time, ''), court_events.event_time),
+        hearing_type = COALESCE(NULLIF(EXCLUDED.hearing_type, ''), court_events.hearing_type),
+        case_type = COALESCE(NULLIF(EXCLUDED.case_type, ''), court_events.case_type),
+        defendant_name = COALESCE(NULLIF(EXCLUDED.defendant_name, ''), court_events.defendant_name),
+        prosecuting_attorney = COALESCE(NULLIF(EXCLUDED.prosecuting_attorney, ''), court_events.prosecuting_attorney),
+        defense_attorney = COALESCE(NULLIF(EXCLUDED.defense_attorney, ''), court_events.defense_attorney),
+        judge_name = COALESCE(NULLIF(EXCLUDED.judge_name, ''), court_events.judge_name),
+        hearing_location = COALESCE(NULLIF(EXCLUDED.hearing_location, ''), court_events.hearing_location),
+        content_hash = COALESCE(NULLIF(EXCLUDED.content_hash, ''), court_events.content_hash),
+        updated_at = NOW()`,
       [
         "", event.hearingLocation || "", event.courtRoom, event.eventDate,
         event.eventTime, event.hearingType, event.caseNumber,
