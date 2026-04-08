@@ -1,6 +1,7 @@
 import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import app from "./app";
+import { verifyToken } from "./middleware/auth";
 import { config } from "./config/env";
 import { testConnection } from "./db/pool";
 import { stopPoolMonitor } from "./db/pool";
@@ -40,14 +41,30 @@ const io = new SocketIOServer<ClientToServerEvents, ServerToClientEvents>(server
   transports: ["websocket", "polling"],
 });
 
-io.on("connection", (socket) => {
-  console.log(`🔌 Socket connected: ${socket.id}`);
+// Authenticate Socket.IO connections via JWT in handshake
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token as string | undefined;
+  if (!token) {
+    return next(new Error("Authentication required"));
+  }
+  try {
+    const payload = verifyToken(token);
+    socket.data.user = payload;
+    next();
+  } catch {
+    next(new Error("Invalid or expired token"));
+  }
+});
 
-  socket.on("join", (userId: number) => {
+io.on("connection", (socket) => {
+  const userId = socket.data.user?.userId;
+  console.log(`🔌 Socket connected: ${socket.id} (user:${userId})`);
+
+  // Auto-join the authenticated user's room
+  if (userId) {
     const room = `user:${userId}`;
     socket.join(room);
-    console.log(`🔌 Socket ${socket.id} joined room ${room}`);
-  });
+  }
 
   socket.on("disconnect", () => {
     console.log(`🔌 Socket disconnected: ${socket.id}`);

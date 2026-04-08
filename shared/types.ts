@@ -334,7 +334,7 @@ export interface ServerToClientEvents {
 }
 
 export interface ClientToServerEvents {
-  join: (userId: number) => void;
+  // No client-controlled events — auth is handled via JWT in handshake
 }
 
 // --- API Responses ---

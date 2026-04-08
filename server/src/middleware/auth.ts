@@ -40,6 +40,14 @@ export function authenticateToken(req: Request, res: Response, next: NextFunctio
   }
 }
 
+/** Verify a JWT and return the payload. Throws on invalid/expired tokens. */
+export function verifyToken(token: string): AuthPayload {
+  if (!config.jwtSecret) {
+    throw new Error("JWT_SECRET not configured");
+  }
+  return jwt.verify(token, config.jwtSecret) as AuthPayload;
+}
+
 export function generateToken(payload: AuthPayload): string {
   if (!config.jwtSecret) {
     throw new Error("JWT_SECRET not configured");

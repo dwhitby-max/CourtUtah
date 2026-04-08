@@ -4,19 +4,6 @@ import { io, Socket } from "socket.io-client";
 import { getNotifications } from "@/api/notifications";
 import { useAuth } from "@/hooks/useAuth";
 
-let socket: Socket | null = null;
-
-function getSocket(): Socket {
-  if (!socket) {
-    socket = io(window.location.origin, {
-      path: "/socket.io",
-      transports: ["websocket", "polling"],
-      autoConnect: false,
-    });
-  }
-  return socket;
-}
-
 export default function NotificationBell() {
   const [unreadCount, setUnreadCount] = useState(0);
   const { user } = useAuth();
@@ -36,11 +23,13 @@ export default function NotificationBell() {
     // Initial fetch
     fetchCount();
 
-    // Connect Socket.io for real-time updates
-    const sock = getSocket();
-
-    sock.on("connect", () => {
-      sock.emit("join", user.id);
+    // Connect Socket.io for real-time updates (JWT auth in handshake)
+    const token = localStorage.getItem("auth_token");
+    const sock: Socket = io(window.location.origin, {
+      path: "/socket.io",
+      transports: ["websocket", "polling"],
+      auth: { token },
+      autoConnect: false,
     });
 
     sock.on("new_notification", (payload) => {
@@ -58,7 +47,6 @@ export default function NotificationBell() {
 
     return () => {
       clearInterval(interval);
-      sock.off("connect");
       sock.off("new_notification");
       sock.disconnect();
     };

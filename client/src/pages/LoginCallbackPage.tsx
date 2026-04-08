@@ -10,22 +10,34 @@ export default function LoginCallbackPage() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const token = searchParams.get("token");
-    if (!token) {
-      setError("Missing authentication token.");
+    const code = searchParams.get("code");
+    if (!code) {
+      setError("Missing authentication code.");
       return;
     }
 
-    // Store token and fetch user profile
-    setToken(token);
-
-    // Fetch profile directly (bypass apiFetch's 401 redirect which races with our error handling)
-    fetch("/api/auth/me", {
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`,
-      },
+    // Exchange one-time code for JWT, then fetch profile
+    fetch("/api/auth/exchange-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
     })
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({ error: "Code exchange failed" }));
+          throw new Error(body.error || `Code exchange failed: ${res.status}`);
+        }
+        return res.json();
+      })
+      .then(({ token }) => {
+        setToken(token);
+        return fetch("/api/auth/me", {
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`,
+          },
+        });
+      })
       .then(async (res) => {
         if (!res.ok) {
           const body = await res.text().catch(() => "");

@@ -14,11 +14,18 @@ const router = Router();
 const oauthStates = new Map<string, { createdAt: number }>();
 const STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-// Periodic cleanup of expired states
+// In-memory store for one-time auth codes (replaces JWT-in-URL)
+const authCodes = new Map<string, { jwt: string; createdAt: number }>();
+const AUTH_CODE_TTL_MS = 60 * 1000; // 1 minute — codes are exchanged immediately
+
+// Periodic cleanup of expired states and auth codes
 setInterval(() => {
   const now = Date.now();
   for (const [key, val] of oauthStates) {
     if (now - val.createdAt > STATE_TTL_MS) oauthStates.delete(key);
+  }
+  for (const [key, val] of authCodes) {
+    if (now - val.createdAt > AUTH_CODE_TTL_MS) authCodes.delete(key);
   }
 }, 60 * 1000).unref();
 
@@ -276,9 +283,11 @@ router.get("/google/callback", async (req: Request, res: Response) => {
       await client.query("COMMIT");
       console.log(`✅ Google OAuth complete: userId=${userId}, email=${userinfo.email}, google_id=${userinfo.id}, refresh_token_received=${!!tokens.refresh_token}`);
 
-      // Generate JWT and redirect to client callback
-      const jwt = generateToken({ userId, email: userinfo.email.toLowerCase() });
-      res.redirect(`/login/callback?token=${encodeURIComponent(jwt)}`);
+      // Generate JWT and issue a one-time auth code (never expose JWT in URL)
+      const jwtToken = generateToken({ userId, email: userinfo.email.toLowerCase() });
+      const code = crypto.randomBytes(32).toString("hex");
+      authCodes.set(code, { jwt: jwtToken, createdAt: Date.now() });
+      res.redirect(`/login/callback?code=${encodeURIComponent(code)}`);
     } catch (err) {
       await client.query("ROLLBACK");
       throw err;
@@ -532,9 +541,11 @@ router.get("/microsoft/callback", async (req: Request, res: Response) => {
       await client.query("COMMIT");
       console.log(`✅ Microsoft OAuth complete: userId=${userId}, email=${email}, microsoft_id=${userinfo.id}, refresh_token_received=${!!tokens.refresh_token}`);
 
-      // Generate JWT and redirect to client callback
-      const jwt = generateToken({ userId, email });
-      res.redirect(`/login/callback?token=${encodeURIComponent(jwt)}`);
+      // Generate JWT and issue a one-time auth code (never expose JWT in URL)
+      const jwtToken = generateToken({ userId, email });
+      const code = crypto.randomBytes(32).toString("hex");
+      authCodes.set(code, { jwt: jwtToken, createdAt: Date.now() });
+      res.redirect(`/login/callback?code=${encodeURIComponent(code)}`);
     } catch (err) {
       await client.query("ROLLBACK");
       throw err;
@@ -545,6 +556,25 @@ router.get("/microsoft/callback", async (req: Request, res: Response) => {
     console.error("❌ Microsoft OAuth callback failed:", err);
     res.redirect("/login?error=microsoft_failed");
   }
+});
+
+// POST /api/auth/exchange-code — Exchange a one-time auth code for a JWT
+router.post("/exchange-code", heavyLimiter, (req: Request, res: Response) => {
+  const { code } = req.body;
+  if (!code || typeof code !== "string") {
+    res.status(400).json({ error: "Missing auth code" });
+    return;
+  }
+
+  const entry = authCodes.get(code);
+  if (!entry || Date.now() - entry.createdAt > AUTH_CODE_TTL_MS) {
+    authCodes.delete(code);
+    res.status(401).json({ error: "Invalid or expired auth code" });
+    return;
+  }
+
+  authCodes.delete(code); // One-time use
+  res.json({ token: entry.jwt });
 });
 
 // Mount profile-related routes (GET /me, POST /accept-terms, PATCH /profile)

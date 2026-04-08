@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import crypto from "crypto";
 import { authenticateToken } from "../middleware/auth";
 import { getPool } from "../db/pool";
 import { config } from "../config/env";
@@ -6,6 +7,18 @@ import { encrypt } from "../services/encryptionService";
 import { heavyLimiter } from "../middleware/rateLimiter";
 
 const router = Router();
+
+// In-memory state store for Microsoft calendar OAuth CSRF protection
+const msCalOAuthStates = new Map<string, { userId: number; createdAt: number }>();
+const MS_CAL_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+// Periodic cleanup of expired states
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of msCalOAuthStates) {
+    if (now - val.createdAt > MS_CAL_STATE_TTL_MS) msCalOAuthStates.delete(key);
+  }
+}, 60 * 1000).unref();
 
 // GET /api/calendar/microsoft/auth - Start Microsoft OAuth flow
 router.get("/microsoft/auth", authenticateToken, heavyLimiter, (req: Request, res: Response) => {
@@ -19,12 +32,15 @@ router.get("/microsoft/auth", authenticateToken, heavyLimiter, (req: Request, re
     "offline_access",
   ];
 
+  const state = crypto.randomBytes(32).toString("hex");
+  msCalOAuthStates.set(state, { userId: req.user!.userId, createdAt: Date.now() });
+
   const params = new URLSearchParams({
     client_id: config.microsoft.clientId,
     redirect_uri: config.microsoft.redirectUri,
     response_type: "code",
     scope: scopes.join(" "),
-    state: String(req.user?.userId || ""),
+    state,
   });
 
   const authUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${params.toString()}`;
@@ -34,12 +50,21 @@ router.get("/microsoft/auth", authenticateToken, heavyLimiter, (req: Request, re
 // GET /api/calendar/microsoft/callback - Microsoft OAuth callback
 router.get("/microsoft/callback", async (req: Request, res: Response) => {
   const { code, state } = req.query;
-  const userId = state ? parseInt(String(state), 10) : null;
 
-  if (!code || !userId) {
-    res.status(400).json({ error: "Missing authorization code or state" });
+  if (!code || !state || typeof state !== "string") {
+    res.redirect("/calendar-settings?error=missing_params");
     return;
   }
+
+  // Validate state token (CSRF protection)
+  const stateEntry = msCalOAuthStates.get(state);
+  if (!stateEntry || Date.now() - stateEntry.createdAt > MS_CAL_STATE_TTL_MS) {
+    msCalOAuthStates.delete(state);
+    res.redirect("/calendar-settings?error=invalid_state");
+    return;
+  }
+  const userId = stateEntry.userId;
+  msCalOAuthStates.delete(state); // One-time use
 
   try {
     const tokenResponse = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {

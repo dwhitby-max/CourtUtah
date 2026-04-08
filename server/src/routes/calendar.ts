@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import crypto from "crypto";
 import { authenticateToken } from "../middleware/auth";
 import { getPool } from "../db/pool";
 import { config } from "../config/env";
@@ -8,6 +9,18 @@ import { syncCalendarEntry, deleteCalendarEntry, deleteAllEntriesForConnection }
 import calendarProvidersRouter from "./calendarProviders";
 
 const router = Router();
+
+// In-memory state store for calendar OAuth CSRF protection
+const calendarOAuthStates = new Map<string, { userId: number; createdAt: number }>();
+const CAL_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+// Periodic cleanup of expired states
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of calendarOAuthStates) {
+    if (now - val.createdAt > CAL_STATE_TTL_MS) calendarOAuthStates.delete(key);
+  }
+}, 60 * 1000).unref();
 
 // Resolve the Google Calendar redirect URI:
 // Use GOOGLE_CALENDAR_REDIRECT_URI if set, otherwise fall back to GOOGLE_REDIRECT_URI
@@ -35,6 +48,9 @@ router.get("/google/auth", authenticateToken, heavyLimiter, (req: Request, res: 
     "https://www.googleapis.com/auth/calendar.readonly",
   ];
 
+  const state = crypto.randomBytes(32).toString("hex");
+  calendarOAuthStates.set(state, { userId: req.user.userId, createdAt: Date.now() });
+
   const params = new URLSearchParams({
     client_id: config.google.clientId,
     redirect_uri: redirectUri,
@@ -42,7 +58,7 @@ router.get("/google/auth", authenticateToken, heavyLimiter, (req: Request, res: 
     scope: scopes.join(" "),
     access_type: "offline",
     prompt: "consent",
-    state: String(req.user.userId),
+    state,
   });
 
   const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
@@ -58,11 +74,20 @@ router.get("/google/callback", async (req: Request, res: Response) => {
     return;
   }
 
-  const userId = state ? parseInt(String(state), 10) : null;
-  if (!code || !userId || isNaN(userId)) {
+  if (!code || !state || typeof state !== "string") {
     res.redirect("/calendar-settings?error=missing_params");
     return;
   }
+
+  // Validate state token (CSRF protection)
+  const stateEntry = calendarOAuthStates.get(state);
+  if (!stateEntry || Date.now() - stateEntry.createdAt > CAL_STATE_TTL_MS) {
+    calendarOAuthStates.delete(state);
+    res.redirect("/calendar-settings?error=invalid_state");
+    return;
+  }
+  const userId = stateEntry.userId;
+  calendarOAuthStates.delete(state); // One-time use
 
   const redirectUri = getGoogleCalendarRedirectUri();
 
