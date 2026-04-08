@@ -2,6 +2,9 @@ import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { config } from "../config/env";
 
+const JWT_ISSUER = "courttracker";
+const JWT_AUDIENCE = "courttracker-app";
+
 export interface AuthPayload {
   userId: number;
   email: string;
@@ -31,7 +34,10 @@ export function authenticateToken(req: Request, res: Response, next: NextFunctio
   }
 
   try {
-    const payload = jwt.verify(token, config.jwtSecret) as AuthPayload;
+    const payload = jwt.verify(token, config.jwtSecret, {
+      issuer: JWT_ISSUER,
+      audience: JWT_AUDIENCE,
+    }) as AuthPayload;
     req.user = payload;
     next();
   } catch (err) {
@@ -45,12 +51,19 @@ export function verifyToken(token: string): AuthPayload {
   if (!config.jwtSecret) {
     throw new Error("JWT_SECRET not configured");
   }
-  return jwt.verify(token, config.jwtSecret) as AuthPayload;
+  return jwt.verify(token, config.jwtSecret, {
+    issuer: JWT_ISSUER,
+    audience: JWT_AUDIENCE,
+  }) as AuthPayload;
 }
 
 export function generateToken(payload: AuthPayload): string {
   if (!config.jwtSecret) {
     throw new Error("JWT_SECRET not configured");
   }
-  return jwt.sign(payload, config.jwtSecret, { expiresIn: "7d" });
+  return jwt.sign(payload, config.jwtSecret, {
+    expiresIn: "24h",
+    issuer: JWT_ISSUER,
+    audience: JWT_AUDIENCE,
+  });
 }

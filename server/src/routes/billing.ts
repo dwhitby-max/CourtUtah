@@ -54,15 +54,19 @@ router.post("/create-checkout-session", authenticateToken, heavyLimiter, async (
       );
     }
 
-    // Determine success/cancel URLs from request origin
-    const origin = req.get("origin") || req.get("referer")?.replace(/\/[^/]*$/, "") || "";
+    // Use configured base URL for Stripe return URLs (never trust request headers)
+    const baseUrl = config.appBaseUrl;
+    if (!baseUrl) {
+      res.status(503).json({ error: "APP_BASE_URL not configured — cannot create checkout session" });
+      return;
+    }
 
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       mode: "subscription",
       line_items: [{ price: config.stripe.priceId, quantity: 1 }],
-      success_url: `${origin}/billing?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${origin}/billing`,
+      success_url: `${baseUrl}/billing?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${baseUrl}/billing`,
       metadata: { userId: String(req.user.userId) },
     });
 
@@ -97,11 +101,16 @@ router.post("/create-portal-session", authenticateToken, heavyLimiter, async (re
       return;
     }
 
-    const origin = req.get("origin") || req.get("referer")?.replace(/\/[^/]*$/, "") || "";
+    // Use configured base URL for Stripe return URLs (never trust request headers)
+    const baseUrl = config.appBaseUrl;
+    if (!baseUrl) {
+      res.status(503).json({ error: "APP_BASE_URL not configured — cannot create portal session" });
+      return;
+    }
 
     const session = await stripe.billingPortal.sessions.create({
       customer: result.rows[0].stripe_customer_id,
-      return_url: `${origin}/billing`,
+      return_url: `${baseUrl}/billing`,
     });
 
     res.json({ url: session.url });

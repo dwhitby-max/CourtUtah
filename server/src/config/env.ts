@@ -52,6 +52,8 @@ export const config = {
     phoneNumber: process.env.TWILIO_PHONE_NUMBER || "",
   },
 
+  appBaseUrl: process.env.APP_BASE_URL || "",
+
   corsOrigin: process.env.CORS_ORIGIN || "",
 
   sentryDsn: process.env.SENTRY_DSN || "",

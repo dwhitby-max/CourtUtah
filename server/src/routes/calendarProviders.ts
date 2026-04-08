@@ -5,6 +5,7 @@ import { getPool } from "../db/pool";
 import { config } from "../config/env";
 import { encrypt } from "../services/encryptionService";
 import { heavyLimiter } from "../middleware/rateLimiter";
+import { validateCaldavUrl } from "../utils/validateCaldavUrl";
 
 const router = Router();
 
@@ -162,6 +163,13 @@ router.post("/caldav", authenticateToken, heavyLimiter, async (req: Request, res
   const { caldavUrl, username, password } = req.body;
   if (!caldavUrl || !username || !password) {
     res.status(400).json({ error: "CalDAV URL, username, and password are required" });
+    return;
+  }
+
+  // Validate CalDAV URL against SSRF and allowlist
+  const urlError = await validateCaldavUrl(caldavUrl);
+  if (urlError) {
+    res.status(400).json({ error: urlError });
     return;
   }
 

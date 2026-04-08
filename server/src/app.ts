@@ -45,14 +45,36 @@ app.get("/__replit_health", (_req, res) => res.status(200).json({ status: "ok" }
 app.use(requestLogger);
 
 // 3. Security middleware
-app.use(helmet({ contentSecurityPolicy: false }));
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],  // Tailwind/Vite injects inline styles
+      imgSrc: ["'self'", "data:", "https:"],
+      fontSrc: ["'self'", "data:"],
+      connectSrc: [
+        "'self'",
+        "wss:",                                  // Socket.IO WebSocket
+        "https://accounts.google.com",
+        "https://login.microsoftonline.com",
+      ],
+      frameSrc: ["'self'", "https://js.stripe.com"],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'", "https://accounts.google.com", "https://login.microsoftonline.com"],
+    },
+  },
+}));
 
-// CORS: in production, restrict to CORS_ORIGIN or same-origin (false).
-// In development, allow all origins for Vite proxy.
+// CORS: in production, require CORS_ORIGIN. In development, allow all for Vite proxy.
+if (config.nodeEnv === "production" && !config.corsOrigin) {
+  console.warn("⚠️  CORS_ORIGIN not set in production — CORS will block cross-origin requests (same-origin only)");
+}
 const corsOrigin = config.nodeEnv === "production"
   ? (config.corsOrigin || false)
   : "*";
-app.use(cors({ origin: corsOrigin }));
+app.use(cors({ origin: corsOrigin, credentials: true }));
 
 // 4. Body parsers
 // Stripe webhook needs raw body for signature verification — must be before express.json()

@@ -33,7 +33,7 @@ const io = new SocketIOServer<ClientToServerEvents, ServerToClientEvents>(server
   path: "/socket.io",
   cors: {
     origin: config.nodeEnv === "production"
-      ? (config.corsOrigin || true)
+      ? (config.corsOrigin || false)
       : "*",
     methods: ["GET", "POST"],
     credentials: true,

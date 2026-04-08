@@ -30,6 +30,15 @@ setInterval(() => {
 }, 60 * 1000).unref();
 
 function resolveRedirectUri(req: Request, path: string = "/api/auth/google/callback"): string {
+  // In production, always use configured redirect URIs — never trust request headers
+  if (config.nodeEnv === "production") {
+    if (path === "/api/auth/microsoft/callback") {
+      return config.microsoft.authRedirectUri;
+    }
+    return config.google.redirectUri;
+  }
+
+  // Development only: derive from forwarded headers for local/preview convenience
   const forwardedHost = req.get("x-forwarded-host") || req.get("host") || "";
   const proto = req.get("x-forwarded-proto") || req.protocol || "https";
   if (forwardedHost && forwardedHost !== "localhost" && !forwardedHost.startsWith("localhost:")) {
