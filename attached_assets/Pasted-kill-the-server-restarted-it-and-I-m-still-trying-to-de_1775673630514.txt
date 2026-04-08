@@ -1,0 +1,86 @@
+kill the server, restarted it and I'm still trying to deploy the app via  
+  replit and getting Failed to run database migration statement             
+  ALTER TABLE "court_events" ADD CONSTRAINT "uq_court_events_case_date"     
+  UNIQUE("event_date","case_number");                                       
+  could not create unique index "uq_court_events_case_date"                 
+                                                                          
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)                    
+                                                                            
+● The error message says it's trying to create uq_court_events_case_date    
+  with UNIQUE("event_date","case_number") — that's an old constraint, not
+  from migration 037. Migration 037 correctly creates                       
+  uq_court_events_case_date_time with 3 columns.                            
+                                                                            
+  Let me check which migration has the old constraint.                      
+                                                                            
+  Searched for 1 pattern, read 2 files (ctrl+o to expand)                   
+                                                                            
+● Now let me check the migration runner to understand how it tracks which   
+  migrations have run.                                                      
+                                                                            
+  Searched for 1 pattern (ctrl+o to expand)                                 
+                                                                            
+● The error references uq_court_events_case_date (without _time), but that  
+  constraint doesn't exist in any current migration file. This means either:
+                                                                            
+  1. The error is coming from a cached/stale build of the server, or        
+  2. There's something in the app code creating this constraint             
+                                                                            
+  Searched for 3 patterns, read 2 files (ctrl+o to expand)     
+                                                                            
+● The constraint uq_court_events_case_date doesn't exist in any migration   
+  file. The error you're seeing is from a previous failed run — the database
+   likely has migration 037 partially applied (or it's being re-run         
+  somehow).                                                                 
+                                                                            
+  The issue is probably that the schema_migrations table doesn't have       
+  037_dedup_case_number_event_date.sql recorded (because it failed mid-run  
+  previously), so it tries to re-run it. But some of the earlier steps in   
+  the migration already executed, leaving the DB in a half-migrated state.
+
+  However, the exact error mentions uq_court_events_case_date — a constraint
+   that isn't in migration 037 (which uses uq_court_events_case_date_time).
+  This suggests you might have a stale version of the migration file in your
+   build or that Replit is running an older cached version.
+
+  Let me verify the built server is current:                                
+   
+  Listed 1 directory (ctrl+o to expand)                                     
+                                                                          
+● Bash(git log --oneline -5 --                                           
+      server/migrations/037_dedup_case_number_event_date.sql)
+  ⎿  64a3043 Fix migration 037 unique constraint to include event_time      
+     (case can have multiple hearings per day)
+     0482483 Clean up orphaned calendar entries from dedup migration an     
+     … +3 lines (ctrl+o to expand)                                   
+                          
+● So the migration file was fixed in commit 64a3043 (the latest). But the   
+  error references the old constraint name uq_court_events_case_date from   
+  the pre-fix version.                                                      
+                                                                            
+  The problem: migration 037 was already attempted with the old code        
+  (2-column constraint), it failed partway through, but some of its SQL     
+  already ran. Now even with the fixed file, the DB is in a bad state.      
+                                                                            
+  You need to clean up the database directly. Here's what to do:
+
+  1. Check if the old constraint or the partially-applied state exists      
+  2. Clean up so migration 037 can run fresh
+                                                                            
+  Connect to your database and run:
+                                                                            
+  -- Check current state
+  SELECT * FROM schema_migrations WHERE filename LIKE '%037%';
+
+  -- Drop the old broken constraint if it exists                            
+  ALTER TABLE court_events DROP CONSTRAINT IF EXISTS
+  uq_court_events_case_date;                                                
+  DROP INDEX IF EXISTS uq_court_events_case_date;
+                                                                            
+  -- Remove the migration record so 037 can re-run cleanly
+  DELETE FROM schema_migrations WHERE filename =                            
+  '037_dedup_case_number_event_date.sql';                                   
+   
+  Then redeploy. The fixed migration 037 will run from scratch — it         
+  deduplicates data first, then adds the correct 3-column unique constraint
+  (uq_court_events_case_date_time).       
