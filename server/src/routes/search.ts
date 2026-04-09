@@ -540,6 +540,19 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
           if (!isAttorneySearch) {
             if (!event.prosecutingAttorney && dbMatch.prosecutingAttorney) event.prosecutingAttorney = dbMatch.prosecutingAttorney;
             if (!event.defenseAttorney && dbMatch.defenseAttorney) event.defenseAttorney = dbMatch.defenseAttorney;
+          } else if (accountType === "agency") {
+            // Agency attorney searches: the searched attorney is always the
+            // prosecutor, so we can safely backfill the DEFENSE attorney from
+            // DB — but only if the DB value isn't the searched attorney's name
+            // (which would be corrupt old-parser data stuffed into the wrong field).
+            const searchedName = (searchParams.attorney || "").replace(/\s+/g, " ").trim().toUpperCase();
+            if (
+              !event.defenseAttorney &&
+              dbMatch.defenseAttorney &&
+              dbMatch.defenseAttorney.replace(/\s+/g, " ").trim().toUpperCase() !== searchedName
+            ) {
+              event.defenseAttorney = dbMatch.defenseAttorney;
+            }
           }
           if (!event.defendantOtn && dbMatch.defendantOtn) event.defendantOtn = dbMatch.defendantOtn;
           if (!event.defendantDob && dbMatch.defendantDob) event.defendantDob = dbMatch.defendantDob;
