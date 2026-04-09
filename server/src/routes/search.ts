@@ -423,13 +423,27 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
 
     // Enrich events with attorney data from details.php pages
     // (search.php only shows one attorney with no role label)
+    let enrichmentFailed = 0;
+    let enrichmentTotal = 0;
     try {
-      const detailsEnriched = await enrichFromDetailsPages(allParsed);
-      if (detailsEnriched > 0) {
-        console.log(`  👤 Enriched ${detailsEnriched} events with attorney data from details pages`);
+      const enrichResult = await enrichFromDetailsPages(allParsed);
+      enrichmentFailed = enrichResult.failed;
+      enrichmentTotal = enrichResult.total;
+      if (enrichResult.enriched > 0) {
+        console.log(`  👤 Enriched ${enrichResult.enriched}/${enrichResult.total} events with attorney data from details pages`);
+      }
+      if (enrichResult.failed > 0) {
+        console.warn(`  ⚠️ Details enrichment failed for ${enrichResult.failed}/${enrichResult.total} events (after retries)`);
       }
     } catch (err) {
       console.warn("⚠️ Details enrichment failed:", err instanceof Error ? err.message : err);
+    }
+
+    // Surface enrichment failures as a user-facing warning
+    if (enrichmentFailed > 0) {
+      searchWarnings.push(
+        `Attorney data incomplete for ${enrichmentFailed} of ${enrichmentTotal} events due to court website timeouts. Previously cached data was used where available.`
+      );
     }
 
     // Persist live results and detect changes (awaited so we can return changes)

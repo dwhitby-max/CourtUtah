@@ -353,8 +353,15 @@ function parseEventBlock(
     detailsUrl = `https://legacy.utcourts.gov/cal/${detailsMatch[1].replace(/&amp;/g, "&")}`;
   }
 
-  // Must have at least a case number or defendant to be a valid event
-  if (!caseNumber && !defendantName) return null;
+  // Must have a case number AND at least one meaningful field (defendant,
+  // hearing type, or judge) to be a valid event. Without these the record
+  // is too sparse to be useful and would create near-empty DB rows.
+  if (!caseNumber) return null;
+  if (!defendantName && !hearingType && !judgeName) {
+    // Log so we can spot HTML format changes causing parser failures
+    console.warn(`⚠️ Parser: skipping sparse event — case ${caseNumber} on ${eventDate} has no defendant, hearing type, or judge`);
+    return null;
+  }
 
   // Build event
   const eventData: Omit<ParsedCourtEvent, "contentHash"> = {
@@ -620,9 +627,9 @@ export interface DetailAttorneys {
 }
 
 /**
- * Fetch a details.php page via GET.
+ * Fetch a details.php page via GET (single attempt, no retry).
  */
-function fetchDetailsHtml(url: string, timeoutMs = 8000): Promise<string> {
+function fetchDetailsHtmlOnce(url: string, timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("Details fetch timeout")), timeoutMs);
     https.get(url, {
@@ -651,6 +658,29 @@ function fetchDetailsHtml(url: string, timeoutMs = 8000): Promise<string> {
       res.on("error", (e) => { clearTimeout(timer); reject(e); });
     }).on("error", (e) => { clearTimeout(timer); reject(e); });
   });
+}
+
+/**
+ * Fetch a details.php page with retry logic and exponential backoff.
+ * Retries up to maxRetries times on transient errors (timeouts, network errors).
+ */
+function fetchDetailsHtml(url: string, timeoutMs = 12000, maxRetries = 2): Promise<string> {
+  const retryDelays = [2000, 4000]; // backoff delays between retries
+  let attempt = 0;
+
+  const tryFetch = (): Promise<string> =>
+    fetchDetailsHtmlOnce(url, timeoutMs).catch((err) => {
+      attempt++;
+      if (attempt <= maxRetries) {
+        const delay = retryDelays[attempt - 1] || 4000;
+        return new Promise<string>((resolve) =>
+          setTimeout(() => resolve(tryFetch()), delay)
+        );
+      }
+      throw err;
+    });
+
+  return tryFetch();
 }
 
 /**
@@ -717,20 +747,32 @@ export function parseDetailsHtml(html: string): DetailAttorneys {
   return { prosecutingAttorney, defenseAttorney, defendantDob, defendantOtn, citationNumber, charges };
 }
 
+export interface EnrichmentResult {
+  enriched: number;
+  failed: number;
+  total: number;
+}
+
 /**
  * Enrich parsed events by fetching their details.php pages in parallel.
  * Updates events in-place with attorney and other enrichment data.
+ *
+ * Uses adaptive batch sizing: starts at initialBatchSize (default 5),
+ * drops to 3 if >50% of a batch fails, recovers back up if failures decrease.
  */
 export async function enrichFromDetailsPages(
   events: ParsedCourtEvent[],
-  batchSize = 10
-): Promise<number> {
+  initialBatchSize = 5
+): Promise<EnrichmentResult> {
   const toEnrich = events.filter((e) => e.detailsUrl && !e.prosecutingAttorney && !e.defenseAttorney);
-  if (toEnrich.length === 0) return 0;
+  if (toEnrich.length === 0) return { enriched: 0, failed: 0, total: 0 };
 
   let enriched = 0;
-  for (let i = 0; i < toEnrich.length; i += batchSize) {
-    const batch = toEnrich.slice(i, i + batchSize);
+  let failed = 0;
+  let currentBatchSize = initialBatchSize;
+
+  for (let i = 0; i < toEnrich.length; i += currentBatchSize) {
+    const batch = toEnrich.slice(i, i + currentBatchSize);
     const results = await Promise.all(
       batch.map((event) =>
         fetchDetailsHtml(event.detailsUrl!)
@@ -742,8 +784,9 @@ export async function enrichFromDetailsPages(
       )
     );
 
+    let batchFailed = 0;
     for (const result of results) {
-      if (!result) continue;
+      if (!result) { batchFailed++; continue; }
       const { event, data } = result;
       if (data.prosecutingAttorney) { event.prosecutingAttorney = data.prosecutingAttorney; enriched++; }
       if (data.defenseAttorney) event.defenseAttorney = data.defenseAttorney;
@@ -751,7 +794,22 @@ export async function enrichFromDetailsPages(
       if (data.defendantOtn && !event.defendantOtn) event.defendantOtn = data.defendantOtn;
       if (data.citationNumber && !event.citationNumber) event.citationNumber = data.citationNumber;
     }
+    failed += batchFailed;
+
+    // Adaptive batch sizing: shrink on high failure rate, recover on success
+    const failRate = batchFailed / batch.length;
+    if (failRate > 0.5 && currentBatchSize > 3) {
+      currentBatchSize = 3;
+      console.warn(`⚠️ Details enrichment: >50% failure rate, reducing batch size to ${currentBatchSize}`);
+    } else if (failRate === 0 && currentBatchSize < initialBatchSize) {
+      currentBatchSize = initialBatchSize;
+    }
+
+    // Add a small delay between batches to avoid hammering the server
+    if (i + currentBatchSize < toEnrich.length) {
+      await new Promise((r) => setTimeout(r, batchFailed > 0 ? 1500 : 500));
+    }
   }
 
-  return enriched;
+  return { enriched, failed, total: toEnrich.length };
 }

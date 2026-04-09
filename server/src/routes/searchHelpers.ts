@@ -221,6 +221,13 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
       // Dedup by case_number + event_date + event_time — a case can have
       // multiple hearings per day at different times.
       if (!event.caseNumber || !event.eventDate) continue;
+
+      // Don't persist events that are too sparse — they'd create near-empty
+      // DB rows and can trigger false change detections when they collide
+      // with richer existing records on the dedup key.
+      if (!event.defendantName && !event.hearingType && !event.judgeName) {
+        continue;
+      }
       try {
         const existing = await client.query(
           `SELECT id, court_room, event_date::text, event_time, hearing_type,
@@ -237,26 +244,40 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
         if (existing.rows.length > 0) {
           const row = existing.rows[0];
 
+          // Guard: if the incoming event is sparser than the DB record
+          // (e.g. parser failed to extract defendant or hearing type),
+          // don't run change detection — it would flag real data being
+          // "changed" to empty strings, triggering false notifications.
+          const incomingPopulated = [event.defendantName, event.hearingType, event.judgeName, event.courtRoom].filter(Boolean).length;
+          const existingPopulated = [row.defendant_name, row.hearing_type, row.judge_name, row.court_room].filter(Boolean).length;
+          const isSparseIncoming = incomingPopulated < existingPopulated && incomingPopulated <= 1;
+
           // Build incoming record in DB column format for change detection.
           // Don't overwrite existing DB values with empty strings — enrichment
           // may have failed (e.g. details.php timeout), and blanking out known
           // attorney data triggers false "change" notifications.
+          // When the incoming event is sparse, preserve ALL existing DB values
+          // to prevent false change detection.
           const incoming: Record<string, unknown> = {
-            court_room: event.courtRoom || "",
+            court_room: event.courtRoom || row.court_room || "",
             event_date: event.eventDate || "",
             event_time: event.eventTime || "",
-            hearing_type: event.hearingType || "",
+            hearing_type: event.hearingType || (isSparseIncoming ? row.hearing_type : "") || "",
             case_number: event.caseNumber || "",
             case_type: event.caseType || "",
-            defendant_name: event.defendantName || "",
+            defendant_name: event.defendantName || (isSparseIncoming ? row.defendant_name : "") || "",
             prosecuting_attorney: event.prosecutingAttorney || row.prosecuting_attorney || "",
             defense_attorney: event.defenseAttorney || row.defense_attorney || "",
-            judge_name: event.judgeName || "",
+            judge_name: event.judgeName || (isSparseIncoming ? row.judge_name : "") || "",
             hearing_location: event.hearingLocation || "",
           };
 
+          if (isSparseIncoming) {
+            console.warn(`⚠️ Sparse incoming event for case ${event.caseNumber} (event ${row.id}) — skipping change detection to prevent false alerts`);
+          }
+
           // Detect field-level changes
-          const changes = detectChanges(row, incoming);
+          const changes = isSparseIncoming ? [] : detectChanges(row, incoming);
 
           if (changes.length > 0) {
             console.log(`🔄 Changes detected for case ${event.caseNumber} (event ${row.id}):`, changes.map(c => `${c.field}: "${c.oldValue}" → "${c.newValue}"`).join(", "));
