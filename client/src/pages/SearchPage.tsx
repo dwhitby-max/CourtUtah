@@ -82,7 +82,7 @@ export default function SearchPage() {
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [watchSuccess, setWatchSuccess] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [showExportModal, setShowExportModal] = useState(false);
@@ -96,8 +96,6 @@ export default function SearchPage() {
   const [previousRunAt, setPreviousRunAt] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; label: string } | null>(null);
   const [detectedChanges, setDetectedChanges] = useState<DetectedChange[]>([]);
-  const [watchingSearch, setWatchingSearch] = useState(false);
-  const [watchSearchActive, setWatchSearchActive] = useState(false);
   const [upgradeMessage, setUpgradeMessage] = useState("");
   const [searchWarnings, setSearchWarnings] = useState<string[]>([]);
 
@@ -125,13 +123,6 @@ export default function SearchPage() {
           (wc: SavedSearchRow) => wc.source === "auto_search" && wc.search_params
         );
         setSavedSearches(autoSearches);
-
-        // Check if current search params match any search_watch type
-        const hasSearchWatch = allWatched.some(
-          (wc: SavedSearchRow & { search_type?: string }) =>
-            wc.search_type === "search_watch" && wc.search_params
-        );
-        if (hasSearchWatch) setWatchSearchActive(true);
       }
     } catch {
       // non-fatal
@@ -146,7 +137,6 @@ export default function SearchPage() {
   }
 
   async function handleSearch(params: Record<string, string>, opts?: { isRerun?: boolean; forceRefresh?: boolean }) {
-    const isWatchedCase = params._watchedCase === "true";
     const searchParams = { ...params };
     delete searchParams._watchedCase;
 
@@ -166,10 +156,9 @@ export default function SearchPage() {
     setUpgradeMessage("");
     setLoading(true);
     setSearched(true);
-    setWatchSuccess("");
+    setSuccessMsg("");
     setExpandedId(null);
     setCurrentPage(1);
-    setWatchSearchActive(false);
     setSearchWarnings([]);
 
     try {
@@ -191,11 +180,6 @@ export default function SearchPage() {
       }
 
       const currentSynced = await cal.refreshSyncedEvents();
-
-      // If "Watched Case" was checked, create a search_watch watched case
-      if (isWatchedCase) {
-        await createSearchWatch(searchParams);
-      }
 
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Search failed";
@@ -265,7 +249,7 @@ export default function SearchPage() {
           setLastSearchParams(null);
           setLastSearchSavedId(null);
           setDetectedChanges([]);
-          setWatchSuccess("");
+          setSuccessMsg("");
         }
         // Refresh synced event state so calendar icons update
         cal.refreshSyncedEvents();
@@ -275,137 +259,10 @@ export default function SearchPage() {
     }
   }
 
-  async function createSearchWatch(params: Record<string, string>) {
-    try {
-      const parts: string[] = [];
-      if (params.attorney) parts.push(`Attorney: ${params.attorney}`);
-      if (params.defendant_name) parts.push(`Defendant: ${params.defendant_name}`);
-      if (params.case_number) parts.push(`Case: ${params.case_number}`);
-      if (params.judge_name) parts.push(`Judge: ${params.judge_name}`);
-      if (params.defendant_otn) parts.push(`OTN: ${params.defendant_otn}`);
-      if (params.citation_number) parts.push(`Citation: ${params.citation_number}`);
-      if (params.charges) parts.push(`Charges: ${params.charges}`);
-      const label = parts.join(", ") || "Custom Search";
-
-      const searchValue = params.attorney
-        || params.defendant_name
-        || params.case_number
-        || params.judge_name
-        || params.defendant_otn
-        || "search";
-
-      const res = await apiFetch("/watched-cases", {
-        method: "POST",
-        body: JSON.stringify({
-          searchType: "search_watch",
-          searchValue,
-          label: `Watch: ${label}`,
-          monitorChanges: true,
-          autoAddNew: true,
-          searchParams: params,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        if (data.upgradeRequired) {
-          setUpgradeMessage(data.error);
-        } else {
-          setError(data.error);
-        }
-        return;
-      }
-
-      setWatchSearchActive(true);
-      setWatchSuccess(`Watching "${label}" — new results up to 4 weeks out will be added to your calendar automatically.`);
-      fetchSavedSearches();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to create search watch";
-      setError(msg);
-    }
-  }
-
-  async function handleWatchSearch() {
-    if (!lastSearchParams || watchSearchActive) return;
-    setWatchingSearch(true);
-    setError("");
-
-    try {
-      // Build a human-readable label from search params
-      const parts: string[] = [];
-      if (lastSearchParams.attorney) parts.push(`Attorney: ${lastSearchParams.attorney}`);
-      if (lastSearchParams.defendant_name) parts.push(`Defendant: ${lastSearchParams.defendant_name}`);
-      if (lastSearchParams.case_number) parts.push(`Case: ${lastSearchParams.case_number}`);
-      if (lastSearchParams.judge_name) parts.push(`Judge: ${lastSearchParams.judge_name}`);
-      if (lastSearchParams.defendant_otn) parts.push(`OTN: ${lastSearchParams.defendant_otn}`);
-      if (lastSearchParams.citation_number) parts.push(`Citation: ${lastSearchParams.citation_number}`);
-      if (lastSearchParams.charges) parts.push(`Charges: ${lastSearchParams.charges}`);
-      const label = parts.join(", ") || "Custom Search";
-
-      // Determine the primary search value for display
-      const searchValue = lastSearchParams.attorney
-        || lastSearchParams.defendant_name
-        || lastSearchParams.case_number
-        || lastSearchParams.judge_name
-        || lastSearchParams.defendant_otn
-        || "search";
-
-      // Strip date fields — watched search monitors all dates (up to 4 weeks)
-      const watchParams = { ...lastSearchParams };
-      delete watchParams.date_from;
-      delete watchParams.dateTo;
-      delete watchParams.date_to;
-      delete watchParams.dateFrom;
-      delete watchParams.court_date;
-      delete watchParams.courtDate;
-
-      const res = await apiFetch("/watched-cases", {
-        method: "POST",
-        body: JSON.stringify({
-          searchType: "search_watch",
-          searchValue,
-          label: `Watch: ${label}`,
-          monitorChanges: true,
-          autoAddNew: true,
-          searchParams: watchParams,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-
-      setWatchSearchActive(true);
-      setWatchSuccess(`Watching "${label}" — new results up to 4 weeks out will be added to your calendar automatically.`);
-      fetchSavedSearches();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create search watch");
-    } finally {
-      setWatchingSearch(false);
-    }
-  }
-
-  async function handleWatch(event: CourtEvent) {
-    const searchType = event.caseNumber ? "case_number" : "defendant_name";
-    const searchValue = event.caseNumber || event.defendantName || "Unknown";
-    const label = `${event.caseNumber || "Unknown Case"} - ${event.defendantName || "Unknown"} (${event.courtName})`;
-
-    try {
-      const res = await apiFetch("/watched-cases", {
-        method: "POST",
-        body: JSON.stringify({ searchType, searchValue, label }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setWatchSuccess(`Added "${label}" to saved searches`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save search");
-    }
-  }
-
   async function onAddToCalendar(event: CourtEvent) {
     try {
       const data = await cal.handleAddToCalendar(event.id);
-      setWatchSuccess(data.message);
+      setSuccessMsg(data.message);
       setError("");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to add to calendar";
@@ -416,7 +273,7 @@ export default function SearchPage() {
   async function onRemoveFromCalendar(event: CourtEvent) {
     try {
       await cal.handleRemoveFromCalendar(event.id);
-      setWatchSuccess("Event removed from calendar");
+      setSuccessMsg("Event removed from calendar");
       setError("");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to remove from calendar";
@@ -430,17 +287,17 @@ export default function SearchPage() {
       .map(e => e.id);
 
     if (unsyncedIds.length === 0) {
-      setWatchSuccess("All events are already on your calendar.");
+      setSuccessMsg("All events are already on your calendar.");
       return;
     }
 
     setBatchAdding(true);
     setError("");
-    setWatchSuccess("");
+    setSuccessMsg("");
 
     try {
       const data = await cal.handleBatchAdd(unsyncedIds);
-      setWatchSuccess(data.message);
+      setSuccessMsg(data.message);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to add events to calendar";
       if (msg.includes("No calendar connected")) {
@@ -459,7 +316,7 @@ export default function SearchPage() {
 
     setRemovingAll(true);
     setError("");
-    setWatchSuccess("");
+    setSuccessMsg("");
     let removed = 0;
     let failed = 0;
 
@@ -474,9 +331,9 @@ export default function SearchPage() {
 
     setRemovingAll(false);
     if (failed > 0) {
-      setWatchSuccess(`Removed ${removed} event${removed !== 1 ? "s" : ""} from ${cal.calLabel}. ${failed} failed.`);
+      setSuccessMsg(`Removed ${removed} event${removed !== 1 ? "s" : ""} from ${cal.calLabel}. ${failed} failed.`);
     } else {
-      setWatchSuccess(`Removed all ${removed} event${removed !== 1 ? "s" : ""} from ${cal.calLabel}`);
+      setSuccessMsg(`Removed all ${removed} event${removed !== 1 ? "s" : ""} from ${cal.calLabel}`);
     }
   }
 
@@ -602,7 +459,7 @@ export default function SearchPage() {
       )}
 
       {error && <div className="bg-red-50 text-red-700 p-4 rounded-md text-sm">{error}</div>}
-      {watchSuccess && <div className="bg-green-50 text-green-700 p-4 rounded-md text-sm">{watchSuccess}</div>}
+      {successMsg && <div className="bg-green-50 text-green-700 p-4 rounded-md text-sm">{successMsg}</div>}
 
       {searchWarnings.length > 0 && (
         <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
@@ -764,15 +621,6 @@ export default function SearchPage() {
                     Add All to Calendar
                   </button>
                 )}
-                {watchSearchActive && (
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md">
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                    </svg>
-                    Watched Case
-                  </span>
-                )}
               </div>
             )}
           </div>
@@ -895,12 +743,6 @@ export default function SearchPage() {
                               Connect Calendar
                             </button>
                           )}
-                          <button
-                            onClick={() => handleWatch(event)}
-                            className="text-gray-500 hover:text-gray-700 text-xs block"
-                          >
-                            Save & Auto-Sync
-                          </button>
                           {hasDetails(event) && (
                             <button
                               onClick={() => toggleExpand(event.id)}

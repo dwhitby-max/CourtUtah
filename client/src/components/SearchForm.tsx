@@ -26,7 +26,6 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
   const [charges, setCharges] = useState("");
   const [judgeName, setJudgeName] = useState("");
   const [attorney, setAttorney] = useState("");
-  const [watchedCase, setWatchedCase] = useState(false);
   const [validationError, setValidationError] = useState("");
   const [coverage, setCoverage] = useState<{
     totalEvents: number;
@@ -70,9 +69,8 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
     } else if (selectedCourts.length > 0) {
       params.court_names = selectedCourts.join(",");
     }
-    // Individual attorneys: always search all dates, always watched case
-    // Watched case searches ignore dates — they search all available dates (up to 4 weeks)
-    if (!isIndividualAttorney && !watchedCase) {
+    // Individual attorneys: always search all dates
+    if (!isIndividualAttorney) {
       if (dateFrom) params.date_from = dateFrom;
       if (dateTo) params.date_to = dateTo;
     }
@@ -82,7 +80,7 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
     if (judgeName) params.judge_name = judgeName;
     if (attorney) params.attorney = attorney;
 
-    if (isIndividualAttorney || watchedCase) params._watchedCase = "true";
+    if (isIndividualAttorney) params._watchedCase = "true";
     onSearch(params);
   }
 
@@ -131,7 +129,7 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
           />
         </div>
 
-        {isIndividualAttorney && !watchedCase && (
+        {isIndividualAttorney && (
           <div className="flex items-center col-span-2">
             <span className="inline-flex items-center gap-1.5 text-sm text-amber-700 bg-amber-50 px-3 py-2 rounded-md">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -142,7 +140,7 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
           </div>
         )}
 
-        {isAgency && !watchedCase && (() => {
+        {isAgency && (() => {
           // Agency: pick a week (Mon–Fri). We build a list of upcoming Mondays.
           const maxDateLimit = new Date();
           maxDateLimit.setMonth(maxDateLimit.getMonth() + 1);
@@ -217,7 +215,7 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
           );
         })()}
 
-        {!isIndividualAttorney && !isAgency && !watchedCase && (() => {
+        {!isIndividualAttorney && !isAgency && (() => {
           // Default (legacy/unset account type): original date range picker
           const maxDateLimit = new Date();
           maxDateLimit.setMonth(maxDateLimit.getMonth() + 1);
@@ -343,40 +341,11 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
           {loading ? "Searching..." : "Search"}
         </button>
 
-        {isIndividualAttorney ? (
+        {isIndividualAttorney && (
           <span className="text-xs text-amber-700 bg-amber-50 px-3 py-1 rounded-full">
             Auto-monitored — this search refreshes daily
           </span>
-        ) : (
-          <label className="flex items-center gap-2 cursor-pointer select-none group relative">
-            <input
-              type="checkbox"
-              checked={watchedCase}
-              onChange={(e) => {
-                if (!isPro && e.target.checked) {
-                  setValidationError("Watched Case is a Pro feature. Upgrade to continuously monitor searches and get notified of new hearings.");
-                  return;
-                }
-                setWatchedCase(e.target.checked);
-              }}
-              className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-            />
-            <span className="text-sm text-gray-700 font-medium">Watched Case</span>
-            <span className="relative">
-              <svg className="w-4 h-4 text-gray-400 hover:text-gray-600 cursor-help" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 px-3 py-2 text-xs text-white bg-gray-800 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
-                Continuously monitors this search daily for up to 4 weeks out. You'll be notified by email of new hearings, schedule changes, and cancellations. Pro plan allows up to 5 watched cases.
-                {!isPro && <span className="block mt-1 text-amber-300 font-medium">Pro plan only</span>}
-              </span>
-            </span>
-            {watchedCase && (
-              <span className="text-xs text-indigo-600">(searches all dates up to 4 weeks, refreshes daily)</span>
-            )}
-          </label>
         )}
-
       </div>
     </form>
   );

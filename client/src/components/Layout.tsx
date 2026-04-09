@@ -38,7 +38,6 @@ export default function Layout() {
               <div className="hidden md:flex ml-10 items-baseline space-x-2">
                 <Link to="/" className={navClass("/dashboard")}>Dashboard</Link>
                 <Link to="/search" className={navClass("/search")}>Search</Link>
-                <Link to="/watched-cases" className={navClass("/watched-cases")}>Saved Searches</Link>
                 <Link to="/calendar-settings" className={navClass("/calendar-settings")}>Calendar</Link>
                 {user?.isAdmin && <Link to="/admin" className={navClass("/admin")}>Admin</Link>}
               </div>
@@ -91,7 +90,6 @@ export default function Layout() {
           <div className="md:hidden px-2 pt-2 pb-3 space-y-1">
             <Link to="/dashboard" className={mobileNavClass("/dashboard")} onClick={() => setMobileMenuOpen(false)}>Dashboard</Link>
             <Link to="/search" className={mobileNavClass("/search")} onClick={() => setMobileMenuOpen(false)}>Search</Link>
-            <Link to="/watched-cases" className={mobileNavClass("/watched-cases")} onClick={() => setMobileMenuOpen(false)}>Saved Searches</Link>
             <Link to="/calendar-settings" className={mobileNavClass("/calendar-settings")} onClick={() => setMobileMenuOpen(false)}>Calendar</Link>
             {user?.isAdmin && <Link to="/admin" className={mobileNavClass("/admin")} onClick={() => setMobileMenuOpen(false)}>Admin</Link>}
             <div className="border-t border-slate-600 pt-2 mt-2">

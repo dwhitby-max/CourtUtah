@@ -7,7 +7,7 @@ import LoginPage from "@/pages/LoginPage";
 import LoginCallbackPage from "@/pages/LoginCallbackPage";
 import DashboardPage from "@/pages/DashboardPage";
 import SearchPage from "@/pages/SearchPage";
-import WatchedCasesPage from "@/pages/WatchedCasesPage";
+
 import CalendarSettingsPage from "@/pages/CalendarSettingsPage";
 import NotificationsPage from "@/pages/NotificationsPage";
 import ProfilePage from "@/pages/ProfilePage";
@@ -46,7 +46,7 @@ export default function App() {
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/search" element={<SearchPage />} />
             <Route path="/search-results" element={<SearchResultsPage />} />
-            <Route path="/watched-cases" element={<WatchedCasesPage />} />
+
             <Route path="/calendar-settings" element={<CalendarSettingsPage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/notification-settings" element={<NotificationSettingsPage />} />

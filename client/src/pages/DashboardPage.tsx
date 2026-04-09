@@ -118,7 +118,7 @@ export default function DashboardPage() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Link to="/watched-cases"
+        <Link to="/search"
           className="bg-white shadow rounded-lg p-6 hover:shadow-md transition-shadow">
           <div className="text-3xl font-bold text-amber-700">{stats.watchedCases}</div>
           <div className="text-gray-600 mt-1">Saved Searches</div>
@@ -150,7 +150,7 @@ export default function DashboardPage() {
           </div>
           <div className="flex items-start space-x-3">
             <span className="font-bold text-gray-400">3.</span>
-            <span>Enable auto-sync on your <Link to="/watched-cases" className="text-amber-700 hover:underline">saved searches</Link> to keep your calendar updated</span>
+            <span>Enable auto-sync on your <Link to="/search" className="text-amber-700 hover:underline">saved searches</Link> to keep your calendar updated</span>
           </div>
           <div className="flex items-start space-x-3">
             <span className="font-bold text-gray-400">4.</span>
