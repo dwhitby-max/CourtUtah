@@ -404,13 +404,24 @@ export async function liveSearchUtcourts(params: LiveSearchParams): Promise<stri
     const html = buffer.toString("utf-8");
     allHtmlParts.push(html);
 
-    // Find the highest start=N value in pagination links that's greater than currentStart
-    const startMatches = [...html.matchAll(/start=(\d+)/g)];
-    const nextStarts = startMatches
+    // Find pagination links — look for start=N in href attributes and
+    // also as standalone query params (covers variant pagination markup)
+    const hrefStartMatches = [...html.matchAll(/href="[^"]*[?&]start=(\d+)[^"]*"/gi)];
+    let nextStarts = hrefStartMatches
       .map((m) => parseInt(m[1], 10))
       .filter((n) => n > currentStart);
+
+    // Fallback: plain start=N anywhere (original approach)
     if (nextStarts.length === 0) {
-      break; // No more pages
+      const plainMatches = [...html.matchAll(/start=(\d+)/g)];
+      nextStarts = plainMatches
+        .map((m) => parseInt(m[1], 10))
+        .filter((n) => n > currentStart);
+    }
+
+    if (nextStarts.length === 0) {
+      if (page > 0) console.log(`  📄 No more pagination links after page ${page + 1}`);
+      break;
     }
     currentStart = Math.min(...nextStarts);
   }

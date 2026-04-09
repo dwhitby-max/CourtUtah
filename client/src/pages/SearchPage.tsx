@@ -99,6 +99,7 @@ export default function SearchPage() {
   const [watchingSearch, setWatchingSearch] = useState(false);
   const [watchSearchActive, setWatchSearchActive] = useState(false);
   const [upgradeMessage, setUpgradeMessage] = useState("");
+  const [searchWarnings, setSearchWarnings] = useState<string[]>([]);
 
   const { user } = useAuth();
   const isIndividualAttorney = user?.accountType === "individual_attorney";
@@ -139,7 +140,12 @@ export default function SearchPage() {
     }
   }
 
-  async function handleSearch(params: Record<string, string>, opts?: { isRerun?: boolean }) {
+  async function handleForceRefresh() {
+    if (!lastSearchParams) return;
+    await handleSearch(lastSearchParams, { isRerun: true, forceRefresh: true });
+  }
+
+  async function handleSearch(params: Record<string, string>, opts?: { isRerun?: boolean; forceRefresh?: boolean }) {
     const isWatchedCase = params._watchedCase === "true";
     const searchParams = { ...params };
     delete searchParams._watchedCase;
@@ -164,15 +170,17 @@ export default function SearchPage() {
     setExpandedId(null);
     setCurrentPage(1);
     setWatchSearchActive(false);
+    setSearchWarnings([]);
 
     try {
-      const data = await searchCourtEvents(searchParams);
+      const data = await searchCourtEvents(searchParams, { forceRefresh: opts?.forceRefresh });
       setResults(data.results);
       setLastSearchParams(searchParams);
       setLastSearchSavedId(data.savedSearchId ?? null);
       setPreviousRunAt(data.previousRunAt ?? null);
       setDetectedChanges(data.detectedChanges ?? []);
       setCachedToday(data.cachedToday ?? false);
+      setSearchWarnings(data.searchWarnings ?? []);
       fetchSavedSearches();
 
       // Show upgrade prompt if saved search limit was reached
@@ -596,6 +604,29 @@ export default function SearchPage() {
       {error && <div className="bg-red-50 text-red-700 p-4 rounded-md text-sm">{error}</div>}
       {watchSuccess && <div className="bg-green-50 text-green-700 p-4 rounded-md text-sm">{watchSuccess}</div>}
 
+      {searchWarnings.length > 0 && (
+        <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+          <div className="flex items-start gap-2">
+            <svg className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-orange-800">Some results may be incomplete</p>
+              {searchWarnings.map((w, i) => (
+                <p key={i} className="text-sm text-orange-700 mt-1">{w}</p>
+              ))}
+              <button
+                onClick={handleForceRefresh}
+                disabled={loading}
+                className="mt-2 text-sm font-medium text-orange-700 hover:text-orange-900 underline disabled:opacity-50"
+              >
+                Retry search
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {upgradeMessage && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
           <svg className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -662,8 +693,15 @@ export default function SearchPage() {
                 {results.length} Result{results.length !== 1 ? "s" : ""} Found
               </h2>
               {cachedToday && (
-                <span className="text-sm text-amber-600 bg-amber-50 px-3 py-1 rounded-full">
-                  Search already run today. New results will post tomorrow.
+                <span className="inline-flex items-center gap-2 text-sm text-amber-600 bg-amber-50 px-3 py-1 rounded-full">
+                  Showing cached results from earlier today.
+                  <button
+                    onClick={handleForceRefresh}
+                    disabled={loading}
+                    className="font-medium underline hover:text-amber-800 disabled:opacity-50"
+                  >
+                    Refresh
+                  </button>
                 </span>
               )}
               <div className="flex items-center gap-2">

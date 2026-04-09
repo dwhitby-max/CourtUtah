@@ -162,10 +162,10 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     delete searchParams.courtDate;
   }
 
-  // If this exact search was already run today, return cached DB results.
-  // Utah courts only update once daily, so re-scraping is unnecessary.
+  const forceRefresh = qp("force_refresh") === "true";
+
   const existing = await findExistingAutoSearch(userId, pKey);
-  if (existing?.last_refreshed_at) {
+  if (!forceRefresh && existing?.last_refreshed_at) {
     const lastRun = new Date(existing.last_refreshed_at);
     const now = new Date();
     const sameDay =
@@ -174,29 +174,30 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       lastRun.getUTCDate() === now.getUTCDate();
 
     if (sameDay) {
-      console.log(`📋 Search already run today (${lastRun.toISOString()}) — returning cached results`);
-      // For cached attorney searches, skip the attorney filter in the SQL
-      // query — DB records were found via attorney search on utcourts.gov
-      // originally but may not have attorney fields populated (details.php
-      // enrichment only runs during live searches). The local filter in
-      // applyAllFilters still applies the attorney filter for enriched rows.
       const cacheDbParams = { ...searchParams };
       if (cacheDbParams.attorney) delete cacheDbParams.attorney;
       const dbResults = await searchCourtEvents(cacheDbParams);
       const filtered = applyAllFilters(dbResults, searchParams);
-      markNewEvents(filtered, existing.last_refreshed_at);
-      res.json({
-        results: filtered,
-        resultsCount: filtered.length,
-        searchParams,
-        source: "cached",
-        savedSearchId: existing.id,
-        previousRunAt: lastRun.toISOString(),
-        cachedToday: true,
-        userPlan,
-        processedAt: new Date().toISOString(),
-      });
-      return;
+
+      const LOW_RESULT_THRESHOLD = 3;
+      if (accountType === "agency" && filtered.length < LOW_RESULT_THRESHOLD) {
+        console.log(`📋 Cached results suspiciously low (${filtered.length}) for agency search — forcing refresh`);
+      } else {
+        console.log(`📋 Search already run today (${lastRun.toISOString()}) — returning ${filtered.length} cached results`);
+        markNewEvents(filtered, existing.last_refreshed_at);
+        res.json({
+          results: filtered,
+          resultsCount: filtered.length,
+          searchParams,
+          source: "cached",
+          savedSearchId: existing.id,
+          previousRunAt: lastRun.toISOString(),
+          cachedToday: true,
+          userPlan,
+          processedAt: new Date().toISOString(),
+        });
+        return;
+      }
     }
   }
 
@@ -299,27 +300,45 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     const parseContext: SearchContext = {
       searchedAttorney: searchParams.attorney || undefined,
     };
+    const searchWarnings: string[] = [];
 
     if (accountType === "agency") {
-      // Agency: search one day at a time
       const dates = expandDates(searchParams);
       const locationCodes = useBroadSearch ? ["all"] : courtCodes;
-      console.log(`🌐 Agency day-by-day search: ${dates.length} date(s) x ${locationCodes.length} location(s) = ${dates.length * locationCodes.length} request(s)`);
+      const totalRequests = dates.length * locationCodes.length;
+      console.log(`🌐 Agency day-by-day search: ${dates.length} date(s) x ${locationCodes.length} location(s) = ${totalRequests} request(s)`);
+
+      let successCount = 0;
+      let failCount = 0;
+      const failedRequests: string[] = [];
 
       for (const date of dates) {
         const dayResults = await Promise.all(
           locationCodes.map((loc) =>
             liveSearchUtcourts({ ...liveBase, locationCode: loc, date })
-              .then((html) => ({ html, loc }))
+              .then((html) => ({ html, loc, error: null as string | null }))
               .catch((err) => {
-                console.warn(`⚠️ Search failed for loc=${loc} date=${date}:`, err instanceof Error ? err.message : err);
-                return { html: "", loc };
+                const errMsg = err instanceof Error ? err.message : String(err);
+                console.warn(`⚠️ Search failed for loc=${loc} date=${date}:`, errMsg);
+                return { html: "", loc, error: errMsg };
               })
           )
         );
-        for (const { html, loc } of dayResults) {
-          if (html.length === 0) continue;
+        for (const { html, loc, error } of dayResults) {
+          const courtLabel = courtByLoc.get(loc)?.name || loc;
+          if (error) {
+            failCount++;
+            failedRequests.push(`${courtLabel} on ${date}`);
+            console.log(`  ❌ FAIL loc=${loc} date=${date}: ${error}`);
+            continue;
+          }
+          successCount++;
+          if (html.length === 0) {
+            console.log(`  ✅ OK   loc=${loc} date=${date}: empty response (0 chars, 0 events)`);
+            continue;
+          }
           const parsed = parseHtmlCalendarResults(html, parseContext);
+          console.log(`  ✅ OK   loc=${loc} date=${date}: ${html.length} chars HTML, ${parsed.length} events parsed`);
           if (!useBroadSearch) {
             const courtInfo = courtByLoc.get(loc);
             for (const event of parsed) {
@@ -330,44 +349,71 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
           allParsed.push(...parsed);
         }
       }
-      console.log(`  📋 Parsed ${allParsed.length} events total (agency day-by-day)`);
+
+      console.log(`  📋 Agency search complete: ${successCount} succeeded, ${failCount} failed, ${allParsed.length} events total`);
+
+      if (failCount > 0) {
+        const summary = failedRequests.length <= 5
+          ? failedRequests.join("; ")
+          : `${failedRequests.slice(0, 5).join("; ")} and ${failedRequests.length - 5} more`;
+        searchWarnings.push(`${failCount} of ${totalRequests} court/date requests failed — results may be incomplete (${summary}).`);
+      }
     } else if (useBroadSearch) {
-      // Single request with loc=all — searches ALL courts at once
       console.log(`🌐 Broad search: loc=all&d=all (1 request for all ${courtCodes.length} courts)`);
       try {
         const html = await liveSearchUtcourts({ ...liveBase, date: "all", locationCode: "all" });
         if (html.length > 0) {
           const parsed = parseHtmlCalendarResults(html, parseContext);
           allParsed.push(...parsed);
-          console.log(`  📋 Parsed ${parsed.length} events from ${html.length} chars HTML`);
+          console.log(`  ✅ OK   loc=all d=all: ${html.length} chars HTML, ${parsed.length} events parsed`);
+        } else {
+          console.log(`  ✅ OK   loc=all d=all: empty response (0 chars, 0 events)`);
         }
       } catch (err) {
-        console.warn(`⚠️ Broad search failed:`, err instanceof Error ? err.message : err);
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.warn(`  ❌ FAIL loc=all d=all: ${errMsg}`);
+        searchWarnings.push(`Broad court search failed — results may be incomplete. Please try again.`);
       }
     } else {
-      // Targeted search: 1-3 courts, each with d=all (1 request per court)
       console.log(`🌐 Targeted search: ${courtCodes.length} court(s) with d=all = ${courtCodes.length} request(s)`);
+      let targetedFails = 0;
+      const targetedFailNames: string[] = [];
       const results = await Promise.all(
         courtCodes.map((loc) =>
           liveSearchUtcourts({ ...liveBase, locationCode: loc, date: "all" })
-            .then((html) => ({ html, loc }))
+            .then((html) => ({ html, loc, error: null as string | null }))
             .catch((err) => {
-              console.warn(`⚠️ Search failed for loc=${loc}:`, err instanceof Error ? err.message : err);
-              return { html: "", loc };
+              const errMsg = err instanceof Error ? err.message : String(err);
+              console.warn(`⚠️ Search failed for loc=${loc}:`, errMsg);
+              return { html: "", loc, error: errMsg };
             })
         )
       );
-      for (const { html, loc } of results) {
-        if (html.length === 0) continue;
+      for (const { html, loc, error } of results) {
+        const courtLabel = courtByLoc.get(loc)?.name || loc;
+        if (error) {
+          targetedFails++;
+          targetedFailNames.push(courtLabel);
+          console.log(`  ❌ FAIL loc=${loc}: ${error}`);
+          continue;
+        }
+        if (html.length === 0) {
+          console.log(`  ✅ OK   loc=${loc}: empty response (0 chars, 0 events)`);
+          continue;
+        }
         const courtInfo = courtByLoc.get(loc);
         const parsed = parseHtmlCalendarResults(html, parseContext);
+        console.log(`  ✅ OK   loc=${loc}: ${html.length} chars HTML, ${parsed.length} events parsed`);
         for (const event of parsed) {
           event.courtName = courtInfo?.name ?? null;
           event.courtLocationCode = loc;
         }
         allParsed.push(...parsed);
       }
-      console.log(`  📋 Parsed ${allParsed.length} events total`);
+      console.log(`  📋 Targeted search complete: ${courtCodes.length - targetedFails} succeeded, ${targetedFails} failed, ${allParsed.length} events total`);
+      if (targetedFails > 0) {
+        searchWarnings.push(`${targetedFails} of ${courtCodes.length} court requests failed — results may be incomplete (${targetedFailNames.join("; ")}).`);
+      }
     }
 
     const dbResults = await dbResultsPromise;
@@ -449,9 +495,14 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     // to defenseAttorney regardless of their actual role.
     const isAttorneySearch = !!searchParams.attorney;
 
-    const liveCaseDateKeys = new Set<string>();
+    function normalizeTime(t: string | null | undefined): string {
+      if (!t) return "";
+      return t.replace(/\s+/g, " ").trim().toUpperCase();
+    }
+
+    const liveCaseDateTimeKeys = new Set<string>();
     for (const event of liveEvents) {
-      liveCaseDateKeys.add(`${event.caseNumber}|${event.eventDate}`);
+      liveCaseDateTimeKeys.add(`${event.caseNumber}|${event.eventDate}|${normalizeTime(event.eventTime)}`);
       const dbMatches = dbByCase.get(`${event.caseNumber}|${event.eventDate}`);
       if (dbMatches) {
         for (const dbMatch of dbMatches) {
@@ -476,12 +527,13 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     const filteredLive = applyAllFilters(liveEvents, liveFilterParams);
 
     // Add DB-only results (not in live) and merge.
-    // When live results exist for a case+date, exclude ALL DB entries for that
-    // case+date — even if times differ. Live results are authoritative for
-    // scheduling (time, date, courtroom). Without this, a court rescheduling a
-    // hearing (e.g. 11:00→9:00) would show both the stale and current times.
+    // Only exclude DB records when the live scrape has a matching case+date+time.
+    // This preserves DB records for hearings at different times that the live
+    // scrape may not have returned (e.g., partial scrape results).
+    // If a DB record matches case+date but NOT time, it's kept — it may represent
+    // a different hearing that the live scrape missed.
     const extraDb = dbResults.filter(
-      (r) => !liveCaseDateKeys.has(`${r.caseNumber}|${r.eventDate}`)
+      (r) => !liveCaseDateTimeKeys.has(`${r.caseNumber}|${r.eventDate}|${normalizeTime(r.eventTime)}`)
     );
     const merged = [...filteredLive, ...extraDb].slice(0, 2000);
 
@@ -500,6 +552,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       userPlan,
       processedAt: new Date().toISOString(),
       detectedChanges: detectedChanges.length > 0 && previousRunAt ? detectedChanges : undefined,
+      searchWarnings: searchWarnings.length > 0 ? searchWarnings : undefined,
     });
   } catch (err) {
     console.error("❌ Search failed:", err);

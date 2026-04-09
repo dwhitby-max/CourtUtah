@@ -130,14 +130,24 @@ export function parseHtmlCalendarResults(html: string, context?: SearchContext):
 
   // Strategy: Find each event box (div with class "casehover"), then look
   // backward for the time/date header that precedes it.
-
-  // Split into event blocks. Each event box has class "casehover".
-  // We find each casehover div and extract the preceding time/date header.
   const boxPattern = /casehover/gi;
   const boxPositions: number[] = [];
   let bm;
   while ((bm = boxPattern.exec(html)) !== null) {
     boxPositions.push(bm.index);
+  }
+
+  // Fallback: if no casehover divs found, try finding event blocks via
+  // div.case containing "Case #" — some court types may use variant markup
+  if (boxPositions.length === 0) {
+    const caseBlockPattern = /class="case"[^>]*>[\s\S]*?Case\s*#/gi;
+    let cbm;
+    while ((cbm = caseBlockPattern.exec(html)) !== null) {
+      const blockStart = html.lastIndexOf("<div", cbm.index);
+      if (blockStart >= 0 && !boxPositions.includes(blockStart)) {
+        boxPositions.push(blockStart);
+      }
+    }
   }
 
   if (boxPositions.length === 0) return events;
@@ -219,7 +229,7 @@ function parseEventBlock(
   // 6. Extract defendant name from the col-sm-4 div (parties section)
   let defendantName: string | null = null;
   const partiesDivMatch = boxHtml.match(
-    /col-(?:xs-12\s+)?col-sm-4[^"]*"[^>]*>([\s\S]*?)(?=<div[^>]*col-(?:xs-12\s+)?col-sm-8)/i
+    /class="[^"]*col-sm-4[^"]*"[^>]*>([\s\S]*?)(?=<div[^>]*col-sm-8)/i
   );
   if (partiesDivMatch) {
     const partiesHtml = partiesDivMatch[1];
@@ -251,16 +261,14 @@ function parseEventBlock(
   let courtRoom: string | null = null;
   let hearingType: string | null = null;
 
-  // Find the col-sm-8 section
   const sm8Match = boxHtml.match(
-    /col-(?:xs-12\s+)?col-sm-8[^"]*"[^>]*>([\s\S]*?)$/i
+    /class="[^"]*col-sm-8[^"]*"[^>]*>([\s\S]*?)$/i
   );
   if (sm8Match) {
     const sm8Html = sm8Match[1];
 
-    // Find the col-sm-6 div inside it — contains judge, courtroom, hearing type
     const sm6Match = sm8Html.match(
-      /col-(?:xs-12\s+)?col-sm-6[^"]*"[^>]*>([\s\S]*?)(?:<\/div>)/i
+      /class="[^"]*col-sm-6[^"]*"[^>]*>([\s\S]*?)(?:<\/div>)/i
     );
     if (sm6Match) {
       const sm6Html = sm6Match[1];

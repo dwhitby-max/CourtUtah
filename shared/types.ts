@@ -148,6 +148,8 @@ export interface SearchResponse {
   userPlan?: string;
   /** True if results were served from today's cache (no live scrape) */
   cachedToday?: boolean;
+  /** Warnings about partial failures during search (e.g., failed day/court requests) */
+  searchWarnings?: string[];
 }
 
 // --- Watched Cases ---
