@@ -162,7 +162,11 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
     if (levels.length === 0) return "";
     const names = levels.map((l) => {
       const label = EXPORT_FIELDS.find((f) => f.key === l.key)?.label || l.key;
-      return `${label} ${l.dir === "desc" ? "Z-A" : "A-Z"}`;
+      let dirLabel: string;
+      if (l.key === "date") dirLabel = l.dir === "desc" ? "Newest" : "Oldest";
+      else if (l.key === "time") dirLabel = l.dir === "desc" ? "Latest" : "Earliest";
+      else dirLabel = l.dir === "desc" ? "Z-A" : "A-Z";
+      return `${label} ${dirLabel}`;
     });
     return ` · sort: ${names.join(" → ")}`;
   }
@@ -345,8 +349,22 @@ export default function ExportTemplateModal({ onExport, onClose }: ExportTemplat
                   onChange={(e) => updateSortLevel(i, { dir: e.target.value as "asc" | "desc" })}
                   className="px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-blue-500 focus:border-blue-500"
                 >
-                  <option value="asc">A-Z</option>
-                  <option value="desc">Z-A</option>
+                  {level.key === "date" ? (
+                    <>
+                      <option value="asc">Oldest First</option>
+                      <option value="desc">Newest First</option>
+                    </>
+                  ) : level.key === "time" ? (
+                    <>
+                      <option value="asc">Earliest First</option>
+                      <option value="desc">Latest First</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="asc">A-Z</option>
+                      <option value="desc">Z-A</option>
+                    </>
+                  )}
                 </select>
                 <div className="flex gap-0.5">
                   <button

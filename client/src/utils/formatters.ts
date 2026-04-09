@@ -155,6 +155,30 @@ function migrateSortLevels(tmpl: ExportTemplate): SortLevel[] {
   return [];
 }
 
+/** Parse a time string like "9:00 AM" or "14:30" to minutes since midnight for chronological sorting. */
+function parseTimeMinutes(time: string): number {
+  const s = (time || "").trim().toUpperCase();
+  if (!s) return 9999; // empty times sort to end
+
+  // Try 12-hour format: "9:00 AM", "12:30 PM"
+  const match12 = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
+  if (match12) {
+    let h = parseInt(match12[1], 10);
+    const m = parseInt(match12[2], 10);
+    if (match12[3] === "AM" && h === 12) h = 0;
+    if (match12[3] === "PM" && h !== 12) h += 12;
+    return h * 60 + m;
+  }
+
+  // Try 24-hour format: "14:30"
+  const match24 = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (match24) {
+    return parseInt(match24[1], 10) * 60 + parseInt(match24[2], 10);
+  }
+
+  return 9999; // unparseable times sort to end
+}
+
 export function exportCourtEventsCsv(
   results: CourtEventRow[],
   template?: ExportTemplate,
@@ -179,9 +203,20 @@ export function exportCourtEventsCsv(
     if (resolvedLevels.length > 0) {
       sorted.sort((a, b) => {
         for (const { field, dir } of resolvedLevels) {
-          const va = field.accessor(a).toLowerCase();
-          const vb = field.accessor(b).toLowerCase();
-          const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+          let cmp: number;
+          if (field.key === "date") {
+            // Compare dates chronologically (YYYY-MM-DD sorts correctly as strings)
+            const va = field.accessor(a) || "";
+            const vb = field.accessor(b) || "";
+            cmp = va < vb ? -1 : va > vb ? 1 : 0;
+          } else if (field.key === "time") {
+            // Compare times chronologically by parsing to minutes since midnight
+            cmp = parseTimeMinutes(field.accessor(a)) - parseTimeMinutes(field.accessor(b));
+          } else {
+            const va = field.accessor(a).toLowerCase();
+            const vb = field.accessor(b).toLowerCase();
+            cmp = va < vb ? -1 : va > vb ? 1 : 0;
+          }
           if (cmp !== 0) return dir === "desc" ? -cmp : cmp;
         }
         return 0;
