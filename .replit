@@ -49,3 +49,7 @@ outputType = "webview"
 task = "shell.exec"
 args = "bash start.sh"
 waitForPort = 5000
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 180000
