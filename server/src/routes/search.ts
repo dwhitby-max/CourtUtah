@@ -446,6 +446,23 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       );
     }
 
+    // Apply searchResultAttorney as fallback for events that still have no attorney
+    // after enrichment. This is the attorney name from the search.php results page
+    // (no role label). For agency accounts, the searched attorney is always the
+    // prosecutor — we only need details.php for the opposing (defense) counsel.
+    for (const event of allParsed) {
+      if (event.searchResultAttorney && !event.prosecutingAttorney) {
+        if (accountType === "agency") {
+          // Agency: searched attorney is always the prosecutor
+          event.prosecutingAttorney = event.searchResultAttorney;
+        } else if (!event.defenseAttorney) {
+          // Non-agency: we don't know the role, default to prosecuting.
+          // DB backfill will correct from prior details.php enrichments.
+          event.prosecutingAttorney = event.searchResultAttorney;
+        }
+      }
+    }
+
     // Persist live results and detect changes (awaited so we can return changes)
     let detectedChanges: DetectedChange[] = [];
     try {

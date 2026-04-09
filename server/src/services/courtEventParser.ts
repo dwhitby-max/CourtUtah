@@ -42,6 +42,9 @@ export interface ParsedCourtEvent {
   courtLocationCode?: string | null;
   /** URL to details.php page for this event (extracted from search results). */
   detailsUrl?: string | null;
+  /** Attorney name extracted from search.php results (no role label). Used as fallback
+   *  when details.php enrichment fails. Applied after enrichment step. */
+  searchResultAttorney?: string | null;
 }
 
 /**
@@ -234,14 +237,25 @@ function parseEventBlock(
   }
 
   // 5. Extract attorney name from search results.
-  //    search.php only shows ONE attorney with the generic label "Attorney: &nbsp;"
+  //    search.php shows ONE attorney with the generic label "Attorney: &nbsp;"
   //    followed by the name (with HILI spans highlighting search matches).
-  //    No role label ("Prosecuting" / "Defense") is provided, and NO opposing
-  //    counsel is shown. We cannot determine the attorney's role from search.php
-  //    alone — that data comes from reports.php enrichment stored in the DB.
-  //    We leave both prosecutingAttorney and defenseAttorney null here.
+  //    No role label is provided — details.php has PLA ATTY / DEF ATTY labels.
+  //    We extract the name here so it's available as a fallback if details.php
+  //    enrichment fails. The name is stored in searchResultAttorney and applied
+  //    AFTER enrichment runs (so enrichment still attempts to get both attorneys
+  //    with correct role labels).
   let prosecutingAttorney: string | null = null;
   let defenseAttorney: string | null = null;
+  let searchResultAttorney: string | null = null;
+
+  // Look for "Attorney: &nbsp; NAME" in the boxHtml (present in attorney searches)
+  const attorneyLineMatch = boxHtml.match(/Attorney:\s*(?:&nbsp;)?\s*([\s\S]*?)(?:<\/div>)/i);
+  if (attorneyLineMatch) {
+    const rawName = stripTags(attorneyLineMatch[1]).replace(/\s+/g, " ").trim();
+    if (rawName.length >= 2) {
+      searchResultAttorney = rawName;
+    }
+  }
 
   // 6. Extract defendant name from the col-sm-4 div (parties section)
   let defendantName: string | null = null;
@@ -400,6 +414,7 @@ function parseEventBlock(
     hearingLocation,
     isVirtual,
     detailsUrl,
+    searchResultAttorney,
   };
 
   return {
