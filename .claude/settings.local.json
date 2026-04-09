@@ -52,7 +52,8 @@
       "Read(//home/runner/workspace/**)",
       "Bash(printenv ENCRYPTION_KEY)",
       "Bash(printenv)",
-      "Bash(kill:*)"
+      "Bash(kill:*)",
+      "Read(//tmp/**)"
     ]
   }
 }
