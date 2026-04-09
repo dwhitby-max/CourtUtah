@@ -421,8 +421,48 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     // Diagnostic logging
     console.log(`  📋 Live: ${allParsed.length} parsed events, DB: ${dbResults.length} events`);
 
-    // Enrich events with attorney data from details.php pages
-    // (search.php only shows one attorney with no role label)
+    const isAttorneySearch = !!searchParams.attorney;
+
+    // Pre-fill attorneys from known sources BEFORE details.php enrichment so
+    // the enrichment step can skip events that already have attorney data.
+    // 1) searchResultAttorney: the attorney from search.php (known role for agency)
+    for (const event of allParsed) {
+      if (event.searchResultAttorney && !event.prosecutingAttorney) {
+        if (accountType === "agency") {
+          event.prosecutingAttorney = event.searchResultAttorney;
+        } else if (!event.defenseAttorney) {
+          event.prosecutingAttorney = event.searchResultAttorney;
+        }
+      }
+    }
+    // 2) DB attorney backfill for agency attorney searches (defense attorney only,
+    //    rejecting corrupt old-parser data where defense = searched attorney)
+    if (isAttorneySearch && accountType === "agency" && dbResults.length > 0) {
+      const searchedName = (searchParams.attorney || "").replace(/\s+/g, " ").trim().toUpperCase();
+      const dbByKey = new Map<string, typeof dbResults>();
+      for (const r of dbResults) {
+        const key = `${r.caseNumber}|${r.eventDate}`;
+        const arr = dbByKey.get(key) || [];
+        arr.push(r);
+        dbByKey.set(key, arr);
+      }
+      for (const event of allParsed) {
+        if (event.defenseAttorney) continue;
+        const matches = dbByKey.get(`${event.caseNumber}|${event.eventDate}`);
+        if (!matches) continue;
+        for (const m of matches) {
+          if (
+            m.defenseAttorney &&
+            m.defenseAttorney.replace(/\s+/g, " ").trim().toUpperCase() !== searchedName
+          ) {
+            event.defenseAttorney = m.defenseAttorney;
+            break;
+          }
+        }
+      }
+    }
+
+    // Enrich remaining events (those still missing both attorneys) from details.php
     let enrichmentFailed = 0;
     let enrichmentTotal = 0;
     try {
@@ -437,30 +477,6 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       }
     } catch (err) {
       console.warn("⚠️ Details enrichment failed:", err instanceof Error ? err.message : err);
-    }
-
-    // Surface enrichment failures as a user-facing warning
-    if (enrichmentFailed > 0) {
-      searchWarnings.push(
-        `Attorney data incomplete for ${enrichmentFailed} of ${enrichmentTotal} events due to court website timeouts or time limits. Previously cached attorney data was used where available.`
-      );
-    }
-
-    // Apply searchResultAttorney as fallback for events that still have no attorney
-    // after enrichment. This is the attorney name from the search.php results page
-    // (no role label). For agency accounts, the searched attorney is always the
-    // prosecutor — we only need details.php for the opposing (defense) counsel.
-    for (const event of allParsed) {
-      if (event.searchResultAttorney && !event.prosecutingAttorney) {
-        if (accountType === "agency") {
-          // Agency: searched attorney is always the prosecutor
-          event.prosecutingAttorney = event.searchResultAttorney;
-        } else if (!event.defenseAttorney) {
-          // Non-agency: we don't know the role, default to prosecuting.
-          // DB backfill will correct from prior details.php enrichments.
-          event.prosecutingAttorney = event.searchResultAttorney;
-        }
-      }
     }
 
     // Persist live results and detect changes (awaited so we can return changes)
@@ -521,11 +537,6 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       arr.push(r);
       dbByCase.set(key, arr);
     }
-    // Skip attorney backfill from DB when doing attorney searches — the DB may
-    // have corrupt data from the old parser that assigned the searched attorney
-    // to defenseAttorney regardless of their actual role.
-    const isAttorneySearch = !!searchParams.attorney;
-
     function normalizeTime(t: string | null | undefined): string {
       if (!t) return "";
       return t.replace(/\s+/g, " ").trim().toUpperCase();
@@ -559,6 +570,19 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
           if (!event.citationNumber && dbMatch.citationNumber) event.citationNumber = dbMatch.citationNumber;
           if ((!event.charges || event.charges.length === 0) && dbMatch.charges && dbMatch.charges.length > 0) event.charges = dbMatch.charges;
         }
+      }
+    }
+
+    // Surface enrichment warning only for events still truly missing attorney
+    // data after all fallbacks (searchResultAttorney, DB backfill).
+    if (enrichmentFailed > 0) {
+      const stillMissing = liveEvents.filter(
+        (e) => !e.prosecutingAttorney && !e.defenseAttorney
+      ).length;
+      if (stillMissing > 0) {
+        searchWarnings.push(
+          `Attorney data incomplete for ${stillMissing} of ${liveEvents.length} events due to court website timeouts. Previously cached attorney data was used where available.`
+        );
       }
     }
 
