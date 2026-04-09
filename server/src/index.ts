@@ -179,9 +179,9 @@ server.listen(config.port, config.host, () => {
         console.warn("⚠️  Orphan calendar cleanup failed:", err)
       );
 
-      // ONE-TIME: Re-trigger all saved searches for dwhitby@gmail.com after
-      // parser/enrichment fixes deployed 2026-04-09. Safe to remove after first run.
-      triggerSearchesForUser("dwhitby@gmail.com").catch(err =>
+      // ONE-TIME: Re-trigger all saved searches after parser/enrichment fixes.
+      // Safe to remove after first run.
+      triggerSearchesForUser("yvetulia@gmail.com").catch(err =>
         console.warn("⚠️  One-time search trigger failed:", err)
       );
     } else {
