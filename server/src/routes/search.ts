@@ -442,7 +442,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     // Surface enrichment failures as a user-facing warning
     if (enrichmentFailed > 0) {
       searchWarnings.push(
-        `Attorney data incomplete for ${enrichmentFailed} of ${enrichmentTotal} events due to court website timeouts. Previously cached data was used where available.`
+        `Attorney data incomplete for ${enrichmentFailed} of ${enrichmentTotal} events due to court website timeouts or time limits. Previously cached attorney data was used where available.`
       );
     }
 

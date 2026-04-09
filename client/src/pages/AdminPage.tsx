@@ -35,6 +35,19 @@ interface Payment {
   periodEnd: string | null;
 }
 
+interface SavedSearch {
+  id: number;
+  search_type: string;
+  search_value: string;
+  label: string;
+  search_params: Record<string, string> | null;
+  results_count: number | null;
+  last_refreshed_at: string | null;
+  source: string;
+  is_active: boolean;
+  created_at: string;
+}
+
 export default function AdminPage() {
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>("overview");
@@ -233,6 +246,11 @@ function UsersTab() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [cancelingId, setCancelingId] = useState<number | null>(null);
+  const [searchesUserId, setSearchesUserId] = useState<number | null>(null);
+  const [searches, setSearches] = useState<SavedSearch[]>([]);
+  const [searchesLoading, setSearchesLoading] = useState(false);
+  const [triggeringSearchId, setTriggeringSearchId] = useState<number | null>(null);
+  const [searchTriggerMsg, setSearchTriggerMsg] = useState<string | null>(null);
 
   useEffect(() => {
     apiFetch("/admin/users").then((r) => r.ok ? r.json() : null).then((d) => { if (d) setUsers(d.users); });
@@ -286,7 +304,38 @@ function UsersTab() {
     setHistoryLoading(false);
   }
 
+  async function viewSearches(userId: number) {
+    setSearchesUserId(userId);
+    setSearchesLoading(true);
+    setSearches([]);
+    setSearchTriggerMsg(null);
+    const res = await apiFetch(`/admin/users/${userId}/searches`);
+    if (res.ok) {
+      const data = await res.json();
+      setSearches(data.searches);
+    }
+    setSearchesLoading(false);
+  }
+
+  async function triggerSearch(searchId: number) {
+    setTriggeringSearchId(searchId);
+    setSearchTriggerMsg(null);
+    const res = await apiFetch(`/admin/trigger-search/${searchId}`, { method: "POST" });
+    const data = await res.json();
+    if (res.ok) {
+      setSearchTriggerMsg(`${data.message} — ${data.resultsCount} results${data.searchWarnings ? ` (${data.searchWarnings.join("; ")})` : ""}`);
+      // Update the last_refreshed_at in the local list
+      setSearches((prev) => prev.map((s) =>
+        s.id === searchId ? { ...s, last_refreshed_at: new Date().toISOString(), results_count: data.resultsCount } : s
+      ));
+    } else {
+      setSearchTriggerMsg(`Failed: ${data.error || data.detail || "Unknown error"}`);
+    }
+    setTriggeringSearchId(null);
+  }
+
   const historyUser = users.find((u) => u.id === historyUserId);
+  const searchesUser = users.find((u) => u.id === searchesUserId);
 
   return (
     <>
@@ -365,6 +414,12 @@ function UsersTab() {
                               {cancelingId === u.id ? "Downgrading..." : "Downgrade"}
                             </button>
                           )}
+                          <button
+                            onClick={() => viewSearches(u.id)}
+                            className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
+                          >
+                            Searches
+                          </button>
                           {u.stripe_customer_id && (
                             <button
                               onClick={() => viewPaymentHistory(u.id)}
@@ -383,6 +438,86 @@ function UsersTab() {
           </table>
         </div>
       </div>
+
+      {/* Searches Modal */}
+      {searchesUserId !== null && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[80vh] overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <h2 className="text-lg font-semibold text-gray-900">
+                Saved Searches — {searchesUser?.email}
+              </h2>
+              <button
+                onClick={() => setSearchesUserId(null)}
+                className="text-gray-400 hover:text-gray-600 text-xl leading-none"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="px-6 py-4 overflow-y-auto max-h-[60vh]">
+              {searchTriggerMsg && (
+                <div className={`mb-4 px-4 py-2 rounded text-sm ${searchTriggerMsg.startsWith("Failed") ? "bg-red-50 text-red-800" : "bg-green-50 text-green-800"}`}>
+                  {searchTriggerMsg}
+                </div>
+              )}
+              {searchesLoading ? (
+                <p className="text-gray-500 text-sm py-4">Loading searches...</p>
+              ) : searches.length === 0 ? (
+                <p className="text-gray-500 text-sm py-4">No saved searches found for this user.</p>
+              ) : (
+                <table className="min-w-full divide-y divide-gray-200 text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Label</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Results</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Last Run</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {searches.map((s) => (
+                      <tr key={s.id} className={!s.is_active ? "opacity-50" : ""}>
+                        <td className="px-4 py-2 font-medium max-w-[200px] truncate" title={s.label}>
+                          {s.label || s.search_value || "—"}
+                        </td>
+                        <td className="px-4 py-2 text-gray-600">{s.search_type}</td>
+                        <td className="px-4 py-2">{s.results_count ?? "—"}</td>
+                        <td className="px-4 py-2 whitespace-nowrap text-gray-500">
+                          {s.last_refreshed_at ? new Date(s.last_refreshed_at).toLocaleString() : "Never"}
+                        </td>
+                        <td className="px-4 py-2">
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${s.is_active ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-600"}`}>
+                            {s.is_active ? "Active" : "Inactive"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2">
+                          <button
+                            onClick={() => triggerSearch(s.id)}
+                            disabled={triggeringSearchId === s.id}
+                            className="text-amber-700 hover:text-amber-900 text-sm font-medium disabled:opacity-50"
+                          >
+                            {triggeringSearchId === s.id ? "Running..." : "Run Now"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div className="px-6 py-3 border-t bg-gray-50 flex justify-end">
+              <button
+                onClick={() => setSearchesUserId(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Payment History Modal */}
       {historyUserId !== null && (

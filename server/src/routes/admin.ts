@@ -299,6 +299,143 @@ router.put("/settings/:key", async (req: Request, res: Response) => {
   }
 });
 
+// ─── Admin Search Management ───
+
+// GET /api/admin/users/:id/searches — list a user's saved searches
+router.get("/users/:id/searches", async (req: Request, res: Response) => {
+  const pool = getPool();
+  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
+
+  const userId = parseInt(req.params.id, 10);
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      `SELECT id, search_type, search_value, label, search_params,
+              results_count, last_refreshed_at, source, is_active, created_at
+       FROM watched_cases
+       WHERE user_id = $1 AND source = 'auto_search'
+       ORDER BY last_refreshed_at DESC NULLS LAST, created_at DESC`,
+      [userId]
+    );
+    res.json({ searches: result.rows });
+  } catch (err) {
+    console.error("❌ Failed to fetch user searches:", err);
+    res.status(500).json({ error: "Failed to fetch user searches" });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/admin/trigger-search/:searchId — re-run a saved search with force_refresh,
+// bypassing same-day cache and all plan limits. Runs as the owning user.
+router.post("/trigger-search/:searchId", heavyLimiter, async (req: Request, res: Response) => {
+  const pool = getPool();
+  if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
+
+  const searchId = parseInt(req.params.searchId, 10);
+  const client = await pool.connect();
+  try {
+    // Look up the saved search and its owner
+    const result = await client.query(
+      `SELECT wc.id, wc.user_id, wc.search_params, wc.label, u.email
+       FROM watched_cases wc
+       JOIN users u ON u.id = wc.user_id
+       WHERE wc.id = $1`,
+      [searchId]
+    );
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: "Saved search not found" });
+      return;
+    }
+
+    const { user_id, search_params, label, email } = result.rows[0];
+    if (!search_params) {
+      res.status(400).json({ error: "Saved search has no search_params" });
+      return;
+    }
+
+    // Build query string from saved search params, adding force_refresh
+    const params = typeof search_params === "string" ? JSON.parse(search_params) : search_params;
+    // Map JSONB keys to the query param names the search route expects
+    const queryMap: Record<string, string> = {
+      defendantName: "defendant_name",
+      caseNumber: "case_number",
+      courtName: "court_name",
+      courtNames: "court_names",
+      allCourts: "all_courts",
+      courtDate: "court_date",
+      dateFrom: "date_from",
+      dateTo: "date_to",
+      defendantOtn: "defendant_otn",
+      citationNumber: "citation_number",
+      charges: "charges",
+      judgeName: "judge_name",
+      attorney: "attorney",
+    };
+
+    const queryParams: Record<string, string> = { force_refresh: "true" };
+    for (const [jsonKey, queryKey] of Object.entries(queryMap)) {
+      if (params[jsonKey]) queryParams[queryKey] = params[jsonKey];
+    }
+
+    const qs = new URLSearchParams(queryParams).toString();
+    const adminUserId = req.user?.userId;
+
+    console.log(`🔑 Admin (userId=${adminUserId}) triggering search #${searchId} for user ${email} (userId=${user_id}): ${label}`);
+
+    // Make an internal request to the search route, impersonating the target user.
+    // We import and call the search handler's core logic via an internal HTTP call.
+    const proto = req.get("x-forwarded-proto") || req.protocol || "http";
+    const host = req.get("host") || "localhost:3000";
+    const searchUrl = `${proto}://${host}/api/search?${qs}`;
+
+    // Get the target user's JWT to make an authenticated request
+    const jwt = await import("jsonwebtoken");
+    const { config: envConfig } = await import("../config/env");
+    const token = jwt.default.sign(
+      { userId: user_id, email },
+      envConfig.jwtSecret,
+      { expiresIn: "5m" }
+    );
+
+    const searchRes = await fetch(searchUrl, {
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Accept": "application/json",
+      },
+    });
+
+    const searchData = await searchRes.json();
+
+    if (!searchRes.ok) {
+      console.error(`❌ Admin-triggered search #${searchId} failed:`, searchData);
+      res.status(searchRes.status).json({
+        error: "Search failed",
+        detail: searchData.error || "Unknown error",
+        searchId,
+        userId: user_id,
+      });
+      return;
+    }
+
+    console.log(`✅ Admin-triggered search #${searchId} complete: ${searchData.resultsCount} results for ${email}`);
+    res.json({
+      message: `Search triggered successfully for ${email}`,
+      searchId,
+      userId: user_id,
+      label,
+      resultsCount: searchData.resultsCount,
+      source: searchData.source,
+      searchWarnings: searchData.searchWarnings,
+    });
+  } catch (err) {
+    console.error("❌ Failed to trigger search:", err);
+    res.status(500).json({ error: "Failed to trigger search" });
+  } finally {
+    client.release();
+  }
+});
+
 // ─── Calendar Re-sync ───
 
 // POST /api/admin/resync-calendar — deduplicate, then reset all Google entries to pending and re-sync

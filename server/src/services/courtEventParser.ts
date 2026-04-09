@@ -128,17 +128,34 @@ export function parseHtmlCalendarResults(html: string, context?: SearchContext):
   const resultCountMatch = html.match(/(\d+)\s+results?\s+found/i);
   if (resultCountMatch && parseInt(resultCountMatch[1], 10) === 0) return events;
 
-  // Strategy: Find each event box (div with class "casehover"), then look
-  // backward for the time/date header that precedes it.
-  const boxPattern = /casehover/gi;
+  // Strategy: Find each event block by its "bottomline little" div (court name header),
+  // which is the consistent marker across all search types (attorney, case number,
+  // party, judge). The old "casehover" class is no longer present in current HTML.
+  // Each event runs from one "bottomline little" to the next (or end of page), and
+  // contains the defendant (col-sm-4), judge/room/hearing (col-sm-6), and case
+  // number (div.case). Note: attorney searches also have a "col-sm-12 bottomline"
+  // div for the attorney name row — we specifically match "bottomline little" to
+  // avoid double-counting events.
+  const boxPattern = /class="[^"]*bottomline little[^"]*"/gi;
   const boxPositions: number[] = [];
   let bm;
   while ((bm = boxPattern.exec(html)) !== null) {
-    boxPositions.push(bm.index);
+    // Back up to the containing <div> tag start
+    const divStart = html.lastIndexOf("<div", bm.index);
+    if (divStart >= 0 && !boxPositions.includes(divStart)) {
+      boxPositions.push(divStart);
+    }
   }
 
-  // Fallback: if no casehover divs found, try finding event blocks via
-  // div.case containing "Case #" — some court types may use variant markup
+  // Fallback: if no bottomline divs found, try "casehover" (legacy) or
+  // div.case containing "Case #" (last resort — captures only case number section)
+  if (boxPositions.length === 0) {
+    const casehoverPattern = /casehover/gi;
+    let chm;
+    while ((chm = casehoverPattern.exec(html)) !== null) {
+      boxPositions.push(chm.index);
+    }
+  }
   if (boxPositions.length === 0) {
     const caseBlockPattern = /class="case"[^>]*>[\s\S]*?Case\s*#/gi;
     let cbm;
@@ -759,23 +776,44 @@ export interface EnrichmentResult {
  *
  * Uses adaptive batch sizing: starts at initialBatchSize (default 5),
  * drops to 3 if >50% of a batch fails, recovers back up if failures decrease.
+ *
+ * Has a total time budget (default 30s) to prevent enrichment from blocking
+ * the search response indefinitely. When budget is exceeded, remaining events
+ * are skipped — the DB backfill will cover attorney data from prior enrichments.
  */
 export async function enrichFromDetailsPages(
   events: ParsedCourtEvent[],
-  initialBatchSize = 5
+  initialBatchSize = 5,
+  timeBudgetMs = 30000
 ): Promise<EnrichmentResult> {
   const toEnrich = events.filter((e) => e.detailsUrl && !e.prosecutingAttorney && !e.defenseAttorney);
   if (toEnrich.length === 0) return { enriched: 0, failed: 0, total: 0 };
 
   let enriched = 0;
   let failed = 0;
+  let skipped = 0;
   let currentBatchSize = initialBatchSize;
+  const startTime = Date.now();
 
   for (let i = 0; i < toEnrich.length; i += currentBatchSize) {
+    // Check time budget before starting a new batch
+    const elapsed = Date.now() - startTime;
+    if (elapsed >= timeBudgetMs) {
+      const remaining = toEnrich.length - i;
+      skipped += remaining;
+      console.warn(`⏱️ Details enrichment time budget exhausted (${Math.round(elapsed / 1000)}s) — skipping ${remaining} remaining events`);
+      break;
+    }
+
     const batch = toEnrich.slice(i, i + currentBatchSize);
+
+    // Calculate per-batch timeout: remaining budget, but at least 8s per fetch
+    const remainingBudget = timeBudgetMs - elapsed;
+    const batchTimeout = Math.max(8000, Math.min(12000, remainingBudget - 1000));
+
     const results = await Promise.all(
       batch.map((event) =>
-        fetchDetailsHtml(event.detailsUrl!)
+        fetchDetailsHtml(event.detailsUrl!, batchTimeout, remainingBudget < 15000 ? 0 : 1)
           .then((html) => ({ event, data: parseDetailsHtml(html) }))
           .catch((err) => {
             console.warn(`⚠️ Details fetch failed for ${event.caseNumber}:`, err instanceof Error ? err.message : err);
@@ -807,9 +845,9 @@ export async function enrichFromDetailsPages(
 
     // Add a small delay between batches to avoid hammering the server
     if (i + currentBatchSize < toEnrich.length) {
-      await new Promise((r) => setTimeout(r, batchFailed > 0 ? 1500 : 500));
+      await new Promise((r) => setTimeout(r, batchFailed > 0 ? 1000 : 300));
     }
   }
 
-  return { enriched, failed, total: toEnrich.length };
+  return { enriched, failed: failed + skipped, total: toEnrich.length };
 }
