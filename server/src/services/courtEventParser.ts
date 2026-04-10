@@ -696,7 +696,7 @@ function fetchDetailsHtmlOnce(url: string, timeoutMs: number): Promise<string> {
  * Fetch a details.php page with retry logic and exponential backoff.
  * Retries up to maxRetries times on transient errors (timeouts, network errors).
  */
-function fetchDetailsHtml(url: string, timeoutMs = 12000, maxRetries = 2): Promise<string> {
+function fetchDetailsHtml(url: string, timeoutMs = 20000, maxRetries = 2): Promise<string> {
   const retryDelays = [2000, 4000]; // backoff delays between retries
   let attempt = 0;
 
@@ -798,8 +798,8 @@ export interface EnrichmentResult {
  */
 export async function enrichFromDetailsPages(
   events: ParsedCourtEvent[],
-  initialBatchSize = 5,
-  timeBudgetMs = 30000
+  initialBatchSize = 10,
+  timeBudgetMs = 90000
 ): Promise<EnrichmentResult> {
   const toEnrich = events.filter((e) => e.detailsUrl && !e.prosecutingAttorney && !e.defenseAttorney);
   if (toEnrich.length === 0) return { enriched: 0, failed: 0, total: 0 };
@@ -822,13 +822,13 @@ export async function enrichFromDetailsPages(
 
     const batch = toEnrich.slice(i, i + currentBatchSize);
 
-    // Calculate per-batch timeout: remaining budget, but at least 8s per fetch
+    // Calculate per-batch timeout: remaining budget, but at least 15s per fetch
     const remainingBudget = timeBudgetMs - elapsed;
-    const batchTimeout = Math.max(8000, Math.min(12000, remainingBudget - 1000));
+    const batchTimeout = Math.max(15000, Math.min(25000, remainingBudget - 1000));
 
     const results = await Promise.all(
       batch.map((event) =>
-        fetchDetailsHtml(event.detailsUrl!, batchTimeout, remainingBudget < 15000 ? 0 : 1)
+        fetchDetailsHtml(event.detailsUrl!, batchTimeout, remainingBudget < 30000 ? 0 : 1)
           .then((html) => ({ event, data: parseDetailsHtml(html) }))
           .catch((err) => {
             console.warn(`⚠️ Details fetch failed for ${event.caseNumber}:`, err instanceof Error ? err.message : err);
@@ -841,7 +841,9 @@ export async function enrichFromDetailsPages(
     for (const result of results) {
       if (!result) { batchFailed++; continue; }
       const { event, data } = result;
-      if (data.prosecutingAttorney) { event.prosecutingAttorney = data.prosecutingAttorney; enriched++; }
+      // Successfully fetched — apply whatever data exists (blank attorney is valid)
+      enriched++;
+      if (data.prosecutingAttorney) event.prosecutingAttorney = data.prosecutingAttorney;
       if (data.defenseAttorney) event.defenseAttorney = data.defenseAttorney;
       if (data.defendantDob && !event.defendantDob) event.defendantDob = data.defendantDob;
       if (data.defendantOtn && !event.defendantOtn) event.defendantOtn = data.defendantOtn;

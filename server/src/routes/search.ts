@@ -598,12 +598,23 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     if (isAttorneySearch) delete liveFilterParams.attorney;
     const filteredLive = applyAllFilters(liveEvents, liveFilterParams);
 
+    // Deduplicate by case_number + date + time — the same hearing can appear
+    // in multiple scrape requests (different courts or dates). Different
+    // hearing types for the same slot are still the same event.
+    const seen = new Set<string>();
+    const deduped = filteredLive.filter((e) => {
+      const key = `${(e.caseNumber || "").toUpperCase()}|${e.eventDate || ""}|${(e.eventTime || "").replace(/\s+/g, "")}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
     // Live scrape is the source of truth — stale DB events for the same case
     // numbers were already deleted during persistLiveResults. No need to merge
     // old DB records back in; doing so would re-surface ghost events.
-    const merged = filteredLive.slice(0, 2000);
+    const merged = deduped.slice(0, 2000);
 
-    console.log(`  📊 Results: ${filteredLive.length} live events (${merged.length} after limit)`);
+    console.log(`  📊 Results: ${filteredLive.length} live events, ${filteredLive.length - deduped.length} duplicates removed, ${merged.length} returned`);
 
     const { savedSearchId, previousRunAt, limitReached } = await saveSearch(userId, searchParams, pKey, merged.length, userPlan);
     markNewEvents(merged, previousRunAt);
