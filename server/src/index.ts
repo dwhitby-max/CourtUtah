@@ -7,7 +7,6 @@ import { testConnection, getPool } from "./db/pool";
 import { stopPoolMonitor } from "./db/pool";
 import { startScheduler } from "./services/schedulerService";
 import { cleanupOrphanedCalendarEntries } from "./services/calendarSync";
-import { runOneTimeRefresh } from "./services/oneTimeRefresh";
 import { setSocketServer } from "./services/notificationService";
 import { initSentry, flushSentry } from "./services/sentryService";
 import type { ServerToClientEvents, ClientToServerEvents } from "@shared/types";
@@ -93,13 +92,10 @@ server.listen(config.port, config.host, () => {
         console.warn("⚠️  Orphan calendar cleanup failed:", err)
       );
 
-      // One-time refresh: re-run all saved searches to clean up stale events.
-      // Runs in the background after a short delay to let the server warm up.
-      setTimeout(() => {
-        runOneTimeRefresh().catch(err =>
-          console.error("❌ One-time refresh error:", err)
-        );
-      }, 10_000);
+      // Note: runOneTimeRefresh() is intentionally NOT auto-triggered on
+      // startup. Live scraping is restricted to the daily cron + admin
+      // overrides. The function is kept in oneTimeRefresh.ts for manual use
+      // if a future cleanup migration needs it.
 
     } else {
       console.warn("⚠️  Database connection failed — DB features unavailable");
