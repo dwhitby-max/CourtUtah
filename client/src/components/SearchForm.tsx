@@ -144,9 +144,9 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
           const maxDateLimit = new Date();
           maxDateLimit.setMonth(maxDateLimit.getMonth() + 1);
 
-          // Find the Monday of the current week
+          // Find the Monday of the current week (noon local to avoid DST edge cases)
           function getMondayOf(d: Date): Date {
-            const copy = new Date(d);
+            const copy = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0);
             const day = copy.getDay();
             const diff = day === 0 ? -6 : 1 - day; // Sunday → previous Monday
             copy.setDate(copy.getDate() + diff);
@@ -154,7 +154,11 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
           }
 
           function formatDate(d: Date): string {
-            return d.toISOString().split("T")[0];
+            // Use local date components to avoid UTC timezone shift
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, "0");
+            const day = String(d.getDate()).padStart(2, "0");
+            return `${y}-${m}-${day}`;
           }
 
           function formatShort(d: Date): string {
@@ -185,9 +189,10 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
               setDateTo("");
               return;
             }
-            const mon = new Date(mondayStr + "T00:00:00");
-            const fri = new Date(mon);
-            fri.setDate(fri.getDate() + 4);
+            // Parse as local noon to avoid DST/timezone shifts
+            const [y, m, d] = mondayStr.split("-").map(Number);
+            const mon = new Date(y, m - 1, d, 12, 0, 0);
+            const fri = new Date(y, m - 1, d + 4, 12, 0, 0);
             setDateFrom(formatDate(mon));
             setDateTo(formatDate(fri));
           }
