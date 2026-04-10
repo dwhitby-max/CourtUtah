@@ -80,7 +80,6 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
     if (judgeName) params.judge_name = judgeName;
     if (attorney) params.attorney = attorney;
 
-    if (isIndividualAttorney) params._watchedCase = "true";
     onSearch(params);
   }
 

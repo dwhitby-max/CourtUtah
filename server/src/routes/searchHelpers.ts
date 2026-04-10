@@ -3,7 +3,6 @@ import { ParsedCourtEvent } from "../services/courtEventParser";
 import { CourtEvent, DetectedChange } from "@shared/types";
 import { getPool } from "../db/pool";
 import { detectChanges, processChanges } from "../services/changeDetector";
-import { notifyScheduleChange } from "../services/notificationService";
 import { syncCalendarEntry } from "../services/calendarSync";
 
 /**
@@ -114,7 +113,7 @@ export function buildSearchLabel(params: Record<string, string | undefined>): st
 }
 
 /**
- * Check if a watched case (auto-saved search) already exists for this user with matching params.
+ * Check if a saved search already exists for this user with matching params.
  */
 export async function findExistingAutoSearch(
   userId: number,
@@ -125,7 +124,7 @@ export async function findExistingAutoSearch(
   const client = await pool.connect();
   try {
     const result = await client.query(
-      `SELECT id, last_refreshed_at FROM watched_cases
+      `SELECT id, last_refreshed_at FROM saved_searches
        WHERE user_id = $1 AND search_params->>'_key' = $2 AND is_active = true
        LIMIT 1`,
       [userId, paramsKey]
@@ -137,7 +136,7 @@ export async function findExistingAutoSearch(
 }
 
 /**
- * Save or update a watched case record for the user (replaces saved_searches).
+ * Save or update a saved search record for the user.
  * Derives search_type/search_value from the primary searchable field.
  */
 export async function saveSearch(
@@ -171,7 +170,7 @@ export async function saveSearch(
         ? new Date(existing.last_refreshed_at).toISOString()
         : null;
       await client.query(
-        `UPDATE watched_cases
+        `UPDATE saved_searches
          SET results_count = $1, last_refreshed_at = NOW(), updated_at = NOW()
          WHERE id = $2`,
         [resultsCount, existing.id]
@@ -183,7 +182,7 @@ export async function saveSearch(
     const plan = userPlan || "free";
     if (plan === "free") {
       const countResult = await client.query<{ cnt: string }>(
-        `SELECT COUNT(*) as cnt FROM watched_cases
+        `SELECT COUNT(*) as cnt FROM saved_searches
          WHERE user_id = $1 AND source = 'auto_search' AND is_active = true`,
         [userId]
       );
@@ -194,7 +193,7 @@ export async function saveSearch(
     }
 
     const result = await client.query(
-      `INSERT INTO watched_cases (user_id, search_type, search_value, label, search_params, results_count, last_refreshed_at, source)
+      `INSERT INTO saved_searches (user_id, search_type, search_value, label, search_params, results_count, last_refreshed_at, source)
        VALUES ($1, $2, $3, $4, $5, $6, NOW(), 'auto_search')
        RETURNING id`,
       [userId, searchType, searchValue, label, JSON.stringify(paramsWithKey), resultsCount]
@@ -316,26 +315,6 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
                 event.hearingLocation, event.contentHash, row.id,
               ]
             );
-
-            // Notify all users who are watching this case + trigger calendar sync
-            const watchers = await client.query(
-              `SELECT DISTINCT wc.user_id
-               FROM watched_cases wc
-               WHERE wc.is_active = true
-                 AND (
-                   (wc.search_type = 'case_number' AND UPPER(wc.search_value) = UPPER($1))
-                   OR (wc.search_type = 'defendant_name' AND UPPER($2) LIKE '%' || UPPER(wc.search_value) || '%')
-                 )`,
-              [event.caseNumber, event.defendantName || ""]
-            );
-
-            for (const watcher of watchers.rows) {
-              await notifyScheduleChange(
-                watcher.user_id,
-                `${event.defendantName || "Unknown"} — Case ${event.caseNumber}`,
-                changes
-              );
-            }
 
             // Re-sync any calendar entries linked to this court event
             const calEntries = await client.query(

@@ -64,9 +64,9 @@ describe("Auth middleware — protected routes", () => {
     expect(res.status).toBe(401);
   });
 
-  it("GET /api/watched-cases returns 401 without token", async () => {
+  it("GET /api/saved-searches returns 401 without token", async () => {
     const res = await request(app)
-      .get("/api/watched-cases");
+      .get("/api/saved-searches");
     expect(res.status).toBe(401);
   });
 
@@ -97,23 +97,11 @@ describe("Search validation", () => {
 });
 
 describe("API routes — structure", () => {
-  it("POST /api/watched-cases requires auth", async () => {
+  it("GET /api/saved-searches requires auth", async () => {
     const res = await request(app)
-      .post("/api/watched-cases")
-      .send({ searchType: "case_number", searchValue: "123", label: "test" });
+      .get("/api/saved-searches");
     expect(res.status).toBe(401);
   });
-
-  it("Authenticated POST /api/watched-cases hits DB layer", async () => {
-    const res = await request(app)
-      .post("/api/watched-cases")
-      .set("Authorization", `Bearer ${authToken}`)
-      .send({ searchType: "case_number", searchValue: "123", label: "test" });
-    // Should get through auth but may hit DB or trigger live search
-    expect([201, 400, 500, 503]).toContain(res.status);
-    // Importantly NOT 401
-    expect(res.status).not.toBe(401);
-  }, 30000);
 
   it("DELETE /api/notifications/1 requires auth", async () => {
     const res = await request(app)
@@ -162,10 +150,6 @@ describe("Admin endpoints — authentication", () => {
     expect(res.status).toBe(401);
   });
 
-  it("POST /api/admin/trigger-refresh returns 401 without token", async () => {
-    const res = await request(app).post("/api/admin/trigger-refresh");
-    expect(res.status).toBe(401);
-  });
 });
 
 describe("Admin endpoints — authenticated", () => {
@@ -187,13 +171,6 @@ describe("Admin endpoints — authenticated", () => {
     expect(res.status).not.toBe(401);
   });
 
-  it("POST /api/admin/trigger-refresh passes auth (may fail on admin/DB check)", async () => {
-    const res = await request(app)
-      .post("/api/admin/trigger-refresh")
-      .set("Authorization", `Bearer ${authToken}`);
-    expect([200, 403, 500, 503]).toContain(res.status);
-    expect(res.status).not.toBe(401);
-  });
 });
 
 // ============================================================

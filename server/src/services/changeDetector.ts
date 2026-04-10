@@ -27,7 +27,10 @@ export function detectChanges(
     const oldVal = existing[field] ? String(existing[field]) : "";
     const newVal = incoming[field] ? String(incoming[field]) : "";
 
-    if (oldVal !== newVal) {
+    // Skip if incoming value is empty — a sparse scrape should not count as
+    // a "deletion" of existing enriched data (e.g. attorney fields from
+    // details.php that won't appear in search.php results).
+    if (oldVal !== newVal && newVal !== "") {
       changes.push({
         field,
         oldValue: oldVal,

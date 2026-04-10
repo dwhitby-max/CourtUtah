@@ -19,7 +19,7 @@ export default function PrivacyPolicyPage() {
           <ul className="list-disc pl-6 space-y-1">
             <li><strong>Account Information:</strong> Your name, email address, and phone number provided during registration or via Google OAuth sign-in.</li>
             <li><strong>Calendar Data:</strong> Calendar connection tokens (encrypted) to sync court events to your Google, Microsoft, Apple, or CalDAV calendar.</li>
-            <li><strong>Usage Data:</strong> Search queries, watched cases, notification preferences, and interaction logs.</li>
+            <li><strong>Usage Data:</strong> Search queries, saved searches, notification preferences, and interaction logs.</li>
             <li><strong>Device and Access Data:</strong> IP address, browser type, operating system, and access timestamps collected automatically via server logs.</li>
           </ul>
 

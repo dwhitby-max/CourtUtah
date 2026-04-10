@@ -4,7 +4,6 @@ import { authenticateToken } from "../middleware/auth";
 import { requireAdmin } from "../middleware/adminAuth";
 import { heavyLimiter } from "../middleware/rateLimiter";
 import { getPool, getPoolStats } from "../db/pool";
-import { refreshAllWatchedCases } from "../services/schedulerService";
 import { syncCalendarEntry } from "../services/calendarSync";
 import { sendAccountApprovedEmail } from "../services/emailService";
 import { config } from "../config/env";
@@ -18,24 +17,6 @@ const router = Router();
 
 router.use(authenticateToken);
 router.use(requireAdmin);
-
-// ─── Watched Case Refresh ───
-
-// POST /api/admin/trigger-refresh — manually refresh all watched cases
-router.post("/trigger-refresh", heavyLimiter, async (_req: Request, res: Response) => {
-  try {
-    const jobPromise = refreshAllWatchedCases();
-    res.json({ message: "Watched-case refresh triggered", status: "running", triggeredAt: new Date().toISOString() });
-    jobPromise.then((result) => {
-      console.log(`✅ Manual refresh complete: ${result.casesChecked} cases, ${result.totalEvents} events, ${result.totalNewEntries} new entries`);
-    }).catch((err) => {
-      console.error("❌ Manual refresh failed:", err);
-    });
-  } catch (err) {
-    console.error("❌ Failed to trigger refresh:", err);
-    res.status(500).json({ error: "Failed to trigger refresh" });
-  }
-});
 
 // ─── Pool & Stats ───
 
@@ -51,10 +32,10 @@ router.get("/stats", async (_req: Request, res: Response) => {
 
   const client = await pool.connect();
   try {
-    const [eventsResult, usersResult, watchedResult, connectionsResult] = await Promise.all([
+    const [eventsResult, usersResult, savedResult, connectionsResult] = await Promise.all([
       client.query(`SELECT COUNT(*) as total, COUNT(DISTINCT court_name) as courts FROM court_events`),
       client.query(`SELECT COUNT(*) as total FROM users`),
-      client.query(`SELECT COUNT(*) as total FROM watched_cases WHERE is_active = true`),
+      client.query(`SELECT COUNT(*) as total FROM saved_searches WHERE is_active = true`),
       client.query(`SELECT COUNT(*) as total FROM calendar_connections WHERE is_active = true`),
     ]);
 
@@ -64,7 +45,7 @@ router.get("/stats", async (_req: Request, res: Response) => {
         courts: parseInt(eventsResult.rows[0].courts, 10),
       },
       users: parseInt(usersResult.rows[0].total, 10),
-      watchedCases: parseInt(watchedResult.rows[0].total, 10),
+      savedSearches: parseInt(savedResult.rows[0].total, 10),
       calendarConnections: parseInt(connectionsResult.rows[0].total, 10),
     });
   } catch (err) {
@@ -87,9 +68,8 @@ router.get("/users", async (_req: Request, res: Response) => {
     const result = await client.query(
       `SELECT id, email, phone, email_verified, is_admin, is_approved, created_at,
               subscription_plan, subscription_status, subscription_id, subscription_current_period_end, stripe_customer_id,
-              (SELECT COUNT(*) FROM watched_cases wc WHERE wc.user_id = u.id AND wc.is_active = true) as watched_count,
-              (SELECT COUNT(*) FROM watched_cases wc2 WHERE wc2.user_id = u.id AND wc2.source = 'auto_search' AND wc2.is_active = true) as search_count,
-              (SELECT MAX(wc3.last_refreshed_at) FROM watched_cases wc3 WHERE wc3.user_id = u.id AND wc3.source = 'auto_search') as last_search_at,
+              (SELECT COUNT(*) FROM saved_searches ss WHERE ss.user_id = u.id AND ss.source = 'auto_search' AND ss.is_active = true) as search_count,
+              (SELECT MAX(ss2.last_refreshed_at) FROM saved_searches ss2 WHERE ss2.user_id = u.id AND ss2.source = 'auto_search') as last_search_at,
               (SELECT COUNT(*) FROM calendar_connections cc WHERE cc.user_id = u.id AND cc.is_active = true) as calendar_count,
               (SELECT MAX(ce.updated_at) FROM calendar_entries ce WHERE ce.user_id = u.id AND ce.sync_status = 'synced') as last_sync_at
        FROM users u ORDER BY created_at DESC`
@@ -312,7 +292,7 @@ router.get("/users/:id/searches", async (req: Request, res: Response) => {
     const result = await client.query(
       `SELECT id, search_type, search_value, label, search_params,
               results_count, last_refreshed_at, source, is_active, created_at
-       FROM watched_cases
+       FROM saved_searches
        WHERE user_id = $1 AND source = 'auto_search'
        ORDER BY last_refreshed_at DESC NULLS LAST, created_at DESC`,
       [userId]
@@ -337,10 +317,10 @@ router.post("/trigger-search/:searchId", heavyLimiter, async (req: Request, res:
   try {
     // Look up the saved search and its owner
     const result = await client.query(
-      `SELECT wc.id, wc.user_id, wc.search_params, wc.label, u.email
-       FROM watched_cases wc
-       JOIN users u ON u.id = wc.user_id
-       WHERE wc.id = $1`,
+      `SELECT ss.id, ss.user_id, ss.search_params, ss.label, u.email
+       FROM saved_searches ss
+       JOIN users u ON u.id = ss.user_id
+       WHERE ss.id = $1`,
       [searchId]
     );
     if (result.rows.length === 0) {

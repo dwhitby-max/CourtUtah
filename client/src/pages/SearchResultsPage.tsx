@@ -1,8 +1,7 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useSearch } from "@/hooks/useSearch";
 import { useAuth } from "@/store/authStore";
-import { apiFetch } from "@/api/client";
 import { useCalendarActions } from "@/hooks/useCalendarActions";
 import EventDetailRow from "@/components/EventDetailRow";
 import UpdatesSection from "@/components/UpdatesSection";
@@ -27,8 +26,8 @@ export default function SearchResultsPage() {
   const isPro = user?.subscriptionPlan === "pro" && (user?.subscriptionStatus === "active" || user?.subscriptionStatus === "grandfathered");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const [watchSuccess, setWatchSuccess] = useState("");
-  const [watchError, setWatchError] = useState("");
+  const [calSuccess, setCalSuccess] = useState("");
+  const [calError, setCalError] = useState("");
 
   const cal = useCalendarActions();
 
@@ -40,9 +39,6 @@ export default function SearchResultsPage() {
   // Export template modal state
   const [showExportModal, setShowExportModal] = useState(false);
 
-  // Auto-sync toggle state
-  const [autoSyncEnabled, setAutoSyncEnabled] = useState(false);
-  const [autoSyncLoading, setAutoSyncLoading] = useState(false);
 
   // Updates section state
   const [updates, setUpdates] = useState<ChangeRecord[]>([]);
@@ -60,37 +56,6 @@ export default function SearchResultsPage() {
   }, [location.search]);
 
   // Fetch updates (changes detected for events in current results)
-  const fetchUpdates = useCallback(async () => {
-    if (results.length === 0) return;
-    try {
-      const res = await apiFetch("/watched-cases/pending-updates");
-      const data = await res.json();
-      if (res.ok && data.pendingUpdates) {
-        const resultEventIds = new Set(results.map(r => r.id));
-        const relevant = data.pendingUpdates
-          .filter((u: { court_event_id: number }) => resultEventIds.has(u.court_event_id))
-          .map((u: { court_event_id: number; case_number: string | null; defendant_name: string | null; field_changed: string; old_value: string | null; new_value: string | null; detected_at: string }) => ({
-            courtEventId: u.court_event_id,
-            caseNumber: u.case_number,
-            defendantName: u.defendant_name,
-            fieldChanged: u.field_changed,
-            oldValue: u.old_value,
-            newValue: u.new_value,
-            detectedAt: u.detected_at,
-          }));
-        setUpdates(relevant);
-      }
-    } catch (err) {
-      console.error("Failed to fetch updates:", err);
-    }
-  }, [results]);
-
-  useEffect(() => {
-    if (searched && !loading && results.length > 0) {
-      fetchUpdates();
-    }
-  }, [searched, loading, results, fetchUpdates]);
-
   function handleExportWithTemplate(template: ExportTemplate) {
     exportCourtEventsCsv(results, template);
     setShowExportModal(false);
@@ -99,28 +64,28 @@ export default function SearchResultsPage() {
   async function handleAddToCalendar(event: CourtEvent) {
     try {
       const data = await cal.handleAddToCalendar(event.id);
-      setWatchSuccess(data.message);
-      setWatchError("");
+      setCalSuccess(data.message);
+      setCalError("");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to add to calendar";
       if (msg.includes("No calendar connected")) {
         window.location.href = "/api/auth/google";
         return;
       }
-      setWatchError(msg);
-      setWatchSuccess("");
+      setCalError(msg);
+      setCalSuccess("");
     }
   }
 
   async function handleRemoveFromCalendar(event: CourtEvent) {
     try {
       await cal.handleRemoveFromCalendar(event.id);
-      setWatchSuccess("Event removed from calendar");
-      setWatchError("");
+      setCalSuccess("Event removed from calendar");
+      setCalError("");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to remove from calendar";
-      setWatchError(msg);
-      setWatchSuccess("");
+      setCalError(msg);
+      setCalSuccess("");
     }
   }
 
@@ -130,18 +95,18 @@ export default function SearchResultsPage() {
       .map(e => e.id);
 
     if (unsyncedIds.length === 0) {
-      setWatchSuccess("All events are already on your calendar.");
+      setCalSuccess("All events are already on your calendar.");
       return;
     }
 
     setBatchAdding(true);
     setBatchProgress(`Adding ${unsyncedIds.length} events...`);
-    setWatchError("");
-    setWatchSuccess("");
+    setCalError("");
+    setCalSuccess("");
 
     try {
       const data = await cal.handleBatchAdd(unsyncedIds);
-      setWatchSuccess(data.message);
+      setCalSuccess(data.message);
       setBatchProgress("");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to add events to calendar";
@@ -149,7 +114,7 @@ export default function SearchResultsPage() {
         window.location.href = "/api/auth/google";
         return;
       }
-      setWatchError(msg);
+      setCalError(msg);
       setBatchProgress("");
     } finally {
       setBatchAdding(false);
@@ -160,14 +125,14 @@ export default function SearchResultsPage() {
     const syncedInResults = results.filter(e => cal.calSyncedIds.has(e.id) && cal.calEntryMap[e.id]);
 
     if (syncedInResults.length === 0) {
-      setWatchSuccess("No events to remove from your calendar.");
+      setCalSuccess("No events to remove from your calendar.");
       return;
     }
 
     setBatchRemoving(true);
     setBatchProgress(`Removing ${syncedInResults.length} events...`);
-    setWatchError("");
-    setWatchSuccess("");
+    setCalError("");
+    setCalSuccess("");
 
     let removed = 0;
     let failed = 0;
@@ -185,41 +150,9 @@ export default function SearchResultsPage() {
     setBatchProgress("");
 
     if (failed > 0) {
-      setWatchSuccess(`Removed ${removed} event${removed !== 1 ? "s" : ""} from ${cal.calLabel}. ${failed} failed.`);
+      setCalSuccess(`Removed ${removed} event${removed !== 1 ? "s" : ""} from ${cal.calLabel}. ${failed} failed.`);
     } else {
-      setWatchSuccess(`Removed all ${removed} event${removed !== 1 ? "s" : ""} from ${cal.calLabel}`);
-    }
-  }
-
-  async function handleToggleAutoSync(enabled: boolean) {
-    const syncedEventIds = results
-      .filter(e => cal.calSyncedIds.has(e.id) && e.id > 0)
-      .map(e => e.id);
-
-    if (syncedEventIds.length === 0) {
-      setWatchError("No calendar events to auto-sync. Add events to your calendar first.");
-      return;
-    }
-
-    setAutoSyncLoading(true);
-    setWatchError("");
-    setWatchSuccess("");
-
-    try {
-      const res = await apiFetch("/watched-cases/auto-sync", {
-        method: "POST",
-        body: JSON.stringify({ courtEventIds: syncedEventIds, enable: enabled }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to update auto-sync");
-
-      setAutoSyncEnabled(enabled);
-      setWatchSuccess(data.message);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to update auto-sync";
-      setWatchError(msg);
-    } finally {
-      setAutoSyncLoading(false);
+      setCalSuccess(`Removed all ${removed} event${removed !== 1 ? "s" : ""} from ${cal.calLabel}`);
     }
   }
 
@@ -254,8 +187,8 @@ export default function SearchResultsPage() {
       </div>
 
       {error && <div className="bg-red-50 text-red-700 p-4 rounded-md text-sm">{error}</div>}
-      {watchSuccess && <div className="bg-green-50 text-green-700 p-4 rounded-md text-sm">{watchSuccess}</div>}
-      {watchError && <div className="bg-red-50 text-red-700 p-4 rounded-md text-sm">{watchError}</div>}
+      {calSuccess && <div className="bg-green-50 text-green-700 p-4 rounded-md text-sm">{calSuccess}</div>}
+      {calError && <div className="bg-red-50 text-red-700 p-4 rounded-md text-sm">{calError}</div>}
 
       {loading && <div className="text-gray-500">Searching...</div>}
 
@@ -323,27 +256,6 @@ export default function SearchResultsPage() {
                         </svg>
                         {batchRemoving ? batchProgress : "Remove All"}
                       </button>
-                    )}
-                    <label className="flex items-center gap-2 cursor-pointer select-none ml-2 group relative">
-                      <div className="relative">
-                        <input
-                          type="checkbox"
-                          checked={autoSyncEnabled}
-                          onChange={(e) => handleToggleAutoSync(e.target.checked)}
-                          disabled={autoSyncLoading || batchAdding || batchRemoving}
-                          className="sr-only peer"
-                        />
-                        <div className={`w-9 h-5 rounded-full transition-colors ${autoSyncLoading ? "bg-gray-200" : "bg-gray-300"} peer-checked:bg-green-500`}></div>
-                        <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow peer-checked:translate-x-4 transition-transform"></div>
-                      </div>
-                      <span className="text-sm text-gray-700 font-medium">
-                        {autoSyncLoading ? "Updating..." : "Auto-sync"}
-                      </span>
-                    </label>
-                    {autoSyncEnabled && (
-                      <span className="text-xs text-green-700 bg-green-50 px-3 py-1 rounded-full">
-                        Calendar events will auto-update when schedules change. New hearings for these cases will be added automatically.
-                      </span>
                     )}
                   </>
                 ) : (

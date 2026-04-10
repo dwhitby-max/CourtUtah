@@ -423,8 +423,26 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
 
     const isAttorneySearch = !!searchParams.attorney;
 
-    // Pre-fill attorneys from known sources BEFORE details.php enrichment so
-    // the enrichment step can skip events that already have attorney data.
+    // Enrich events missing BOTH attorneys from details.php FIRST, before any
+    // pre-fill logic, so that details-page data is always fetched when available.
+    let enrichmentFailed = 0;
+    let enrichmentTotal = 0;
+    try {
+      const enrichResult = await enrichFromDetailsPages(allParsed);
+      enrichmentFailed = enrichResult.failed;
+      enrichmentTotal = enrichResult.total;
+      if (enrichResult.enriched > 0) {
+        console.log(`  👤 Enriched ${enrichResult.enriched}/${enrichResult.total} events with attorney data from details pages`);
+      }
+      if (enrichResult.failed > 0) {
+        console.warn(`  ⚠️ Details enrichment failed for ${enrichResult.failed}/${enrichResult.total} events (after retries)`);
+      }
+    } catch (err) {
+      console.warn("⚠️ Details enrichment failed:", err instanceof Error ? err.message : err);
+    }
+
+    // Backfill attorneys from known sources AFTER details.php enrichment,
+    // only for events that enrichment didn't already fill.
     // 1) searchResultAttorney: the attorney from search.php (known role for agency)
     for (const event of allParsed) {
       if (event.searchResultAttorney && !event.prosecutingAttorney) {
@@ -462,23 +480,6 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       }
     }
 
-    // Enrich remaining events (those still missing both attorneys) from details.php
-    let enrichmentFailed = 0;
-    let enrichmentTotal = 0;
-    try {
-      const enrichResult = await enrichFromDetailsPages(allParsed);
-      enrichmentFailed = enrichResult.failed;
-      enrichmentTotal = enrichResult.total;
-      if (enrichResult.enriched > 0) {
-        console.log(`  👤 Enriched ${enrichResult.enriched}/${enrichResult.total} events with attorney data from details pages`);
-      }
-      if (enrichResult.failed > 0) {
-        console.warn(`  ⚠️ Details enrichment failed for ${enrichResult.failed}/${enrichResult.total} events (after retries)`);
-      }
-    } catch (err) {
-      console.warn("⚠️ Details enrichment failed:", err instanceof Error ? err.message : err);
-    }
-
     // Persist live results and detect changes (awaited so we can return changes)
     let detectedChanges: DetectedChange[] = [];
     try {
@@ -500,14 +501,14 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
         try {
           const caseNumbers = [...new Set(allParsed.map(e => e.caseNumber).filter(Boolean))];
           if (caseNumbers.length > 0) {
-            const result = await client.query<{ id: number; case_number: string; event_date: string }>(
-              `SELECT id, case_number, event_date::text
+            const result = await client.query<{ id: number; case_number: string; event_date: string; event_time: string }>(
+              `SELECT id, case_number, event_date::text, COALESCE(event_time, '') as event_time
                FROM court_events WHERE case_number = ANY($1)
                ORDER BY updated_at DESC`,
               [caseNumbers]
             );
             for (const row of result.rows) {
-              const key = `${row.case_number}|${row.event_date}`;
+              const key = `${row.case_number}|${row.event_date}|${row.event_time.replace(/\s+/g, " ").trim().toUpperCase()}`;
               if (!dbIdLookup.has(key)) dbIdLookup.set(key, row.id);
             }
           }
@@ -522,7 +523,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     // Convert live-parsed results to CourtEvent format, using real DB IDs when available
     const liveEvents = allParsed.map((event) => {
       const ce = toCourtEvent(event);
-      const dbId = dbIdLookup.get(`${event.caseNumber}|${event.eventDate}`);
+      const dbId = dbIdLookup.get(`${event.caseNumber}|${event.eventDate}|${(event.eventTime || "").replace(/\s+/g, " ").trim().toUpperCase()}`);
       if (dbId) ce.id = dbId;
       return ce;
     });

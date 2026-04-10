@@ -12,7 +12,6 @@ interface UserRow {
   is_admin: boolean;
   is_approved: boolean;
   created_at: string;
-  watched_count: string;
   search_count: string;
   last_search_at: string | null;
   calendar_count: string;
@@ -94,19 +93,10 @@ export default function AdminPage() {
 
 function OverviewTab() {
   const [stats, setStats] = useState<Record<string, unknown> | null>(null);
-  const [triggerMsg, setTriggerMsg] = useState("");
 
   useEffect(() => {
     apiFetch("/admin/stats").then((r) => r.ok ? r.json() : null).then((d) => { if (d) setStats(d); });
   }, []);
-
-  async function triggerRefresh() {
-    const res = await apiFetch("/admin/trigger-refresh", { method: "POST" });
-    if (res.ok) {
-      setTriggerMsg("Watched-case refresh triggered!");
-      setTimeout(() => setTriggerMsg(""), 5000);
-    }
-  }
 
   return (
     <div className="space-y-6">
@@ -115,27 +105,9 @@ function OverviewTab() {
           <StatCard label="Total Events" value={String((stats.events as Record<string, number>)?.total || 0)} />
           <StatCard label="Courts" value={String((stats.events as Record<string, number>)?.courts || 0)} />
           <StatCard label="Users" value={String(stats.users || 0)} />
-          <StatCard label="Watched Cases" value={String(stats.watchedCases || 0)} />
+          <StatCard label="Saved Searches" value={String(stats.savedSearches || 0)} />
         </div>
       )}
-
-      <div className="bg-white shadow rounded-lg p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900">Refresh All Watched Cases</h2>
-            <p className="text-sm text-gray-500 mt-1">
-              Re-runs all active watched case searches against utcourts.gov to check for new events or changes.
-              This happens automatically daily at ~2 AM UTC.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            {triggerMsg && <span className="text-sm text-green-600">{triggerMsg}</span>}
-            <button onClick={triggerRefresh} className="bg-amber-700 text-white px-4 py-2 rounded-md text-sm hover:bg-slate-700">
-              Refresh Now
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
@@ -349,7 +321,6 @@ function UsersTab() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Admin</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Plan</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Renewal</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Watched</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Searches</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Last Search</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Calendars</th>
@@ -382,7 +353,6 @@ function UsersTab() {
                         ? new Date(u.subscription_current_period_end).toLocaleDateString()
                         : "—"}
                     </td>
-                    <td className="px-4 py-3">{u.watched_count}</td>
                     <td className="px-4 py-3">{u.search_count}</td>
                     <td className="px-4 py-3 whitespace-nowrap text-gray-500">{u.last_search_at ? new Date(u.last_search_at).toLocaleDateString() : "—"}</td>
                     <td className="px-4 py-3">{u.calendar_count}</td>

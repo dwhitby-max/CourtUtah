@@ -95,17 +95,12 @@ describe("detectChanges", () => {
     });
   });
 
-  it("detects change from a value to null", () => {
+  it("ignores change from a value to null (sparse scrape should not erase enriched data)", () => {
     const existing = { event_time: "2:00 PM" } as Record<string, unknown>;
     const incoming = { event_time: null } as Record<string, unknown>;
 
     const changes = detectChanges(existing, incoming);
-    expect(changes).toHaveLength(1);
-    expect(changes[0]).toEqual({
-      field: "event_time",
-      oldValue: "2:00 PM",
-      newValue: "",
-    });
+    expect(changes).toHaveLength(0);
   });
 
   it("ignores fields not in TRACKED_FIELDS", () => {

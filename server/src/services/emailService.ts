@@ -283,7 +283,7 @@ export async function sendDailySummaryEmail(
       <p style="color:#64748b;">Your daily summary of court calendar changes from the overnight check.</p>
       ${sectionsHtml}
       <hr style="margin-top:24px;border:none;border-top:1px solid #e5e7eb;" />
-      <p style="color:#94a3b8;font-size:12px;">You're receiving this because you have active watched cases on Court Calendar Tracker. Manage your notification preferences in your profile settings.</p>
+      <p style="color:#94a3b8;font-size:12px;">You're receiving this because you have saved searches on Court Calendar Tracker. Manage your notification preferences in your profile settings.</p>
     </div>
   `;
 

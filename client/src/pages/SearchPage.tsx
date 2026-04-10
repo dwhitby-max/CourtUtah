@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import SearchForm from "@/components/SearchForm";
 import { searchCourtEvents } from "@/api/search";
-import { removeCalendarEntriesForCase } from "@/api/calendar";
 import { apiFetch } from "@/api/client";
 import EventDetailRow from "@/components/EventDetailRow";
 import NewEntriesSection from "@/components/NewEntriesSection";
@@ -115,14 +114,10 @@ export default function SearchPage() {
   async function fetchSavedSearches() {
     setLoadingSaved(true);
     try {
-      const res = await apiFetch("/watched-cases");
+      const res = await apiFetch("/saved-searches");
       if (res.ok) {
         const data = await res.json();
-        const allWatched = data.watchedCases || [];
-        const autoSearches = allWatched.filter(
-          (wc: SavedSearchRow) => wc.source === "auto_search" && wc.search_params
-        );
-        setSavedSearches(autoSearches);
+        setSavedSearches(data.savedSearches || []);
       }
     } catch {
       // non-fatal
@@ -138,7 +133,6 @@ export default function SearchPage() {
 
   async function handleSearch(params: Record<string, string>, opts?: { isRerun?: boolean; forceRefresh?: boolean }) {
     const searchParams = { ...params };
-    delete searchParams._watchedCase;
 
     // Block duplicate searches unless this is a "Run Again" from a saved search.
     // Individual attorneys always auto-save, so skip the blocker for them —
@@ -205,41 +199,19 @@ export default function SearchPage() {
     await handleSearch(queryParams, { isRerun: true });
   }
 
-  async function handleToggleSavedAutoAdd(saved: SavedSearchRow) {
-    const newValue = !saved.search_params._autoAddToCalendar;
-    try {
-      const res = await apiFetch(`/watched-cases/${saved.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ autoAddToCalendar: newValue }),
-      });
-      if (res.ok) {
-        setSavedSearches(prev => prev.map(s =>
-          s.id === saved.id
-            ? { ...s, search_params: { ...s.search_params, _autoAddToCalendar: newValue ? "true" : "" } }
-            : s
-        ));
-      }
-    } catch {
-      // non-fatal
-    }
-  }
-
   function handleDeleteSavedSearch(id: number) {
     const saved = savedSearches.find(s => s.id === id);
     if (saved && saved.results_count > 0) {
       setDeleteConfirm({ id, label: saved.label });
     } else {
-      executeDeleteSearch(id, false);
+      executeDeleteSearch(id);
     }
   }
 
-  async function executeDeleteSearch(id: number, removeFromCalendar: boolean) {
+  async function executeDeleteSearch(id: number) {
     setDeleteConfirm(null);
     try {
-      if (removeFromCalendar) {
-        await removeCalendarEntriesForCase(id);
-      }
-      const res = await apiFetch(`/watched-cases/${id}`, { method: "DELETE" });
+      const res = await apiFetch(`/saved-searches/${id}`, { method: "DELETE" });
       if (res.ok) {
         setSavedSearches(prev => prev.filter(s => s.id !== id));
         // If this was the currently displayed search, clear results from UI
@@ -390,21 +362,6 @@ export default function SearchPage() {
                   </div>
                 </button>
                 <div className="flex items-center gap-3 shrink-0">
-                  {cal.hasCalendarConnection && (
-                    <label className="flex items-center gap-1.5 cursor-pointer select-none" title="Auto-add results to calendar when this search runs">
-                      <div className="relative">
-                        <input
-                          type="checkbox"
-                          checked={!!saved.search_params._autoAddToCalendar}
-                          onChange={() => handleToggleSavedAutoAdd(saved)}
-                          className="sr-only peer"
-                        />
-                        <div className="w-7 h-4 bg-gray-300 rounded-full peer-checked:bg-green-500 transition-colors"></div>
-                        <div className="absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full shadow peer-checked:translate-x-3 transition-transform"></div>
-                      </div>
-                      <span className="text-xs text-gray-500">Auto-sync</span>
-                    </label>
-                  )}
                   <button
                     onClick={() => handleRunSavedSearch(saved)}
                     disabled={loading}
@@ -432,20 +389,14 @@ export default function SearchPage() {
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-2">Delete Search</h3>
             <p className="text-sm text-gray-600 mb-5">
-              You are deleting <span className="font-medium">"{deleteConfirm.label}"</span>. Do you want to remove the synced events from your calendar as well?
+              Are you sure you want to delete <span className="font-medium">"{deleteConfirm.label}"</span>?
             </p>
             <div className="flex flex-col gap-2">
               <button
-                onClick={() => executeDeleteSearch(deleteConfirm.id, true)}
+                onClick={() => executeDeleteSearch(deleteConfirm.id)}
                 className="w-full px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md"
               >
-                Delete search and remove from calendar
-              </button>
-              <button
-                onClick={() => executeDeleteSearch(deleteConfirm.id, false)}
-                className="w-full px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md"
-              >
-                Delete search but keep calendar events
+                Delete search
               </button>
               <button
                 onClick={() => setDeleteConfirm(null)}

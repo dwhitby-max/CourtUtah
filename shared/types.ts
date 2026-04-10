@@ -152,40 +152,12 @@ export interface SearchResponse {
   searchWarnings?: string[];
 }
 
-// --- Watched Cases ---
-
-export type SearchType =
-  | "defendant_name"
-  | "case_number"
-  | "court_name"
-  | "court_date"
-  | "defendant_otn"
-  | "citation_number";
-
-export interface WatchedCase {
-  id: number;
-  userId: number;
-  searchType: SearchType;
-  searchValue: string;
-  label: string;
-  isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
-  matchingEventsCount?: number;
-}
-
-export interface CreateWatchedCaseRequest {
-  searchType: SearchType;
-  searchValue: string;
-  label: string;
-}
-
 // --- Calendar Entries ---
 
 export interface CalendarEntry {
   id: number;
   userId: number;
-  watchedCaseId: number;
+  savedSearchId: number | null;
   courtEventId: number;
   calendarConnectionId: number;
   externalEventId: string | null;

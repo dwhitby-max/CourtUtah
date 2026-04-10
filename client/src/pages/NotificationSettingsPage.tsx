@@ -115,8 +115,8 @@ export default function NotificationSettingsPage() {
         <div className="bg-gray-50 rounded-md p-4">
           <h4 className="text-sm font-medium text-gray-900 mb-2">Notification Types</h4>
           <ul className="text-sm text-gray-600 space-y-1">
-            <li><span className="inline-block w-3 h-3 bg-orange-400 rounded-full mr-2"></span>Schedule changes — when a watched court event is rescheduled</li>
-            <li><span className="inline-block w-3 h-3 bg-blue-400 rounded-full mr-2"></span>New events — when new events match your watched cases</li>
+            <li><span className="inline-block w-3 h-3 bg-orange-400 rounded-full mr-2"></span>Schedule changes — when a court event on your calendar is rescheduled</li>
+            <li><span className="inline-block w-3 h-3 bg-blue-400 rounded-full mr-2"></span>New events — when new events match your saved searches</li>
             <li><span className="inline-block w-3 h-3 bg-red-400 rounded-full mr-2"></span>Sync errors — when calendar sync encounters a problem</li>
           </ul>
         </div>
