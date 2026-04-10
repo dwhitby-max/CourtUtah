@@ -53,7 +53,8 @@
       "Bash(printenv ENCRYPTION_KEY)",
       "Bash(printenv)",
       "Bash(kill:*)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(xargs cat:*)"
     ]
   }
 }
