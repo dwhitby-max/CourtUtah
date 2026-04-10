@@ -480,10 +480,18 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       }
     }
 
+    // Determine which dates were actually searched so stale cleanup is scoped correctly.
+    // Agency searches specific dates; non-agency uses d=all (covers all dates).
+    // If expandDates returns ["all"], the search covered all dates too.
+    const rawDates = expandDates(searchParams);
+    const searchedDates: string[] | "all" = (accountType !== "agency" || rawDates.includes("all"))
+      ? "all"
+      : rawDates;
+
     // Persist live results and detect changes (awaited so we can return changes)
     let detectedChanges: DetectedChange[] = [];
     try {
-      detectedChanges = await persistLiveResults(allParsed);
+      detectedChanges = await persistLiveResults(allParsed, searchedDates);
       if (detectedChanges.length > 0) {
         console.log(`🔔 ${detectedChanges.length} event(s) with changes detected`);
       }

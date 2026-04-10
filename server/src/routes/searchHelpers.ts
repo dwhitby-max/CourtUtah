@@ -209,13 +209,20 @@ export async function saveSearch(
  * Detects changes against existing DB records, logs them, and notifies affected users.
  *
  * After upserting, removes stale DB events for the same case numbers that no longer
- * appear in the live results. The live scrape is the source of truth — if a case moved
- * to a different date/time, the old event is deleted and a new one is created.
- * Associated calendar entries are deleted from the provider before removal.
+ * appear in the live results — but ONLY for dates that were actually searched.
+ * The live scrape is the source of truth within the searched date range. Events
+ * on dates outside the search scope are left untouched.
+ *
+ * @param searchedDates - The dates that were actually searched. "all" means the
+ *   scrape covered all dates (d=all), so stale events on ANY date are cleaned up.
+ *   An array of YYYY-MM-DD strings scopes cleanup to just those dates.
  *
  * Returns array of detected changes for the API response.
  */
-export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<DetectedChange[]> {
+export async function persistLiveResults(
+  parsed: ParsedCourtEvent[],
+  searchedDates?: string[] | "all"
+): Promise<DetectedChange[]> {
   const pool = getPool();
   if (!pool || parsed.length === 0) return [];
 
@@ -390,18 +397,30 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
     }
 
     // --- Stale event cleanup ---
-    // The live scrape is the source of truth. For each case_number we just saw,
-    // delete any DB events that don't match the fresh (case_number, event_date, event_time)
-    // tuples. This handles cases that moved date/time or were removed entirely —
-    // no ghosts, no duplicates.
+    // The live scrape is the source of truth FOR THE DATES THAT WERE SEARCHED.
+    // Only delete DB events whose date falls within the searched range.
+    // Events on dates outside the search scope are left untouched.
     const caseNumbers = [...new Set(parsed.filter(e => e.caseNumber).map(e => e.caseNumber!))];
-    if (caseNumbers.length > 0) {
-      // Find stale events: same case_number but not in the fresh results
+    const searchedDateSet = Array.isArray(searchedDates) ? new Set(searchedDates) : null;
+    const isAllDates = searchedDates === "all";
+
+    if (caseNumbers.length > 0 && searchedDates) {
+      // Find potentially stale events: same case_number, scoped to searched dates
+      let staleQuery: string;
+      let staleParams: unknown[];
+
+      if (isAllDates) {
+        staleQuery = `SELECT id, case_number, event_date::text, COALESCE(event_time, '') as event_time
+                      FROM court_events WHERE case_number = ANY($1)`;
+        staleParams = [caseNumbers];
+      } else {
+        staleQuery = `SELECT id, case_number, event_date::text, COALESCE(event_time, '') as event_time
+                      FROM court_events WHERE case_number = ANY($1) AND event_date::text = ANY($2)`;
+        staleParams = [caseNumbers, [...searchedDateSet!]];
+      }
+
       const staleResult = await client.query<{ id: number; case_number: string; event_date: string; event_time: string }>(
-        `SELECT id, case_number, event_date::text, COALESCE(event_time, '') as event_time
-         FROM court_events
-         WHERE case_number = ANY($1)`,
-        [caseNumbers]
+        staleQuery, staleParams
       );
 
       const staleIds: number[] = [];
