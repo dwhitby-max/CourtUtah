@@ -30,6 +30,9 @@ Full-stack app that scrapes Utah court calendars (legacy.utcourts.gov), lets use
 - **Never use `clearToken()` in ProtectedRoute.** Just redirect; the OAuth callback issues a new JWT.
 - **Use `sessionStorage` flags to prevent redirect loops** (one attempt per browser session).
 
+### Timezone
+- **All dates and times must use Mountain Standard Time (America/Denver).** This includes frontend date pickers, calendar event times, scheduler cron jobs, and any user-facing timestamps. Use local date components (not `toISOString()`) to avoid UTC shifts.
+
 ### Frontend Guards
 - **Pages behind `ProtectedRoute` should NOT re-check `isLoggedIn`.** The wrapper guarantees auth.
 - **"No calendar connected" API errors → redirect to `/api/auth/google`**, not an error message.
