@@ -86,6 +86,7 @@ export default function SearchPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [showExportModal, setShowExportModal] = useState(false);
   const [cachedToday, setCachedToday] = useState(false);
+  const [priorScrapeHadFailures, setPriorScrapeHadFailures] = useState(false);
   const [savedSearches, setSavedSearches] = useState<SavedSearchRow[]>([]);
   const [loadingSaved, setLoadingSaved] = useState(false);
   const [lastSearchParams, setLastSearchParams] = useState<Record<string, string> | null>(null);
@@ -164,6 +165,7 @@ export default function SearchPage() {
       setDetectedChanges(data.detectedChanges ?? []);
       setCachedToday(data.cachedToday ?? false);
       setSearchWarnings(data.searchWarnings ?? []);
+      setPriorScrapeHadFailures(data.priorScrapeHadFailures ?? false);
       fetchSavedSearches();
 
       // Show upgrade prompt if saved search limit was reached
@@ -412,7 +414,7 @@ export default function SearchPage() {
       {error && <div className="bg-red-50 text-red-700 p-4 rounded-md text-sm">{error}</div>}
       {successMsg && <div className="bg-green-50 text-green-700 p-4 rounded-md text-sm">{successMsg}</div>}
 
-      {searchWarnings.length > 0 && (
+      {(searchWarnings.length > 0 || (cachedToday && priorScrapeHadFailures)) && (
         <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
           <div className="flex items-start gap-2">
             <svg className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -420,9 +422,15 @@ export default function SearchPage() {
             </svg>
             <div className="flex-1">
               <p className="text-sm font-medium text-orange-800">Some results may be incomplete</p>
-              {searchWarnings.map((w, i) => (
-                <p key={i} className="text-sm text-orange-700 mt-1">{w}</p>
-              ))}
+              {searchWarnings.length > 0 ? (
+                searchWarnings.map((w, i) => (
+                  <p key={i} className="text-sm text-orange-700 mt-1">{w}</p>
+                ))
+              ) : (
+                <p className="text-sm text-orange-700 mt-1">
+                  The earlier scrape for this search had partial failures. You can retry to attempt a fresh live search.
+                </p>
+              )}
               <button
                 onClick={handleForceRefresh}
                 disabled={loading}
@@ -503,13 +511,6 @@ export default function SearchPage() {
               {cachedToday && (
                 <span className="inline-flex items-center gap-2 text-sm text-amber-600 bg-amber-50 px-3 py-1 rounded-full">
                   Showing cached results from earlier today.
-                  <button
-                    onClick={handleForceRefresh}
-                    disabled={loading}
-                    className="font-medium underline hover:text-amber-800 disabled:opacity-50"
-                  >
-                    Refresh
-                  </button>
                 </span>
               )}
               <div className="flex items-center gap-2">

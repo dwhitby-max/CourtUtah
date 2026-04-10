@@ -363,19 +363,30 @@ router.post("/trigger-search/:searchId", heavyLimiter, async (req: Request, res:
 
     console.log(`🔑 Admin (userId=${adminUserId}) triggering search #${searchId} for user ${email} (userId=${user_id}): ${label}`);
 
+    // Mark the saved search as having failures so /api/search will honor
+    // force_refresh. Without this, the search route would ignore force_refresh
+    // for any search whose prior scrape was successful. The flag will be
+    // overwritten with the real outcome by saveSearch when the scrape finishes.
+    await client.query(
+      `UPDATE saved_searches SET last_scrape_had_failures = true WHERE id = $1`,
+      [searchId]
+    );
+
     // Make an internal request to the search route, impersonating the target user.
     // We import and call the search handler's core logic via an internal HTTP call.
     const proto = req.get("x-forwarded-proto") || req.protocol || "http";
     const host = req.get("host") || "localhost:3000";
     const searchUrl = `${proto}://${host}/api/search?${qs}`;
 
-    // Get the target user's JWT to make an authenticated request
+    // Mint a short-lived JWT impersonating the target user. Must include the
+    // same issuer/audience claims that authenticateToken expects, otherwise
+    // verification fails when the search route receives the request.
     const jwt = await import("jsonwebtoken");
     const { config: envConfig } = await import("../config/env");
     const token = jwt.default.sign(
       { userId: user_id, email },
       envConfig.jwtSecret,
-      { expiresIn: "5m" }
+      { expiresIn: "5m", issuer: "courttracker", audience: "courttracker-app" }
     );
 
     const searchRes = await fetch(searchUrl, {

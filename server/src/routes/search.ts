@@ -162,42 +162,60 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     delete searchParams.courtDate;
   }
 
-  const forceRefresh = qp("force_refresh") === "true";
+  const requestedForceRefresh = qp("force_refresh") === "true";
 
   const existing = await findExistingAutoSearch(userId, pKey);
+
+  // Force-refresh is only honored when the prior scrape had partial failures
+  // (so users can recover from a bad scrape) or when no prior scrape exists.
+  // On a fully successful scrape, we ignore force_refresh and serve from cache —
+  // the daily cron is the only path that re-scrapes a successful search.
+  // Admins override this by setting saved_searches.last_scrape_had_failures = true
+  // before triggering (see /api/admin/trigger-search).
+  const allowForceRefresh = requestedForceRefresh && (!existing || existing.last_scrape_had_failures);
+  if (requestedForceRefresh && !allowForceRefresh) {
+    console.log(`⏭️  Ignoring force_refresh: prior scrape succeeded (savedSearchId=${existing?.id}). Serving cache.`);
+  }
+  const forceRefresh = allowForceRefresh;
+
   if (!forceRefresh && existing?.last_refreshed_at) {
     const lastRun = new Date(existing.last_refreshed_at);
     const now = new Date();
-    const sameDay =
-      lastRun.getUTCFullYear() === now.getUTCFullYear() &&
-      lastRun.getUTCMonth() === now.getUTCMonth() &&
-      lastRun.getUTCDate() === now.getUTCDate();
+    // Compare dates in Mountain Time (America/Denver) — courts update once daily
+    // on MT, so a search run earlier today (MT) should hit cache even if UTC has
+    // rolled over. en-CA gives YYYY-MM-DD format for safe string comparison.
+    const mtFormatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Denver",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    const sameDay = mtFormatter.format(lastRun) === mtFormatter.format(now);
 
     if (sameDay) {
+      // Same-day cache hit: the daily cron is the only live scrape. Once a
+      // search has been run today (cron or initial user search), serve from
+      // DB for the rest of the day regardless of account type or result count.
       const cacheDbParams = { ...searchParams };
       if (cacheDbParams.attorney) delete cacheDbParams.attorney;
       const dbResults = await searchCourtEvents(cacheDbParams);
       const filtered = applyAllFilters(dbResults, searchParams);
 
-      const LOW_RESULT_THRESHOLD = 3;
-      if (accountType === "agency" && filtered.length < LOW_RESULT_THRESHOLD) {
-        console.log(`📋 Cached results suspiciously low (${filtered.length}) for agency search — forcing refresh`);
-      } else {
-        console.log(`📋 Search already run today (${lastRun.toISOString()}) — returning ${filtered.length} cached results`);
-        markNewEvents(filtered, existing.last_refreshed_at);
-        res.json({
-          results: filtered,
-          resultsCount: filtered.length,
-          searchParams,
-          source: "cached",
-          savedSearchId: existing.id,
-          previousRunAt: lastRun.toISOString(),
-          cachedToday: true,
-          userPlan,
-          processedAt: new Date().toISOString(),
-        });
-        return;
-      }
+      console.log(`📋 Search already run today (${lastRun.toISOString()}) — returning ${filtered.length} cached results`);
+      markNewEvents(filtered, existing.last_refreshed_at);
+      res.json({
+        results: filtered,
+        resultsCount: filtered.length,
+        searchParams,
+        source: "cached",
+        savedSearchId: existing.id,
+        previousRunAt: lastRun.toISOString(),
+        cachedToday: true,
+        priorScrapeHadFailures: existing.last_scrape_had_failures,
+        userPlan,
+        processedAt: new Date().toISOString(),
+      });
+      return;
     }
   }
 
@@ -616,7 +634,8 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
 
     console.log(`  📊 Results: ${filteredLive.length} live events, ${filteredLive.length - deduped.length} duplicates removed, ${merged.length} returned`);
 
-    const { savedSearchId, previousRunAt, limitReached } = await saveSearch(userId, searchParams, pKey, merged.length, userPlan);
+    const liveHadFailures = searchWarnings.length > 0;
+    const { savedSearchId, previousRunAt, limitReached } = await saveSearch(userId, searchParams, pKey, merged.length, userPlan, liveHadFailures);
     markNewEvents(merged, previousRunAt);
     res.json({
       results: merged,
@@ -630,6 +649,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       processedAt: new Date().toISOString(),
       detectedChanges: detectedChanges.length > 0 && previousRunAt ? detectedChanges : undefined,
       searchWarnings: searchWarnings.length > 0 ? searchWarnings : undefined,
+      priorScrapeHadFailures: liveHadFailures,
     });
   } catch (err) {
     console.error("❌ Search failed:", err);

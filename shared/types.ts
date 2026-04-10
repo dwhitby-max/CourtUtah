@@ -150,6 +150,9 @@ export interface SearchResponse {
   cachedToday?: boolean;
   /** Warnings about partial failures during search (e.g., failed day/court requests) */
   searchWarnings?: string[];
+  /** True if the prior live scrape for this saved search had partial failures.
+   *  Used to decide whether to show a "Retry" button on cached results. */
+  priorScrapeHadFailures?: boolean;
 }
 
 // --- Calendar Entries ---
