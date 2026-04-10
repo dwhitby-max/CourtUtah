@@ -3,7 +3,7 @@ import { ParsedCourtEvent } from "../services/courtEventParser";
 import { CourtEvent, DetectedChange } from "@shared/types";
 import { getPool } from "../db/pool";
 import { detectChanges, processChanges } from "../services/changeDetector";
-import { syncCalendarEntry } from "../services/calendarSync";
+import { syncCalendarEntry, deleteCalendarEntry } from "../services/calendarSync";
 
 /**
  * Map user search params to LiveSearchParams for utcourts.gov.
@@ -207,6 +207,12 @@ export async function saveSearch(
 /**
  * Persist live-scraped events into court_events table so future searches hit the DB.
  * Detects changes against existing DB records, logs them, and notifies affected users.
+ *
+ * After upserting, removes stale DB events for the same case numbers that no longer
+ * appear in the live results. The live scrape is the source of truth — if a case moved
+ * to a different date/time, the old event is deleted and a new one is created.
+ * Associated calendar entries are deleted from the provider before removal.
+ *
  * Returns array of detected changes for the API response.
  */
 export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<DetectedChange[]> {
@@ -215,10 +221,13 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
 
   const allDetectedChanges: DetectedChange[] = [];
   const client = await pool.connect();
+
+  // Track which (case_number, event_date, event_time) tuples we upserted
+  // so we can delete stale events afterward.
+  const freshKeys = new Set<string>();
+
   try {
     for (const event of parsed) {
-      // Dedup by case_number + event_date + event_time — a case can have
-      // multiple hearings per day at different times.
       if (!event.caseNumber || !event.eventDate) continue;
 
       // Don't persist events that are too sparse — they'd create near-empty
@@ -227,6 +236,10 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
       if (!event.defendantName && !event.hearingType && !event.judgeName) {
         continue;
       }
+
+      const eventTimeNorm = (event.eventTime || "").trim();
+      freshKeys.add(`${event.caseNumber}|${event.eventDate}|${eventTimeNorm}`);
+
       try {
         const existing = await client.query(
           `SELECT id, court_room, event_date::text, event_time, hearing_type,
@@ -243,20 +256,10 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
         if (existing.rows.length > 0) {
           const row = existing.rows[0];
 
-          // Guard: if the incoming event is sparser than the DB record
-          // (e.g. parser failed to extract defendant or hearing type),
-          // don't run change detection — it would flag real data being
-          // "changed" to empty strings, triggering false notifications.
           const incomingPopulated = [event.defendantName, event.hearingType, event.judgeName, event.courtRoom].filter(Boolean).length;
           const existingPopulated = [row.defendant_name, row.hearing_type, row.judge_name, row.court_room].filter(Boolean).length;
           const isSparseIncoming = incomingPopulated < existingPopulated && incomingPopulated <= 1;
 
-          // Build incoming record in DB column format for change detection.
-          // Don't overwrite existing DB values with empty strings — enrichment
-          // may have failed (e.g. details.php timeout), and blanking out known
-          // attorney data triggers false "change" notifications.
-          // When the incoming event is sparse, preserve ALL existing DB values
-          // to prevent false change detection.
           const incoming: Record<string, unknown> = {
             court_room: event.courtRoom || row.court_room || "",
             event_date: event.eventDate || "",
@@ -275,13 +278,11 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
             console.warn(`⚠️ Sparse incoming event for case ${event.caseNumber} (event ${row.id}) — skipping change detection to prevent false alerts`);
           }
 
-          // Detect field-level changes
           const changes = isSparseIncoming ? [] : detectChanges(row, incoming);
 
           if (changes.length > 0) {
             console.log(`🔄 Changes detected for case ${event.caseNumber} (event ${row.id}):`, changes.map(c => `${c.field}: "${c.oldValue}" → "${c.newValue}"`).join(", "));
 
-            // Log changes to change_log table
             await processChanges(row.id, changes);
 
             allDetectedChanges.push({
@@ -291,7 +292,6 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
               changes,
             });
 
-            // Update the DB record with all live-scraped fields
             await client.query(
               `UPDATE court_events SET
                 court_name = COALESCE(NULLIF($1, ''), court_name),
@@ -385,8 +385,55 @@ export async function persistLiveResults(parsed: ParsedCourtEvent[]): Promise<De
           ]
         );
       } catch (err) {
-        // Log but continue — don't let one event failure stop the rest
         console.warn(`⚠️ Failed to persist event ${event.caseNumber}:`, err instanceof Error ? err.message : err);
+      }
+    }
+
+    // --- Stale event cleanup ---
+    // The live scrape is the source of truth. For each case_number we just saw,
+    // delete any DB events that don't match the fresh (case_number, event_date, event_time)
+    // tuples. This handles cases that moved date/time or were removed entirely —
+    // no ghosts, no duplicates.
+    const caseNumbers = [...new Set(parsed.filter(e => e.caseNumber).map(e => e.caseNumber!))];
+    if (caseNumbers.length > 0) {
+      // Find stale events: same case_number but not in the fresh results
+      const staleResult = await client.query<{ id: number; case_number: string; event_date: string; event_time: string }>(
+        `SELECT id, case_number, event_date::text, COALESCE(event_time, '') as event_time
+         FROM court_events
+         WHERE case_number = ANY($1)`,
+        [caseNumbers]
+      );
+
+      const staleIds: number[] = [];
+      for (const row of staleResult.rows) {
+        const key = `${row.case_number}|${row.event_date}|${row.event_time.trim()}`;
+        if (!freshKeys.has(key)) {
+          staleIds.push(row.id);
+        }
+      }
+
+      if (staleIds.length > 0) {
+        console.log(`🧹 Removing ${staleIds.length} stale event(s) for case(s) that moved or were removed`);
+
+        // Delete calendar entries from external providers first
+        const calEntries = await client.query<{ id: number; user_id: number }>(
+          `SELECT id, user_id FROM calendar_entries
+           WHERE court_event_id = ANY($1) AND sync_status NOT IN ('removed')`,
+          [staleIds]
+        );
+        for (const ce of calEntries.rows) {
+          try {
+            await deleteCalendarEntry(ce.id, ce.user_id);
+          } catch (err) {
+            console.warn(`⚠️ Failed to delete calendar entry ${ce.id} for stale event:`, err instanceof Error ? err.message : err);
+          }
+        }
+
+        // Delete the stale court_events rows
+        await client.query(
+          `DELETE FROM court_events WHERE id = ANY($1)`,
+          [staleIds]
+        );
       }
     }
   } finally {

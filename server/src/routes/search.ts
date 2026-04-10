@@ -538,14 +538,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       arr.push(r);
       dbByCase.set(key, arr);
     }
-    function normalizeTime(t: string | null | undefined): string {
-      if (!t) return "";
-      return t.replace(/\s+/g, " ").trim().toUpperCase();
-    }
-
-    const liveCaseDateTimeKeys = new Set<string>();
     for (const event of liveEvents) {
-      liveCaseDateTimeKeys.add(`${event.caseNumber}|${event.eventDate}|${normalizeTime(event.eventTime)}`);
       const dbMatches = dbByCase.get(`${event.caseNumber}|${event.eventDate}`);
       if (dbMatches) {
         for (const dbMatch of dbMatches) {
@@ -595,18 +588,12 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     if (isAttorneySearch) delete liveFilterParams.attorney;
     const filteredLive = applyAllFilters(liveEvents, liveFilterParams);
 
-    // Add DB-only results (not in live) and merge.
-    // Only exclude DB records when the live scrape has a matching case+date+time.
-    // This preserves DB records for hearings at different times that the live
-    // scrape may not have returned (e.g., partial scrape results).
-    // If a DB record matches case+date but NOT time, it's kept — it may represent
-    // a different hearing that the live scrape missed.
-    const extraDb = dbResults.filter(
-      (r) => !liveCaseDateTimeKeys.has(`${r.caseNumber}|${r.eventDate}|${normalizeTime(r.eventTime)}`)
-    );
-    const merged = [...filteredLive, ...extraDb].slice(0, 2000);
+    // Live scrape is the source of truth — stale DB events for the same case
+    // numbers were already deleted during persistLiveResults. No need to merge
+    // old DB records back in; doing so would re-surface ghost events.
+    const merged = filteredLive.slice(0, 2000);
 
-    console.log(`  📊 Merge: ${filteredLive.length} live + ${extraDb.length} extra DB = ${merged.length} total results`);
+    console.log(`  📊 Results: ${filteredLive.length} live events (${merged.length} after limit)`);
 
     const { savedSearchId, previousRunAt, limitReached } = await saveSearch(userId, searchParams, pKey, merged.length, userPlan);
     markNewEvents(merged, previousRunAt);
