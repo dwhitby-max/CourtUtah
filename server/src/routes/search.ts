@@ -339,7 +339,9 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
           }
           const parsed = parseHtmlCalendarResults(html, parseContext);
           console.log(`  ✅ OK   loc=${loc} date=${date}: ${html.length} chars HTML, ${parsed.length} events parsed`);
-          if (!useBroadSearch) {
+          // Always annotate with court name — even for broad searches (loc=all)
+          // the individual location code is known from the request.
+          if (loc !== "all") {
             const courtInfo = courtByLoc.get(loc);
             for (const event of parsed) {
               event.courtName = courtInfo?.name ?? null;
