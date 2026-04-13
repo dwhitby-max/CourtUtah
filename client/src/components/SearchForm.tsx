@@ -55,9 +55,13 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
       return;
     }
 
-    // Require explicit court selection to prevent accidental all-court searches
+    // Require explicit court selection
     if (!allCourts && selectedCourts.length === 0) {
-      setValidationError("Please select one or more courts, or check \"All Courts\" to search everywhere.");
+      setValidationError(
+        isAgency
+          ? "Please select one or more court locations."
+          : "Please select one or more courts, or check \"All Courts\" to search everywhere."
+      );
       return;
     }
 
@@ -125,6 +129,7 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
             onChange={setSelectedCourts}
             allCourts={allCourts}
             onAllCourtsChange={setAllCourts}
+            hideAllCourts={isAgency}
           />
         </div>
 

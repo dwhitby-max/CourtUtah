@@ -12,9 +12,10 @@ export interface CourtPickerProps {
   onChange: (selected: string[]) => void;
   allCourts?: boolean;
   onAllCourtsChange?: (checked: boolean) => void;
+  hideAllCourts?: boolean;
 }
 
-export default function CourtPicker({ selected, onChange, allCourts = false, onAllCourtsChange }: CourtPickerProps) {
+export default function CourtPicker({ selected, onChange, allCourts = false, onAllCourtsChange, hideAllCourts = false }: CourtPickerProps) {
   const [courts, setCourts] = useState<Court[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -82,16 +83,18 @@ export default function CourtPicker({ selected, onChange, allCourts = false, onA
         Court Location
       </label>
 
-      {/* All Courts checkbox */}
-      <label className="flex items-center gap-2 mb-1.5 cursor-pointer select-none">
-        <input
-          type="checkbox"
-          checked={allCourts}
-          onChange={handleAllCourtsToggle}
-          className="rounded border-gray-300 text-amber-600 focus:ring-amber-500"
-        />
-        <span className="text-sm text-gray-700">All Courts</span>
-      </label>
+      {/* All Courts checkbox — hidden for agency accounts (must pick specific courts) */}
+      {!hideAllCourts && (
+        <label className="flex items-center gap-2 mb-1.5 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={allCourts}
+            onChange={handleAllCourtsToggle}
+            className="rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+          />
+          <span className="text-sm text-gray-700">All Courts</span>
+        </label>
+      )}
 
       {/* Court picker dropdown — disabled when All Courts is checked */}
       <button

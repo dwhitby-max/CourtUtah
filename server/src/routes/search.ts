@@ -167,6 +167,12 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     delete searchParams.courtDate;
   }
 
+  // Agency accounts must select specific courts — never search all
+  if (accountType === "agency" && searchParams.allCourts === "true") {
+    res.status(400).json({ error: "Agency accounts must select specific court locations." });
+    return;
+  }
+
   const requestedForceRefresh = qp("force_refresh") === "true";
 
   let existing: Awaited<ReturnType<typeof findExistingAutoSearch>> = null;
@@ -283,7 +289,11 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     // Exception: re-running a saved search (existing) or when courtNames were
     // provided but didn't resolve (court list may have changed since save)
     if (liveBase && courtCodes.length === 0 && searchParams.allCourts !== "true") {
-      if (existing || searchParams.courtNames) {
+      if (accountType === "agency") {
+        // Agency accounts must always have specific courts — never fall back to all
+        res.status(400).json({ error: "Agency accounts must select specific court locations." });
+        return;
+      } else if (existing || searchParams.courtNames) {
         // Saved search or unresolved court names — default to all courts
         searchParams.allCourts = "true";
       } else {
@@ -315,10 +325,19 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     // Determine search strategy:
     // - Agency accounts: search day by day (one request per weekday)
     // - Individual attorneys / default: use d=all
-    //   - "All courts" or many courts (>3): use loc=all&d=all (single request)
-    //   - 1-3 specific courts: use loc=CODE&d=all per court (1-3 requests)
-    // Then filter by date range locally after parsing.
-    const useBroadSearch = searchParams.allCourts === "true" || courtCodes.length > 3;
+    //   - "All courts" checked: use loc=all&d=all (single request)
+    //   - Specific courts selected: use loc=CODE&d=all per court (1 request each)
+    // Always search the specific courts the user selected — never silently
+    // broaden to loc=all just because they picked many courts.
+    const useBroadSearch = searchParams.allCourts === "true";
+
+    // On retry (force_refresh after failures), only re-scrape the courts that
+    // failed last time. The courts that succeeded are already cached in the DB.
+    let retryCourtsOnly: string[] | null = null;
+    if (forceRefresh && existing?.failed_courts && existing.failed_courts.length > 0) {
+      retryCourtsOnly = existing.failed_courts;
+      console.log(`🔄 Retry: only re-scraping ${retryCourtsOnly.length} previously failed court(s): ${retryCourtsOnly.join(", ")}`);
+    }
 
     // Build a lookup from location code → full court info so we can annotate parsed events
     const courtByLoc = new Map(courts.map((c) => [c.locationCode, c]));
@@ -330,11 +349,15 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     };
     const searchWarnings: string[] = [];
 
+    // Track which court codes failed so we can store them for targeted retry
+    const failedCourtCodes: string[] = [];
+
     if (accountType === "agency") {
       const dates = expandDates(searchParams);
-      const locationCodes = useBroadSearch ? ["all"] : courtCodes;
+      const allLocationCodes = useBroadSearch ? ["all"] : courtCodes;
+      const locationCodes = retryCourtsOnly || allLocationCodes;
       const totalRequests = dates.length * locationCodes.length;
-      console.log(`🌐 Agency day-by-day search: ${dates.length} date(s) x ${locationCodes.length} location(s) = ${totalRequests} request(s)`);
+      console.log(`🌐 Agency day-by-day search: ${dates.length} date(s) x ${locationCodes.length} location(s) = ${totalRequests} request(s)${retryCourtsOnly ? " (retry-only)" : ""}`);
 
       let successCount = 0;
       let failCount = 0;
@@ -357,6 +380,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
           if (error) {
             failCount++;
             failedRequests.push(`${courtLabel} on ${date}`);
+            if (loc !== "all" && !failedCourtCodes.includes(loc)) failedCourtCodes.push(loc);
             console.log(`  ❌ FAIL loc=${loc} date=${date}: ${error}`);
             continue;
           }
@@ -405,11 +429,12 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
         searchWarnings.push(`Broad court search failed — results may be incomplete. Please try again.`);
       }
     } else {
-      console.log(`🌐 Targeted search: ${courtCodes.length} court(s) with d=all = ${courtCodes.length} request(s)`);
+      const targetCodes = retryCourtsOnly || courtCodes;
+      console.log(`🌐 Targeted search: ${targetCodes.length} court(s) with d=all = ${targetCodes.length} request(s)${retryCourtsOnly ? " (retry-only)" : ""}`);
       let targetedFails = 0;
       const targetedFailNames: string[] = [];
       const results = await Promise.all(
-        courtCodes.map((loc) =>
+        targetCodes.map((loc) =>
           liveSearchUtcourts({ ...liveBase, locationCode: loc, date: "all" })
             .then((html) => ({ html, loc, error: null as string | null }))
             .catch((err) => {
@@ -424,6 +449,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
         if (error) {
           targetedFails++;
           targetedFailNames.push(courtLabel);
+          failedCourtCodes.push(loc);
           console.log(`  ❌ FAIL loc=${loc}: ${error}`);
           continue;
         }
@@ -440,9 +466,9 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
         }
         allParsed.push(...parsed);
       }
-      console.log(`  📋 Targeted search complete: ${courtCodes.length - targetedFails} succeeded, ${targetedFails} failed, ${allParsed.length} events total`);
+      console.log(`  📋 Targeted search complete: ${targetCodes.length - targetedFails} succeeded, ${targetedFails} failed, ${allParsed.length} events total`);
       if (targetedFails > 0) {
-        searchWarnings.push(`${targetedFails} of ${courtCodes.length} court requests failed — results may be incomplete (${targetedFailNames.join("; ")}).`);
+        searchWarnings.push(`${targetedFails} of ${targetCodes.length} court requests failed — results may be incomplete (${targetedFailNames.join("; ")}).`);
       }
     }
 
@@ -645,7 +671,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     console.log(`  📊 Results: ${filteredLive.length} live events, ${filteredLive.length - deduped.length} duplicates removed, ${merged.length} returned`);
 
     const liveHadFailures = searchWarnings.length > 0;
-    const { savedSearchId, previousRunAt, limitReached } = await saveSearch(userId, searchParams, pKey, merged.length, userPlan, liveHadFailures);
+    const { savedSearchId, previousRunAt, limitReached } = await saveSearch(userId, searchParams, pKey, merged.length, userPlan, liveHadFailures, failedCourtCodes);
     markNewEvents(merged, previousRunAt);
     res.json({
       results: merged,

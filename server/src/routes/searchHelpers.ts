@@ -123,13 +123,15 @@ export function buildSearchLabel(params: Record<string, string | undefined>): st
 export async function findExistingAutoSearch(
   userId: number,
   paramsKey: string
-): Promise<{ id: number; last_refreshed_at: string | null; last_scrape_had_failures: boolean } | null> {
+): Promise<{ id: number; last_refreshed_at: string | null; last_scrape_had_failures: boolean; failed_courts: string[] } | null> {
   const pool = getPool();
   if (!pool) return null;
   const client = await pool.connect();
   try {
     const result = await client.query(
-      `SELECT id, last_refreshed_at, COALESCE(last_scrape_had_failures, false) AS last_scrape_had_failures
+      `SELECT id, last_refreshed_at,
+              COALESCE(last_scrape_had_failures, false) AS last_scrape_had_failures,
+              COALESCE(failed_courts, '{}') AS failed_courts
        FROM saved_searches
        WHERE user_id = $1 AND search_params->>'_key' = $2 AND is_active = true
        LIMIT 1`,
@@ -151,7 +153,8 @@ export async function saveSearch(
   paramsKey: string,
   resultsCount: number,
   userPlan?: string,
-  hadFailures: boolean = false
+  hadFailures: boolean = false,
+  failedCourts: string[] = []
 ): Promise<{ savedSearchId: number; previousRunAt: string | null; limitReached?: boolean }> {
   const pool = getPool();
   if (!pool) return { savedSearchId: -1, previousRunAt: null };
@@ -179,9 +182,9 @@ export async function saveSearch(
       await client.query(
         `UPDATE saved_searches
          SET results_count = $1, last_refreshed_at = NOW(),
-             last_scrape_had_failures = $2, updated_at = NOW()
-         WHERE id = $3`,
-        [resultsCount, hadFailures, existing.id]
+             last_scrape_had_failures = $2, failed_courts = $3, updated_at = NOW()
+         WHERE id = $4`,
+        [resultsCount, hadFailures, failedCourts, existing.id]
       );
       return { savedSearchId: existing.id, previousRunAt };
     }
@@ -201,10 +204,10 @@ export async function saveSearch(
     }
 
     const result = await client.query(
-      `INSERT INTO saved_searches (user_id, search_type, search_value, label, search_params, results_count, last_refreshed_at, source, last_scrape_had_failures)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW(), 'auto_search', $7)
+      `INSERT INTO saved_searches (user_id, search_type, search_value, label, search_params, results_count, last_refreshed_at, source, last_scrape_had_failures, failed_courts)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW(), 'auto_search', $7, $8)
        RETURNING id`,
-      [userId, searchType, searchValue, label, JSON.stringify(paramsWithKey), resultsCount, hadFailures]
+      [userId, searchType, searchValue, label, JSON.stringify(paramsWithKey), resultsCount, hadFailures, failedCourts]
     );
     return { savedSearchId: result.rows[0].id, previousRunAt: null };
   } finally {

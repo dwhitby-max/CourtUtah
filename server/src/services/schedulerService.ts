@@ -2,13 +2,39 @@ import cron from "node-cron";
 import { getPool } from "../db/pool";
 import { captureException } from "./sentryService";
 import { sendDigestNotifications } from "./digestService";
+import { runDailyRefresh } from "./dailyRefresh";
 
 /**
- * Start the scheduler. Runs daily digest notifications and cleanup.
+ * Start the scheduler. Runs daily refresh, digest notifications, and cleanup.
  * Times are in Mountain Time (America/Denver = UTC-7 MST / UTC-6 MDT).
+ *
+ * Schedule (all times approximate MT):
+ *   6:00 AM — Daily refresh: re-run all saved searches (courts update ~5:30 AM)
+ *   6:30 AM — Cleanup: mark past calendar entries as completed
+ *   7:00 AM — Daily digest: send notification summaries
+ *   7:00 AM Mon — Weekly digest
  */
 export function startScheduler(): void {
-  console.log("⏰ Starting scheduler (daily digests + cleanup)");
+  console.log("⏰ Starting scheduler (daily refresh + digests + cleanup)");
+
+  // Daily refresh — 12:00 UTC (~6:00 AM MT)
+  // Re-runs all active saved searches to detect new hearings, changes, and
+  // removals. Courts update once daily (~5:30 AM MT), so this runs right after.
+  // An initial random delay of 0–30 minutes varies the start time each day
+  // so the batch doesn't always begin at the same second.
+  cron.schedule("0 12 * * *", async () => {
+    const jitterMs = Math.floor(Math.random() * 30 * 60 * 1000); // 0–30 min
+    console.log(`🔄 Daily refresh triggered — starting in ${(jitterMs / 60_000).toFixed(1)} minutes`);
+    await new Promise((resolve) => setTimeout(resolve, jitterMs));
+    try {
+      await runDailyRefresh();
+    } catch (err) {
+      console.error("❌ Daily refresh failed:", err instanceof Error ? err.message : err);
+      captureException(err instanceof Error ? err : new Error(String(err)), {
+        tags: { service: "scheduler", phase: "daily-refresh" },
+      });
+    }
+  });
 
   // Daily cleanup — 12:30 UTC (~6:30 AM MT)
   // Marks past calendar entries as completed
