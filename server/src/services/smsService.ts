@@ -23,7 +23,7 @@ function getClient(): unknown {
 }
 
 export async function sendSms(to: string, message: string): Promise<boolean> {
-  const client = getClient() as { messages?: { create: Function } } | null;
+  const client = getClient() as { messages?: { create: (opts: { body: string; from: string; to: string }) => Promise<unknown> } } | null;
   if (!client || !client.messages) {
     console.warn("⚠️  SMS skipped (Twilio not configured):", message.slice(0, 50));
     return false;
@@ -40,7 +40,7 @@ export async function sendSms(to: string, message: string): Promise<boolean> {
       from: config.twilio.phoneNumber,
       to,
     });
-    console.log(`✅ SMS sent to ${to}`);
+    console.log(`✅ SMS sent successfully`);
     return true;
   } catch (err) {
     console.error("❌ SMS send failed:", err);

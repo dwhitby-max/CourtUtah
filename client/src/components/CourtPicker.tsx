@@ -7,14 +7,14 @@ interface Court {
   locationCode: string;
 }
 
-interface CourtPickerProps {
+export interface CourtPickerProps {
   selected: string[];
   onChange: (selected: string[]) => void;
-  allCourts: boolean;
-  onAllCourtsChange: (checked: boolean) => void;
+  allCourts?: boolean;
+  onAllCourtsChange?: (checked: boolean) => void;
 }
 
-export default function CourtPicker({ selected, onChange, allCourts, onAllCourtsChange }: CourtPickerProps) {
+export default function CourtPicker({ selected, onChange, allCourts = false, onAllCourtsChange }: CourtPickerProps) {
   const [courts, setCourts] = useState<Court[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -61,7 +61,7 @@ export default function CourtPicker({ selected, onChange, allCourts, onAllCourts
 
   function handleAllCourtsToggle() {
     const next = !allCourts;
-    onAllCourtsChange(next);
+    onAllCourtsChange?.(next);
     if (next) {
       // Clear individual selections when "All Courts" is checked
       onChange([]);

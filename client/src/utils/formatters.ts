@@ -6,6 +6,7 @@ export function formatDate(dateStr: string | null): string {
       year: "numeric",
       month: "short",
       day: "numeric",
+      timeZone: "America/Denver",
     });
   } catch {
     return dateStr;
@@ -22,6 +23,7 @@ export function formatDateTime(dateStr: string | null): string {
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
+      timeZone: "America/Denver",
     });
   } catch {
     return dateStr;
@@ -81,7 +83,7 @@ function csvCell(val: string | null | undefined): string {
 
 // --- CSV Export Fields & Templates ---
 
-export type CourtEventRow = Record<string, unknown> & {
+export type CourtEventRow = {
   eventDate: string;
   eventTime: string | null;
   courtName: string;

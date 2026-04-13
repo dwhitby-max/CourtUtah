@@ -373,10 +373,8 @@ router.post("/trigger-search/:searchId", heavyLimiter, async (req: Request, res:
     );
 
     // Make an internal request to the search route, impersonating the target user.
-    // We import and call the search handler's core logic via an internal HTTP call.
-    const proto = req.get("x-forwarded-proto") || req.protocol || "http";
-    const host = req.get("host") || "localhost:3000";
-    const searchUrl = `${proto}://${host}/api/search?${qs}`;
+    // Always use localhost to prevent SSRF via Host header manipulation.
+    const searchUrl = `http://localhost:${config.port}/api/search?${qs}`;
 
     // Mint a short-lived JWT impersonating the target user. Must include the
     // same issuer/audience claims that authenticateToken expects, otherwise

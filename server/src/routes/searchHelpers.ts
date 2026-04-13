@@ -44,7 +44,12 @@ export function expandDates(params: Record<string, string | undefined>): string[
     const end = new Date(to + "T00:00:00");
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       const dow = d.getDay();
-      if (dow !== 0 && dow !== 6) dates.push(d.toISOString().split("T")[0]);
+      if (dow !== 0 && dow !== 6) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const dy = String(d.getDate()).padStart(2, "0");
+        dates.push(`${y}-${m}-${dy}`);
+      }
     }
     return dates.slice(0, 15);
   }

@@ -121,9 +121,16 @@ export async function syncCalendarEntry(
     const hearingLocation = entryAny.hearing_location || null;
 
     const rawDate = entry.event_date as unknown;
-    const startDateStr = rawDate instanceof Date
-      ? rawDate.toISOString().split("T")[0]
-      : typeof rawDate === "string" ? rawDate : String(rawDate);
+    let startDateStr: string;
+    if (rawDate instanceof Date) {
+      // Use local date components to avoid UTC shift (CLAUDE.md requirement)
+      const y = rawDate.getFullYear();
+      const m = String(rawDate.getMonth() + 1).padStart(2, "0");
+      const d = String(rawDate.getDate()).padStart(2, "0");
+      startDateStr = `${y}-${m}-${d}`;
+    } else {
+      startDateStr = typeof rawDate === "string" ? rawDate.split("T")[0] : String(rawDate);
+    }
 
     const defendantLast = entry.defendant_name
       ? entry.defendant_name.split(",")[0].trim()
@@ -263,7 +270,9 @@ export async function deleteCalendarEntry(
           case "apple":
           case "caldav": {
             const username = decrypt(entry.access_token_encrypted);
-            const password = decrypt(entry.refresh_token_encrypted);
+            const password = entry.refresh_token_encrypted
+              ? decrypt(entry.refresh_token_encrypted)
+              : "";
             const baseUrl = entry.caldav_url || "https://caldav.icloud.com";
             const url = `${baseUrl}/${encodeURIComponent(entry.external_event_id)}.ics`;
             const response = await fetch(url, {

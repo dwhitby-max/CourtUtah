@@ -1,6 +1,11 @@
 import { getPool } from "../db/pool";
 import { SearchRequest, CourtEvent } from "@shared/types";
 
+/** Escape LIKE pattern special characters so user input is treated literally. */
+function escapeLike(str: string): string {
+  return str.replace(/[%_\\]/g, (ch) => `\\${ch}`);
+}
+
 /**
  * Extract location-matching patterns from a court picker name.
  * e.g. "Third District Court - Salt Lake" → ["THIRD DISTRICT COURT - SALT LAKE", "SALT LAKE"]
@@ -35,14 +40,14 @@ export async function searchCourtEvents(params: SearchRequest): Promise<CourtEve
   let paramIndex = 1;
 
   if (params.defendantName) {
-    conditions.push(`UPPER(defendant_name) LIKE $${paramIndex}`);
-    values.push(`%${params.defendantName.toUpperCase()}%`);
+    conditions.push(`UPPER(defendant_name) LIKE $${paramIndex} ESCAPE '\\'`);
+    values.push(`%${escapeLike(params.defendantName.toUpperCase())}%`);
     paramIndex++;
   }
 
   if (params.caseNumber) {
-    conditions.push(`UPPER(case_number) LIKE $${paramIndex}`);
-    values.push(`%${params.caseNumber.toUpperCase()}%`);
+    conditions.push(`UPPER(case_number) LIKE $${paramIndex} ESCAPE '\\'`);
+    values.push(`%${escapeLike(params.caseNumber.toUpperCase())}%`);
     paramIndex++;
   }
 
@@ -52,16 +57,16 @@ export async function searchCourtEvents(params: SearchRequest): Promise<CourtEve
       // Court picker names like "Third District Court - Salt Lake" don't match
       // DB values like "Salt Lake City", so extract location keywords too.
       const patterns = names.flatMap(extractCourtLocationPatterns);
-      const orClauses = patterns.map((_, i) => `UPPER(court_name) LIKE $${paramIndex + i} OR UPPER(hearing_location) LIKE $${paramIndex + i}`);
+      const orClauses = patterns.map((_, i) => `UPPER(court_name) LIKE $${paramIndex + i} ESCAPE '\\' OR UPPER(hearing_location) LIKE $${paramIndex + i} ESCAPE '\\'`);
       conditions.push(`(${orClauses.join(" OR ")})`);
-      patterns.forEach((p) => values.push(`%${p}%`));
+      patterns.forEach((p) => values.push(`%${escapeLike(p)}%`));
       paramIndex += patterns.length;
     }
   } else if (params.courtName) {
     const patterns = extractCourtLocationPatterns(params.courtName);
-    const orClauses = patterns.map((_, i) => `UPPER(court_name) LIKE $${paramIndex + i} OR UPPER(hearing_location) LIKE $${paramIndex + i}`);
+    const orClauses = patterns.map((_, i) => `UPPER(court_name) LIKE $${paramIndex + i} ESCAPE '\\' OR UPPER(hearing_location) LIKE $${paramIndex + i} ESCAPE '\\'`);
     conditions.push(`(${orClauses.join(" OR ")})`);
-    patterns.forEach((p) => values.push(`%${p}%`));
+    patterns.forEach((p) => values.push(`%${escapeLike(p)}%`));
     paramIndex += patterns.length;
   }
 
@@ -86,32 +91,32 @@ export async function searchCourtEvents(params: SearchRequest): Promise<CourtEve
   }
 
   if (params.defendantOtn) {
-    conditions.push(`UPPER(defendant_otn) LIKE $${paramIndex}`);
-    values.push(`%${params.defendantOtn.toUpperCase()}%`);
+    conditions.push(`UPPER(defendant_otn) LIKE $${paramIndex} ESCAPE '\\'`);
+    values.push(`%${escapeLike(params.defendantOtn.toUpperCase())}%`);
     paramIndex++;
   }
 
   if (params.citationNumber) {
-    conditions.push(`UPPER(citation_number) LIKE $${paramIndex}`);
-    values.push(`%${params.citationNumber.toUpperCase()}%`);
+    conditions.push(`UPPER(citation_number) LIKE $${paramIndex} ESCAPE '\\'`);
+    values.push(`%${escapeLike(params.citationNumber.toUpperCase())}%`);
     paramIndex++;
   }
 
   if (params.charges) {
-    conditions.push(`UPPER(charges::text) LIKE $${paramIndex}`);
-    values.push(`%${params.charges.toUpperCase()}%`);
+    conditions.push(`UPPER(charges::text) LIKE $${paramIndex} ESCAPE '\\'`);
+    values.push(`%${escapeLike(params.charges.toUpperCase())}%`);
     paramIndex++;
   }
 
   if (params.judgeName) {
-    conditions.push(`UPPER(judge_name) LIKE $${paramIndex}`);
-    values.push(`%${params.judgeName.toUpperCase()}%`);
+    conditions.push(`UPPER(judge_name) LIKE $${paramIndex} ESCAPE '\\'`);
+    values.push(`%${escapeLike(params.judgeName.toUpperCase())}%`);
     paramIndex++;
   }
 
   if (params.attorney) {
-    conditions.push(`(UPPER(REPLACE(prosecuting_attorney, chr(13), '')) LIKE $${paramIndex} OR UPPER(REPLACE(defense_attorney, chr(13), '')) LIKE $${paramIndex})`);
-    values.push(`%${params.attorney.toUpperCase()}%`);
+    conditions.push(`(UPPER(REPLACE(prosecuting_attorney, chr(13), '')) LIKE $${paramIndex} ESCAPE '\\' OR UPPER(REPLACE(defense_attorney, chr(13), '')) LIKE $${paramIndex} ESCAPE '\\')`);
+    values.push(`%${escapeLike(params.attorney.toUpperCase())}%`);
     paramIndex++;
   }
 
@@ -143,16 +148,26 @@ export async function searchCourtEvents(params: SearchRequest): Promise<CourtEve
   }
 }
 
-/** Format a DB date/timestamp to YYYY-MM-DD string */
+/** Format a DB date/timestamp to YYYY-MM-DD string using local date components */
 function toDateString(val: unknown): string {
   if (!val) return "";
-  if (val instanceof Date) return val.toISOString().split("T")[0];
+  if (val instanceof Date) {
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2, "0");
+    const d = String(val.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
   const s = String(val);
   // If it already looks like YYYY-MM-DD, return as-is
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
   // Try to parse and extract date portion
   const d = new Date(s);
-  if (!isNaN(d.getTime())) return d.toISOString().split("T")[0];
+  if (!isNaN(d.getTime())) {
+    const y = d.getFullYear();
+    const mo = String(d.getMonth() + 1).padStart(2, "0");
+    const dy = String(d.getDate()).padStart(2, "0");
+    return `${y}-${mo}-${dy}`;
+  }
   return s;
 }
 

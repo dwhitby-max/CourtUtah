@@ -28,13 +28,13 @@ export function buildVCalendar(uid: string, eventData: CalendarEventData): strin
     }
     const hh = String(hours).padStart(2, "0");
     const mm = String(minutes).padStart(2, "0");
-    const endHours = String(hours + 1).padStart(2, "0");
+    const endHours = String((hours + 1) % 24).padStart(2, "0");
     dtStart = `DTSTART;TZID=America/Denver:${dateStr}T${hh}${mm}00`;
     dtEnd = `DTEND;TZID=America/Denver:${dateStr}T${endHours}${mm}00`;
   } else {
     // RFC 5545: all-day DTEND must be the day AFTER the event
-    const nextDay = new Date(eventData.startDate.split("T")[0] + "T00:00:00");
-    nextDay.setDate(nextDay.getDate() + 1);
+    const nextDay = new Date(eventData.startDate.split("T")[0] + "T12:00:00Z"); // noon UTC avoids boundary issues
+    nextDay.setUTCDate(nextDay.getUTCDate() + 1);
     const endDateStr = nextDay.toISOString().split("T")[0].replace(/-/g, "");
     dtStart = `DTSTART;VALUE=DATE:${dateStr}`;
     dtEnd = `DTEND;VALUE=DATE:${endDateStr}`;

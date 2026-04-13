@@ -10,6 +10,9 @@ import { markConnectionInactive, parseTimeTo24h } from "./calendarSync";
 export const MICROSOFT_GRAPH_API = "https://graph.microsoft.com/v1.0";
 const MICROSOFT_TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
 
+// Per-connection refresh lock: prevents concurrent token refreshes from racing
+const refreshLocks = new Map<number, Promise<string>>();
+
 /**
  * Refresh a Microsoft access token using the stored refresh token.
  * Updates the encrypted token and expiry in calendar_connections.
@@ -31,6 +34,11 @@ async function refreshMicrosoftToken(
       scope: "Calendars.ReadWrite offline_access",
     }),
   });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Microsoft token refresh HTTP error (${response.status}): ${errText}`);
+  }
 
   const tokens: MicrosoftTokenResponse = await response.json();
 
@@ -77,7 +85,15 @@ export async function getMicrosoftAccessToken(connection: CalendarSyncRow): Prom
     : true;
 
   if (tokenExpired && connection.refresh_token_encrypted) {
-    return refreshMicrosoftToken(connection.calendar_connection_id, connection.refresh_token_encrypted);
+    const connId = connection.calendar_connection_id;
+    // Serialize concurrent refreshes per connection — only one hits Microsoft at a time
+    const existing = refreshLocks.get(connId);
+    if (existing) return existing;
+
+    const refreshPromise = refreshMicrosoftToken(connId, connection.refresh_token_encrypted)
+      .finally(() => refreshLocks.delete(connId));
+    refreshLocks.set(connId, refreshPromise);
+    return refreshPromise;
   }
 
   if (tokenExpired && !connection.refresh_token_encrypted) {
@@ -103,7 +119,7 @@ export function buildMicrosoftEventBody(eventData: CalendarEventData): Record<st
     const { hours, minutes, formatted } = parseTimeTo24h(eventData.startTime!);
     const startDateTime = `${dateStr}T${formatted}:00`;
 
-    const endHours = hours + 1;
+    const endHours = (hours + 1) % 24;
     const endFormatted = `${String(endHours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
     const endDateTime = `${dateStr}T${endFormatted}:00`;
 
@@ -119,8 +135,8 @@ export function buildMicrosoftEventBody(eventData: CalendarEventData): Record<st
 
   const dateStr = eventData.startDate.split("T")[0];
   // Microsoft Graph requires all-day events to use "date" (YYYY-MM-DD), not "dateTime"
-  const nextDay = new Date(dateStr + "T00:00:00");
-  nextDay.setDate(nextDay.getDate() + 1);
+  const nextDay = new Date(dateStr + "T12:00:00Z"); // Use noon UTC to avoid date boundary issues
+  nextDay.setUTCDate(nextDay.getUTCDate() + 1);
   const endDateStr = nextDay.toISOString().split("T")[0];
   return {
     subject: eventData.title,

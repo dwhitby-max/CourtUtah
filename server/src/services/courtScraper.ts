@@ -89,8 +89,15 @@ export async function fetchUrl(
   throw lastError ?? new Error(`Failed after ${maxRetries} retries: ${url}`);
 }
 
-function fetchUrlOnce(url: string, timeoutMs: number): Promise<Buffer> {
+const MAX_REDIRECTS = 5;
+
+function fetchUrlOnce(url: string, timeoutMs: number, redirectCount = 0): Promise<Buffer> {
   return new Promise((resolve, reject) => {
+    if (redirectCount >= MAX_REDIRECTS) {
+      reject(new Error(`Too many redirects (${MAX_REDIRECTS}) for ${url}`));
+      return;
+    }
+
     const client = url.startsWith("https") ? https : http;
 
     const req = client.get(
@@ -109,7 +116,7 @@ function fetchUrlOnce(url: string, timeoutMs: number): Promise<Buffer> {
           const redirectUrl = res.headers.location.startsWith("http")
             ? res.headers.location
             : new URL(res.headers.location, url).toString();
-          fetchUrlOnce(redirectUrl, timeoutMs).then(resolve).catch(reject);
+          fetchUrlOnce(redirectUrl, timeoutMs, redirectCount + 1).then(resolve).catch(reject);
           return;
         }
 

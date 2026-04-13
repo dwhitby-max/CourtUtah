@@ -169,7 +169,7 @@ function PendingTab() {
         <div key={u.id} className="bg-white shadow rounded-lg p-4 flex items-center justify-between">
           <div>
             <p className="font-medium text-gray-900">{u.email}</p>
-            <p className="text-xs text-gray-500">Signed up {new Date(u.created_at).toLocaleString()}</p>
+            <p className="text-xs text-gray-500">Signed up {new Date(u.created_at).toLocaleString("en-US", { timeZone: "America/Denver" })}</p>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -350,14 +350,14 @@ function UsersTab() {
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-gray-500 text-xs">
                       {u.subscription_current_period_end
-                        ? new Date(u.subscription_current_period_end).toLocaleDateString()
+                        ? new Date(u.subscription_current_period_end).toLocaleDateString("en-US", { timeZone: "America/Denver" })
                         : "—"}
                     </td>
                     <td className="px-4 py-3">{u.search_count}</td>
-                    <td className="px-4 py-3 whitespace-nowrap text-gray-500">{u.last_search_at ? new Date(u.last_search_at).toLocaleDateString() : "—"}</td>
+                    <td className="px-4 py-3 whitespace-nowrap text-gray-500">{u.last_search_at ? new Date(u.last_search_at).toLocaleDateString("en-US", { timeZone: "America/Denver" }) : "—"}</td>
                     <td className="px-4 py-3">{u.calendar_count}</td>
-                    <td className="px-4 py-3 whitespace-nowrap text-gray-500">{u.last_sync_at ? new Date(u.last_sync_at).toLocaleDateString() : "—"}</td>
-                    <td className="px-4 py-3 whitespace-nowrap">{new Date(u.created_at).toLocaleDateString()}</td>
+                    <td className="px-4 py-3 whitespace-nowrap text-gray-500">{u.last_sync_at ? new Date(u.last_sync_at).toLocaleDateString("en-US", { timeZone: "America/Denver" }) : "—"}</td>
+                    <td className="px-4 py-3 whitespace-nowrap">{new Date(u.created_at).toLocaleDateString("en-US", { timeZone: "America/Denver" })}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-col gap-1">
                         <div className="flex gap-2">
@@ -455,7 +455,7 @@ function UsersTab() {
                         <td className="px-4 py-2 text-gray-600">{s.search_type}</td>
                         <td className="px-4 py-2">{s.results_count ?? "—"}</td>
                         <td className="px-4 py-2 whitespace-nowrap text-gray-500">
-                          {s.last_refreshed_at ? new Date(s.last_refreshed_at).toLocaleString() : "Never"}
+                          {s.last_refreshed_at ? new Date(s.last_refreshed_at).toLocaleString("en-US", { timeZone: "America/Denver" }) : "Never"}
                         </td>
                         <td className="px-4 py-2">
                           <span className={`text-xs px-2 py-0.5 rounded-full ${s.is_active ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-600"}`}>
@@ -524,7 +524,7 @@ function UsersTab() {
                     {payments.map((p) => (
                       <tr key={p.id}>
                         <td className="px-4 py-2 whitespace-nowrap">
-                          {p.date ? new Date(p.date).toLocaleDateString() : "—"}
+                          {p.date ? new Date(p.date).toLocaleDateString("en-US", { timeZone: "America/Denver" }) : "—"}
                         </td>
                         <td className="px-4 py-2 whitespace-nowrap font-medium">
                           ${p.amount.toFixed(2)} {p.currency}
@@ -540,7 +540,7 @@ function UsersTab() {
                         </td>
                         <td className="px-4 py-2 whitespace-nowrap text-gray-500 text-xs">
                           {p.periodStart && p.periodEnd
-                            ? `${new Date(p.periodStart).toLocaleDateString()} - ${new Date(p.periodEnd).toLocaleDateString()}`
+                            ? `${new Date(p.periodStart).toLocaleDateString("en-US", { timeZone: "America/Denver" })} - ${new Date(p.periodEnd).toLocaleDateString("en-US", { timeZone: "America/Denver" })}`
                             : "—"}
                         </td>
                         <td className="px-4 py-2">

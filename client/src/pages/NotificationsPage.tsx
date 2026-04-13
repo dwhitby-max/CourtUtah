@@ -85,7 +85,7 @@ export default function NotificationsPage() {
                       {n.type.replace(/_/g, " ")}
                     </span>
                     <span className="text-xs text-gray-400">
-                      {new Date(n.createdAt).toLocaleString()}
+                      {new Date(n.createdAt).toLocaleString("en-US", { timeZone: "America/Denver" })}
                     </span>
                   </div>
                   <div className="font-medium text-gray-900">{n.title}</div>

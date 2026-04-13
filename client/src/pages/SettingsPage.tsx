@@ -134,10 +134,10 @@ function SubscriptionSection() {
           <div className="text-sm text-gray-600 mb-4">
             {isCanceling ? (
               <span className="text-amber-600">
-                Your subscription will end on <strong>{new Date(subscription.currentPeriodEnd).toLocaleDateString()}</strong>. You will not be charged again.
+                Your subscription will end on <strong>{new Date(subscription.currentPeriodEnd).toLocaleDateString("en-US", { timeZone: "America/Denver" })}</strong>. You will not be charged again.
               </span>
             ) : (
-              <>Next renewal: <strong>{new Date(subscription.currentPeriodEnd).toLocaleDateString()}</strong></>
+              <>Next renewal: <strong>{new Date(subscription.currentPeriodEnd).toLocaleDateString("en-US", { timeZone: "America/Denver" })}</strong></>
             )}
           </div>
         )}

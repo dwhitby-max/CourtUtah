@@ -83,7 +83,8 @@ router.get("/microsoft/callback", async (req: Request, res: Response) => {
     const tokens = await tokenResponse.json();
 
     if (tokens.error) {
-      res.status(400).json({ error: `Microsoft OAuth error: ${tokens.error_description || tokens.error}` });
+      console.error("❌ Microsoft token exchange error:", tokens.error_description || tokens.error);
+      res.redirect("/calendar-settings?error=microsoft_token_failed");
       return;
     }
 
@@ -96,10 +97,18 @@ router.get("/microsoft/callback", async (req: Request, res: Response) => {
         ? new Date(Date.now() + tokens.expires_in * 1000)
         : null;
 
+      // Upsert to avoid duplicate connections when user re-authorizes
       await client.query(
         `INSERT INTO calendar_connections
          (user_id, provider, access_token_encrypted, refresh_token_encrypted, token_expires_at)
-         VALUES ($1, 'microsoft', $2, $3, $4)`,
+         VALUES ($1, 'microsoft', $2, COALESCE($3, (SELECT refresh_token_encrypted FROM calendar_connections WHERE user_id = $1 AND provider = 'microsoft' LIMIT 1)), $4)
+         ON CONFLICT (user_id, provider) WHERE provider = 'microsoft'
+         DO UPDATE SET
+           access_token_encrypted = EXCLUDED.access_token_encrypted,
+           refresh_token_encrypted = COALESCE(EXCLUDED.refresh_token_encrypted, calendar_connections.refresh_token_encrypted),
+           token_expires_at = EXCLUDED.token_expires_at,
+           sync_status = 'active',
+           updated_at = NOW()`,
         [
           userId,
           encrypt(tokens.access_token),

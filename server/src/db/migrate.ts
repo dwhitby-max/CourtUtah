@@ -9,9 +9,10 @@ async function runMigrations(): Promise<void> {
     return;
   }
 
+  const sslDisabled = databaseUrl.includes("sslmode=disable");
   const pool = new Pool({
     connectionString: databaseUrl,
-    ssl: { rejectUnauthorized: false },
+    ssl: sslDisabled ? false : { rejectUnauthorized: false },
     connectionTimeoutMillis: 8000,
   });
 
@@ -32,6 +33,9 @@ async function runMigrations(): Promise<void> {
 
   const client = await pool.connect();
   try {
+    // Advisory lock prevents concurrent migration runs (e.g., during multi-instance deploys)
+    await client.query(`SELECT pg_advisory_lock(20260401)`);
+
     // Create migrations tracking table
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -73,6 +77,8 @@ async function runMigrations(): Promise<void> {
 
     console.log("✅ All migrations completed");
   } finally {
+    // Release advisory lock (also released automatically when session ends)
+    await client.query(`SELECT pg_advisory_unlock(20260401)`).catch(() => {});
     client.release();
     await pool.end();
   }

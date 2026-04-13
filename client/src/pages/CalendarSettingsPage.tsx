@@ -126,7 +126,7 @@ export default function CalendarSettingsPage() {
   async function fetchConnections() {
     try {
       const data = await getCalendarConnections();
-      setConnections(data.connections as Connection[]);
+      setConnections(data.connections as unknown as Connection[]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
     } finally {
@@ -289,7 +289,7 @@ export default function CalendarSettingsPage() {
                         </span>
                       </div>
                       <div className="text-sm text-gray-500">
-                        Connected {new Date(conn.created_at).toLocaleDateString()}
+                        Connected {new Date(conn.created_at).toLocaleDateString("en-US", { timeZone: "America/Denver" })}
                         {conn.calendar_id ? ` — ${conn.calendar_id}` : ""}
                       </div>
                     </div>

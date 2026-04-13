@@ -1,6 +1,16 @@
 import nodemailer from "nodemailer";
 import { config } from "../config/env";
 
+/** Escape HTML special characters to prevent XSS/injection in email templates. */
+function escHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 let transporter: nodemailer.Transporter | null = null;
 
 function getTransporter(): nodemailer.Transporter | null {
@@ -24,12 +34,12 @@ function getTransporter(): nodemailer.Transporter | null {
   return transporter;
 }
 
-// Set to true once a working SMTP provider is configured
-const EMAIL_ENABLED = false;
+// Enable email when SMTP is configured — check for both host and user
+const EMAIL_ENABLED = !!(config.smtp.host && config.smtp.user);
 
 export async function sendEmail(to: string, subject: string, html: string): Promise<boolean> {
   if (!EMAIL_ENABLED) {
-    console.log(`📧 Email suppressed (SMTP not set up yet) — to: ${to}, subject: ${subject}`);
+    console.log(`📧 Email suppressed (SMTP not set up yet) — subject: ${subject}`);
     return false;
   }
 
@@ -46,7 +56,7 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
       subject,
       html,
     });
-    console.log(`✅ Email sent to ${to}: ${subject}`);
+    console.log(`✅ Email sent: ${subject}`);
     return true;
   } catch (err) {
     console.error("❌ Email send failed:", err);
@@ -54,29 +64,6 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
   }
 }
 
-export async function sendPasswordResetEmail(to: string, resetToken: string, baseUrl: string): Promise<boolean> {
-  const resetLink = `${baseUrl}/reset-password?token=${resetToken}`;
-  const html = `
-    <h2>Password Reset Request</h2>
-    <p>You requested a password reset for your Court Calendar Tracker account.</p>
-    <p><a href="${resetLink}">Click here to reset your password</a></p>
-    <p>This link expires in 1 hour.</p>
-    <p>If you didn't request this, you can safely ignore this email.</p>
-  `;
-  return sendEmail(to, "Password Reset - Court Calendar Tracker", html);
-}
-
-export async function sendVerificationEmail(to: string, verificationToken: string, baseUrl: string): Promise<boolean> {
-  const verifyLink = `${baseUrl}/api/auth/verify-email?token=${verificationToken}`;
-  const html = `
-    <h2>Verify Your Email</h2>
-    <p>Welcome to Court Calendar Tracker! Please verify your email address.</p>
-    <p><a href="${verifyLink}" style="display:inline-block;padding:12px 24px;background:#4f46e5;color:#fff;text-decoration:none;border-radius:6px;">Verify Email</a></p>
-    <p>Or copy this link: ${verifyLink}</p>
-    <p>If you didn't create this account, you can safely ignore this email.</p>
-  `;
-  return sendEmail(to, "Verify Your Email - Court Calendar Tracker", html);
-}
 
 export async function sendNewSignupNotification(
   adminEmail: string,
@@ -87,8 +74,8 @@ export async function sendNewSignupNotification(
     <h2>New User Signup — Auto-Approved</h2>
     <p>A new user has signed up for Court Calendar Tracker and was automatically approved.</p>
     <table border="0" cellpadding="8" cellspacing="0" style="border-collapse:collapse;">
-      <tr><td><strong>Email:</strong></td><td>${newUserEmail}</td></tr>
-      <tr><td><strong>Signup IP:</strong></td><td>${signupIp || "Unknown"}</td></tr>
+      <tr><td><strong>Email:</strong></td><td>${escHtml(newUserEmail)}</td></tr>
+      <tr><td><strong>Signup IP:</strong></td><td>${escHtml(signupIp || "Unknown")}</td></tr>
       <tr><td><strong>Time:</strong></td><td>${new Date().toLocaleString("en-US", { timeZone: "America/Denver" })} MT</td></tr>
     </table>
     <p style="margin-top:16px;">
@@ -114,12 +101,12 @@ export async function sendScheduleChangeEmail(
   changes: Array<{ field: string; oldValue: string; newValue: string }>
 ): Promise<boolean> {
   const changeRows = changes
-    .map((c) => `<tr><td>${c.field}</td><td>${c.oldValue}</td><td>${c.newValue}</td></tr>`)
+    .map((c) => `<tr><td>${escHtml(c.field)}</td><td>${escHtml(c.oldValue)}</td><td>${escHtml(c.newValue)}</td></tr>`)
     .join("");
 
   const html = `
     <h2>Court Schedule Change Detected</h2>
-    <p>A schedule change was detected for: <strong>${caseName}</strong></p>
+    <p>A schedule change was detected for: <strong>${escHtml(caseName)}</strong></p>
     <table border="1" cellpadding="8" cellspacing="0">
       <tr><th>Field</th><th>Previous</th><th>Updated</th></tr>
       ${changeRows}
@@ -135,12 +122,12 @@ export async function sendNewMatchEmail(
   events: Array<{ date: string; time: string; court: string; hearingType: string }>
 ): Promise<boolean> {
   const eventRows = events
-    .map((e) => `<tr><td>${e.date}</td><td>${e.time || "TBD"}</td><td>${e.court}</td><td>${e.hearingType || "N/A"}</td></tr>`)
+    .map((e) => `<tr><td>${escHtml(e.date)}</td><td>${escHtml(e.time || "TBD")}</td><td>${escHtml(e.court)}</td><td>${escHtml(e.hearingType || "N/A")}</td></tr>`)
     .join("");
 
   const html = `
     <h2>New Court Hearing${events.length > 1 ? "s" : ""} Found</h2>
-    <p>New hearing${events.length > 1 ? "s" : ""} matching your search <strong>"${caseName}"</strong> ${events.length > 1 ? "have" : "has"} been found and added to your calendar:</p>
+    <p>New hearing${events.length > 1 ? "s" : ""} matching your search <strong>"${escHtml(caseName)}"</strong> ${events.length > 1 ? "have" : "has"} been found and added to your calendar:</p>
     <table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse;">
       <tr><th>Date</th><th>Time</th><th>Court</th><th>Hearing</th></tr>
       ${eventRows}
@@ -159,11 +146,11 @@ export async function sendCancellationEmail(
     <h2>Hearing May Be Cancelled</h2>
     <p>A hearing that was on your calendar no longer appears on the Utah court calendar:</p>
     <table border="0" cellpadding="8" cellspacing="0" style="border-collapse:collapse;">
-      <tr><td><strong>Case:</strong></td><td>${caseName}</td></tr>
-      <tr><td><strong>Defendant:</strong></td><td>${details.defendant}</td></tr>
-      <tr><td><strong>Date:</strong></td><td>${details.date}</td></tr>
-      <tr><td><strong>Time:</strong></td><td>${details.time || "TBD"}</td></tr>
-      <tr><td><strong>Court:</strong></td><td>${details.court}</td></tr>
+      <tr><td><strong>Case:</strong></td><td>${escHtml(caseName)}</td></tr>
+      <tr><td><strong>Defendant:</strong></td><td>${escHtml(details.defendant)}</td></tr>
+      <tr><td><strong>Date:</strong></td><td>${escHtml(details.date)}</td></tr>
+      <tr><td><strong>Time:</strong></td><td>${escHtml(details.time || "TBD")}</td></tr>
+      <tr><td><strong>Court:</strong></td><td>${escHtml(details.court)}</td></tr>
     </table>
     <p style="color:#b91c1c;"><strong>This hearing may have been cancelled or rescheduled.</strong> Please verify with the court directly.</p>
     <p>Your calendar event has been updated to reflect this change.</p>
@@ -198,13 +185,13 @@ export async function sendDailySummaryEmail(
   if (changes.length > 0) {
     const rows = changes.map(item => {
       const changeDetail = item.changes
-        ? item.changes.map(c => `${c.field}: <span style="color:#b91c1c;text-decoration:line-through;">${c.oldValue}</span> &rarr; <span style="color:#059669;font-weight:bold;">${c.newValue}</span>`).join("<br/>")
+        ? item.changes.map(c => `${escHtml(c.field)}: <span style="color:#b91c1c;text-decoration:line-through;">${escHtml(c.oldValue)}</span> &rarr; <span style="color:#059669;font-weight:bold;">${escHtml(c.newValue)}</span>`).join("<br/>")
         : "";
       return `<tr>
-        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.defendant || item.caseNumber}</td>
-        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.caseNumber}</td>
-        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.date} ${item.time || ""}</td>
-        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.court}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${escHtml(item.defendant || item.caseNumber)}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${escHtml(item.caseNumber)}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${escHtml(item.date)} ${escHtml(item.time || "")}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${escHtml(item.court)}</td>
         <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${changeDetail}</td>
         <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.calendarSynced ? "&#10003; Updated" : "Pending"}</td>
       </tr>`;
@@ -228,10 +215,10 @@ export async function sendDailySummaryEmail(
   if (cancellations.length > 0) {
     const rows = cancellations.map(item =>
       `<tr>
-        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.defendant || item.caseNumber}</td>
-        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.caseNumber}</td>
-        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.date} ${item.time || ""}</td>
-        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.court}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${escHtml(item.defendant || item.caseNumber)}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${escHtml(item.caseNumber)}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${escHtml(item.date)} ${escHtml(item.time || "")}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${escHtml(item.court)}</td>
       </tr>`
     ).join("");
 
@@ -252,10 +239,10 @@ export async function sendDailySummaryEmail(
   if (newMatches.length > 0) {
     const rows = newMatches.map(item =>
       `<tr>
-        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.defendant || item.caseNumber}</td>
-        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.caseNumber}</td>
-        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.date} ${item.time || ""}</td>
-        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.court}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${escHtml(item.defendant || item.caseNumber)}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${escHtml(item.caseNumber)}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${escHtml(item.date)} ${escHtml(item.time || "")}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${escHtml(item.court)}</td>
         <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${item.calendarSynced ? "&#10003; Added" : "Pending"}</td>
       </tr>`
     ).join("");

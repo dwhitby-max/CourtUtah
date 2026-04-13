@@ -3,6 +3,15 @@ import { authenticateToken } from "../middleware/auth";
 import { heavyLimiter } from "../middleware/rateLimiter";
 import { sendEmail } from "../services/emailService";
 
+function escHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 const router = Router();
 
 const SUPPORT_EMAIL = "ops@1564hub.com";
@@ -31,7 +40,7 @@ router.post("/", authenticateToken, heavyLimiter, async (req: Request, res: Resp
       <table style="border-collapse: collapse; width: 100%; margin-bottom: 16px;">
         <tr>
           <td style="padding: 8px 12px; border: 1px solid #e2e8f0; background: #f8fafc; font-weight: 600; width: 100px;">From</td>
-          <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${req.user.email}</td>
+          <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${escHtml(req.user.email)}</td>
         </tr>
         <tr>
           <td style="padding: 8px 12px; border: 1px solid #e2e8f0; background: #f8fafc; font-weight: 600;">User ID</td>
@@ -39,10 +48,10 @@ router.post("/", authenticateToken, heavyLimiter, async (req: Request, res: Resp
         </tr>
         <tr>
           <td style="padding: 8px 12px; border: 1px solid #e2e8f0; background: #f8fafc; font-weight: 600;">Subject</td>
-          <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${subject.trim()}</td>
+          <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${escHtml(subject.trim())}</td>
         </tr>
       </table>
-      <div style="padding: 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; white-space: pre-wrap;">${message.trim()}</div>
+      <div style="padding: 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; white-space: pre-wrap;">${escHtml(message.trim())}</div>
       <p style="margin-top: 16px; font-size: 12px; color: #94a3b8;">Reply directly to this email to respond to the user.</p>
     </div>
   `;

@@ -39,7 +39,8 @@ describe("buildGoogleEventBody", () => {
     const body = buildGoogleEventBody(allDayEvent) as Record<string, Record<string, string>>;
 
     expect(body.start.date).toBe("2026-05-20");
-    expect(body.end.date).toBe("2026-05-20");
+    // Google Calendar end.date is exclusive — 1 day after start for a single-day event
+    expect(body.end.date).toBe("2026-05-21");
     expect(body.start.dateTime).toBeUndefined();
   });
 
@@ -73,7 +74,7 @@ describe("buildMicrosoftEventBody", () => {
 
     expect(body.isAllDay).toBe(true);
     const start = body.start as Record<string, string>;
-    expect(start.dateTime).toContain("2026-05-20T00:00:00");
+    expect(start.dateTime).toContain("2026-05-20");
   });
 
   it("sets end time one hour after start for timed events", () => {
@@ -104,7 +105,8 @@ describe("buildVCalendar", () => {
   it("uses VALUE=DATE for all-day events", () => {
     const ics = buildVCalendar("uid@ct", allDayEvent);
     expect(ics).toContain("DTSTART;VALUE=DATE:20260520");
-    expect(ics).toContain("DTEND;VALUE=DATE:20260520");
+    // RFC 5545: all-day DTEND is exclusive — day after start for a 1-day event
+    expect(ics).toContain("DTEND;VALUE=DATE:20260521");
   });
 
   it("converts 9:00 AM to 0900 in DTSTART", () => {

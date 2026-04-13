@@ -138,6 +138,7 @@ export async function runOneTimeRefresh(): Promise<void> {
     // (case_number, event_date, event_time). Delete older duplicates and
     // clean up their calendar entries.
     console.log("🧹 Phase 1: Deduplicating existing court_events...");
+    await client.query("BEGIN");
 
     // Find duplicate groups: same (case_number, event_date, event_time) with multiple rows
     const dupeResult = await client.query<{ case_number: string; event_date: string; event_time: string; cnt: string }>(`
@@ -209,6 +210,8 @@ export async function runOneTimeRefresh(): Promise<void> {
       }
     }
 
+    await client.query("COMMIT");
+
     if (dupesDeleted > 0 || dupeCalDeleted > 0) {
       console.log(`  🧹 Removed ${dupesDeleted} duplicate event(s), ${dupeCalDeleted} duplicate calendar entry/entries`);
     } else {
@@ -276,7 +279,7 @@ export async function runOneTimeRefresh(): Promise<void> {
     // Process sequentially with delays
     for (let i = 0; i < searches.length; i++) {
       const s = searches[i];
-      console.log(`  [${i + 1}/${searches.length}] Search #${s.id}: ${s.label} (user: ${s.email})`);
+      console.log(`  [${i + 1}/${searches.length}] Search #${s.id}: ${s.label} (userId: ${s.user_id})`);
 
       const result = await triggerSearch(s, baseUrl);
 

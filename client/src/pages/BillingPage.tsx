@@ -116,7 +116,7 @@ export default function BillingPage() {
             </span>
             {isPro && subscription.currentPeriodEnd && (
               <span className="text-sm text-gray-500">
-                Renews {new Date(subscription.currentPeriodEnd).toLocaleDateString()}
+                Renews {new Date(subscription.currentPeriodEnd).toLocaleDateString("en-US", { timeZone: "America/Denver" })}
               </span>
             )}
           </div>

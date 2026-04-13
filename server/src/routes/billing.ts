@@ -73,8 +73,7 @@ router.post("/create-checkout-session", authenticateToken, heavyLimiter, async (
     res.json({ url: session.url });
   } catch (err) {
     console.error("❌ Checkout session creation failed:", err);
-    const message = err instanceof Error ? err.message : "Failed to create checkout session";
-    res.status(500).json({ error: message });
+    res.status(500).json({ error: "Failed to create checkout session" });
   } finally {
     client.release();
   }
@@ -116,8 +115,7 @@ router.post("/create-portal-session", authenticateToken, heavyLimiter, async (re
     res.json({ url: session.url });
   } catch (err) {
     console.error("❌ Portal session creation failed:", err);
-    const message = err instanceof Error ? err.message : "Failed to create portal session";
-    res.status(500).json({ error: message });
+    res.status(500).json({ error: "Failed to create portal session" });
   } finally {
     client.release();
   }
@@ -182,7 +180,7 @@ router.post("/activate", authenticateToken, heavyLimiter, async (req: Request, r
       [req.user.userId]
     );
     const userCustomerId = userResult.rows[0]?.stripe_customer_id;
-    if (userCustomerId && session.customer !== userCustomerId) {
+    if (!userCustomerId || session.customer !== userCustomerId) {
       res.status(403).json({ error: "Session does not belong to this account" });
       return;
     }

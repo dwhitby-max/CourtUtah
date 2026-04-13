@@ -1,4 +1,9 @@
 import { Router, Request, Response } from "express";
+
+/** Format a Date to YYYY-MM-DD using local components (avoids UTC date shift). */
+function localDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 import { heavyLimiter } from "../middleware/rateLimiter";
 import { authenticateToken } from "../middleware/auth";
 import { searchCourtEvents } from "../services/searchService";
@@ -79,8 +84,8 @@ router.get("/coverage", async (_req: Request, res: Response) => {
       res.json({
         totalEvents: parseInt(row.total_events, 10),
         totalCourts: parseInt(row.total_courts, 10),
-        earliestDate: row.earliest_date ? new Date(row.earliest_date).toISOString().split("T")[0] : null,
-        latestDate: row.latest_date ? new Date(row.latest_date).toISOString().split("T")[0] : null,
+        earliestDate: row.earliest_date ? localDateStr(new Date(row.earliest_date)) : null,
+        latestDate: row.latest_date ? localDateStr(new Date(row.latest_date)) : null,
       });
     } finally {
       client.release();
@@ -222,7 +227,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
   // Utah courts only publish calendars ~1 month out — cap dates
   const maxDate = new Date();
   maxDate.setMonth(maxDate.getMonth() + 1);
-  const maxDateStr = maxDate.toISOString().split("T")[0];
+  const maxDateStr = localDateStr(maxDate);
   if (searchParams.dateFrom && searchParams.dateFrom > maxDateStr) {
     searchParams.dateFrom = maxDateStr;
   }
@@ -260,8 +265,8 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     monday.setDate(monday.getDate() + diffToMon);
     const friday = new Date(monday);
     friday.setDate(friday.getDate() + 4);
-    searchParams.dateFrom = monday.toISOString().split("T")[0];
-    searchParams.dateTo = friday.toISOString().split("T")[0];
+    searchParams.dateFrom = localDateStr(monday);
+    searchParams.dateTo = localDateStr(friday);
   }
 
   try {

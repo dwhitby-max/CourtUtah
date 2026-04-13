@@ -23,7 +23,7 @@ console.log(`   JWT_SECRET: ${config.jwtSecret ? "OK" : "MISSING"}`);
 console.log(`   ENCRYPTION_KEY: ${process.env.ENCRYPTION_KEY ? "OK" : "MISSING"}`);
 console.log(`   GOOGLE_CLIENT_ID: ${config.google.clientId ? "OK" : "MISSING"}`);
 console.log(`   GOOGLE_CLIENT_SECRET: ${config.google.clientSecret ? "OK" : "MISSING"}`);
-console.log(`   GOOGLE_REDIRECT_URI: ${config.google.redirectUri || "MISSING"}`);
+console.log(`   GOOGLE_REDIRECT_URI: ${config.google.redirectUri ? "OK" : "MISSING"}`);
 console.log(`   CWD: ${process.cwd()}`);
 
 const server = createServer(app);
@@ -125,8 +125,13 @@ function gracefulShutdown(signal: string): void {
     console.log("✅ Socket.io server closed");
   });
 
-  server.close(() => {
+  server.close(async () => {
     console.log("✅ HTTP server closed");
+    const pool = getPool();
+    if (pool) {
+      await pool.end();
+      console.log("✅ Database pool closed");
+    }
     process.exit(0);
   });
 
@@ -143,6 +148,8 @@ process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 // Global error handlers — prevent silent crashes
 process.on("uncaughtException", (err) => {
   console.error("❌ Uncaught Exception:", err);
+  // Node.js is in an undefined state after uncaught exception — flush and exit
+  flushSentry(2000).finally(() => process.exit(1));
 });
 process.on("unhandledRejection", (reason) => {
   console.error("❌ Unhandled Rejection:", reason);

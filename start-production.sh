@@ -23,7 +23,7 @@ echo "Environment check:"
 echo "  NODE_ENV: $NODE_ENV"
 echo "  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:+OK}"
 echo "  GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:+OK}"
-echo "  GOOGLE_REDIRECT_URI: $GOOGLE_REDIRECT_URI"
+echo "  GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:+OK}"
 echo "  DATABASE_URL: ${DATABASE_URL:+OK}"
 
 npm run migrate 2>&1 || echo "Migration had warnings"

@@ -36,7 +36,7 @@ export default function Layout() {
               </Link>
               {/* Desktop nav */}
               <div className="hidden md:flex ml-10 items-baseline space-x-2">
-                <Link to="/" className={navClass("/dashboard")}>Dashboard</Link>
+                <Link to="/dashboard" className={navClass("/dashboard")}>Dashboard</Link>
                 <Link to="/search" className={navClass("/search")}>Search</Link>
                 <Link to="/calendar-settings" className={navClass("/calendar-settings")}>Calendar</Link>
                 {user?.isAdmin && <Link to="/admin" className={navClass("/admin")}>Admin</Link>}

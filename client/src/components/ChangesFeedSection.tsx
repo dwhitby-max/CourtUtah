@@ -130,7 +130,7 @@ function ChangeItem({ item, onDismiss }: { item: ChangeFeedItem; onDismiss: (id:
       <div className="min-w-0 flex-1">
         <div className="font-medium text-gray-900 text-sm">{item.title}</div>
         <div className="text-sm text-gray-600 mt-0.5">{item.message}</div>
-        {item.type === "schedule_change" && meta.changes && (
+        {item.type === "schedule_change" && meta.changes != null && (
           <div className="mt-1 space-y-0.5">
             {(meta.changes as Array<{ field: string; oldValue: string; newValue: string }>).map((c, i) => (
               <div key={i} className="text-xs text-amber-700">
@@ -144,13 +144,13 @@ function ChangeItem({ item, onDismiss }: { item: ChangeFeedItem; onDismiss: (id:
         )}
         {item.type === "event_cancelled" && (
           <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-red-600">
-            {meta.eventDate && <span>{meta.eventDate as string}</span>}
-            {meta.eventTime && <span>{meta.eventTime as string}</span>}
-            {meta.courtName && <span>{meta.courtName as string}</span>}
+            {meta.eventDate ? <span>{String(meta.eventDate)}</span> : null}
+            {meta.eventTime ? <span>{String(meta.eventTime)}</span> : null}
+            {meta.courtName ? <span>{String(meta.courtName)}</span> : null}
           </div>
         )}
         <div className="text-xs text-gray-400 mt-1">
-          {new Date(item.created_at).toLocaleString()}
+          {new Date(item.created_at).toLocaleString("en-US", { timeZone: "America/Denver" })}
         </div>
       </div>
       <button

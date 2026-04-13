@@ -20,7 +20,7 @@ export function initSentry(): void {
   Sentry.init({
     dsn,
     environment: config.nodeEnv,
-    release: `court-calendar-tracker@0.8.0`,
+    release: `court-calendar-tracker@0.14.0`,
     tracesSampleRate: config.nodeEnv === "production" ? 0.2 : 1.0,
     // Attach server name for multi-instance debugging
     serverName: process.env.REPL_SLUG || "court-tracker",

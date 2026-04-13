@@ -16,7 +16,7 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
       path: req.path,
     },
     extra: {
-      query: req.query,
+      queryKeys: Object.keys(req.query),
       statusCode: 500,
     },
   });

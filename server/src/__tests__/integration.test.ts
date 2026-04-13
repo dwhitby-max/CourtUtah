@@ -3,13 +3,18 @@
  *
  * IMPORTANT: env vars must be set BEFORE importing app, because config
  * module reads them at import time and caches the values.
+ * ES import statements are hoisted, so we use vi.hoisted() to run env
+ * setup before any module loading occurs.
  */
 
-// Set env vars BEFORE any imports that trigger config loading
-process.env.JWT_SECRET = "test-secret-for-integration-tests-only";
-process.env.ENCRYPTION_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+import { describe, it, expect, beforeAll, vi } from "vitest";
 
-import { describe, it, expect, beforeAll } from "vitest";
+vi.hoisted(() => {
+  process.env.JWT_SECRET = "test-secret-for-integration-tests-only";
+  process.env.ENCRYPTION_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  process.env.DATABASE_URL = process.env.DATABASE_URL || "postgresql://localhost:5432/test_unused";
+});
+
 import request from "supertest";
 import jwt from "jsonwebtoken";
 import app from "../app";
@@ -20,7 +25,7 @@ beforeAll(() => {
   authToken = jwt.sign(
     { userId: 1, email: "test@example.com" },
     process.env.JWT_SECRET!,
-    { expiresIn: "1h" }
+    { expiresIn: "1h", issuer: "courttracker", audience: "courttracker-app" }
   );
 });
 

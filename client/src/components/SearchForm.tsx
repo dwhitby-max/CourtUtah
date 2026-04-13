@@ -221,13 +221,20 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
 
         {!isIndividualAttorney && !isAgency && (() => {
           // Default (legacy/unset account type): original date range picker
+          // Use local date components to avoid UTC date shift near midnight (CLAUDE.md)
+          const toLocalDateStr = (d: Date) => {
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, "0");
+            const day = String(d.getDate()).padStart(2, "0");
+            return `${y}-${m}-${day}`;
+          };
           const maxDateLimit = new Date();
           maxDateLimit.setMonth(maxDateLimit.getMonth() + 1);
-          const maxDateStr = maxDateLimit.toISOString().split("T")[0];
+          const maxDateStr = toLocalDateStr(maxDateLimit);
 
           const dateToMax = (() => {
             if (!isPro && dateFrom) {
-              const weekMax = new Date(new Date(dateFrom).getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+              const weekMax = toLocalDateStr(new Date(new Date(dateFrom + "T00:00:00").getTime() + 7 * 24 * 60 * 60 * 1000));
               return weekMax < maxDateStr ? weekMax : maxDateStr;
             }
             return maxDateStr;
@@ -245,7 +252,7 @@ export default function SearchForm({ onSearch, loading }: SearchFormProps) {
                     if (!isPro && e.target.value) {
                       const capDate = new Date(e.target.value);
                       capDate.setDate(capDate.getDate() + 7);
-                      const capStr = capDate.toISOString().split("T")[0];
+                      const capStr = toLocalDateStr(capDate);
                       const effectiveCap = capStr < maxDateStr ? capStr : maxDateStr;
                       if (dateTo && dateTo > effectiveCap) setDateTo(effectiveCap);
                     }

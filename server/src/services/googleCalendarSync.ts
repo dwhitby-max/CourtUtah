@@ -10,6 +10,9 @@ import { markConnectionInactive, parseTimeTo24h } from "./calendarSync";
 export const GOOGLE_CALENDAR_API = "https://www.googleapis.com/calendar/v3";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
+// Per-connection refresh lock: prevents concurrent token refreshes from racing
+const refreshLocks = new Map<number, Promise<string>>();
+
 /**
  * Refresh a Google access token using the stored refresh token.
  * Updates the encrypted token and expiry in calendar_connections.
@@ -30,6 +33,11 @@ async function refreshGoogleToken(
       grant_type: "refresh_token",
     }),
   });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Google token refresh HTTP error (${response.status}): ${errText}`);
+  }
 
   const tokens: GoogleTokenResponse = await response.json();
 
@@ -77,11 +85,18 @@ export async function getGoogleAccessToken(connection: CalendarSyncRow): Promise
     : true;
 
   if (tokenExpired && connection.refresh_token_encrypted) {
-    return refreshGoogleToken(connection.calendar_connection_id, connection.refresh_token_encrypted);
+    const connId = connection.calendar_connection_id;
+    // Serialize concurrent refreshes per connection — only one hits Google at a time
+    const existing = refreshLocks.get(connId);
+    if (existing) return existing;
+
+    const refreshPromise = refreshGoogleToken(connId, connection.refresh_token_encrypted)
+      .finally(() => refreshLocks.delete(connId));
+    refreshLocks.set(connId, refreshPromise);
+    return refreshPromise;
   }
 
   if (tokenExpired && !connection.refresh_token_encrypted) {
-    // No refresh token available — cannot renew. Mark connection inactive.
     await markConnectionInactive(
       connection.calendar_connection_id,
       "google",
@@ -115,7 +130,7 @@ export function buildGoogleEventBody(eventData: CalendarEventData, colorId?: str
     const { hours, minutes, formatted } = parseTimeTo24h(eventData.startTime!);
     const startDateTime = `${dateStr}T${formatted}:00`;
 
-    const endHours = hours + 1;
+    const endHours = (hours + 1) % 24;
     const endFormatted = `${String(endHours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
     const endDateTime = `${dateStr}T${endFormatted}:00`;
 
@@ -126,8 +141,8 @@ export function buildGoogleEventBody(eventData: CalendarEventData, colorId?: str
 
   const dateStr = eventData.startDate.split("T")[0];
   // Google Calendar end.date is exclusive — must be day after for a 1-day all-day event
-  const nextDay = new Date(dateStr + "T00:00:00");
-  nextDay.setDate(nextDay.getDate() + 1);
+  const nextDay = new Date(dateStr + "T12:00:00Z"); // Use noon UTC to avoid date boundary issues
+  nextDay.setUTCDate(nextDay.getUTCDate() + 1);
   const endDateStr = nextDay.toISOString().split("T")[0];
   base.start = { date: dateStr };
   base.end = { date: endDateStr };

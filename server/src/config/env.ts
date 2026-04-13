@@ -1,9 +1,14 @@
 function validateEnv(): void {
-  const expected = ["DATABASE_URL", "JWT_SECRET", "ENCRYPTION_KEY"];
-  const missing = expected.filter((key) => !process.env[key]);
+  const critical = ["DATABASE_URL", "JWT_SECRET", "ENCRYPTION_KEY"];
+  const missing = critical.filter((key) => !process.env[key]);
   if (missing.length > 0) {
-    console.error(`⚠️  Missing environment variables: ${missing.join(", ")}`);
-    console.error("⚠️  Server will start but affected features will fail.");
+    const msg = `FATAL: Missing critical environment variables: ${missing.join(", ")}`;
+    console.error(`❌ ${msg}`);
+    // In test environments (vitest), throw instead of exiting the process
+    if (process.env.VITEST || process.env.NODE_ENV === "test") {
+      throw new Error(msg);
+    }
+    process.exit(1);
   }
 }
 
@@ -20,9 +25,9 @@ export const config = {
   port: parseInt(process.env.PORT || "5000", 10),
   host: process.env.HOST || "0.0.0.0",
   nodeEnv: process.env.NODE_ENV || "development",
-  databaseUrl: process.env.DATABASE_URL || "",
-  jwtSecret: process.env.JWT_SECRET || "",
-  encryptionKey: process.env.ENCRYPTION_KEY || "",
+  databaseUrl: process.env.DATABASE_URL!,
+  jwtSecret: process.env.JWT_SECRET!,
+  encryptionKey: process.env.ENCRYPTION_KEY!,
 
   google: {
     clientId: process.env.GOOGLE_CLIENT_ID || "",
