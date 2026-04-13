@@ -57,7 +57,10 @@
       "Bash(xargs cat:*)",
       "Bash(npx --prefix client tsc --noEmit --project client/tsconfig.json)",
       "Bash(JWT_SECRET=test-secret ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef DATABASE_URL=postgresql://test:test@localhost/test npx vitest run src/__tests__/integration.test.ts)",
-      "Bash(cat logs/*.log)"
+      "Bash(cat logs/*.log)",
+      "Bash(pkill -f \"node server/dist/server/src/index.js\")",
+      "Bash(node server/dist/server/src/index.js)",
+      "Bash(pkill -f \"node.*index.js\")"
     ]
   }
 }
