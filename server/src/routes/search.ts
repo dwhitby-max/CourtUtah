@@ -169,7 +169,12 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
 
   const requestedForceRefresh = qp("force_refresh") === "true";
 
-  const existing = await findExistingAutoSearch(userId, pKey);
+  let existing: Awaited<ReturnType<typeof findExistingAutoSearch>> = null;
+  try {
+    existing = await findExistingAutoSearch(userId, pKey);
+  } catch (err) {
+    console.warn("⚠️ findExistingAutoSearch failed:", err instanceof Error ? err.message : err);
+  }
 
   // Force-refresh is only honored when the prior scrape had partial failures
   // (so users can recover from a bad scrape) or when no prior scrape exists.
