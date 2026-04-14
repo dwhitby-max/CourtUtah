@@ -6,23 +6,26 @@ import { runDailyRefresh } from "./dailyRefresh";
 
 /**
  * Start the scheduler. Runs daily refresh, digest notifications, and cleanup.
- * Times are in Mountain Time (America/Denver = UTC-7 MST / UTC-6 MDT).
+ * All schedules are interpreted in Mountain Time (America/Denver), which
+ * automatically tracks MST/MDT so the wall-clock times stay stable year-round.
  *
- * Schedule (all times approximate MT):
+ * Schedule (Mountain Time):
  *   6:00 AM — Daily refresh: re-run all saved searches (courts update ~5:30 AM)
  *   6:30 AM — Cleanup: mark past calendar entries as completed
  *   7:00 AM — Daily digest: send notification summaries
  *   7:00 AM Mon — Weekly digest
  */
-export function startScheduler(): void {
-  console.log("⏰ Starting scheduler (daily refresh + digests + cleanup)");
+const MT_TZ = { timezone: "America/Denver" } as const;
 
-  // Daily refresh — 12:00 UTC (~6:00 AM MT)
+export function startScheduler(): void {
+  console.log("⏰ Starting scheduler (daily refresh + digests + cleanup) — America/Denver");
+
+  // Daily refresh — 6:00 AM MT
   // Re-runs all active saved searches to detect new hearings, changes, and
   // removals. Courts update once daily (~5:30 AM MT), so this runs right after.
   // An initial random delay of 0–30 minutes varies the start time each day
   // so the batch doesn't always begin at the same second.
-  cron.schedule("0 12 * * *", async () => {
+  cron.schedule("0 6 * * *", async () => {
     const jitterMs = Math.floor(Math.random() * 30 * 60 * 1000); // 0–30 min
     console.log(`🔄 Daily refresh triggered — starting in ${(jitterMs / 60_000).toFixed(1)} minutes`);
     await new Promise((resolve) => setTimeout(resolve, jitterMs));
@@ -34,21 +37,21 @@ export function startScheduler(): void {
         tags: { service: "scheduler", phase: "daily-refresh" },
       });
     }
-  });
+  }, MT_TZ);
 
-  // Daily cleanup — 12:30 UTC (~6:30 AM MT)
+  // Daily cleanup — 6:30 AM MT
   // Marks past calendar entries as completed
-  cron.schedule("30 12 * * *", async () => {
+  cron.schedule("30 6 * * *", async () => {
     console.log("🧹 Daily past-event cleanup triggered");
     try {
       await cleanupPastEvents();
     } catch (err) {
       console.error("❌ Past event cleanup failed:", err instanceof Error ? err.message : err);
     }
-  });
+  }, MT_TZ);
 
-  // Daily digest — 7:00 AM MT (13:00 UTC)
-  cron.schedule("0 13 * * *", async () => {
+  // Daily digest — 7:00 AM MT
+  cron.schedule("0 7 * * *", async () => {
     console.log("📬 Daily digest triggered");
     try {
       await sendDigestNotifications("daily_digest");
@@ -58,10 +61,10 @@ export function startScheduler(): void {
         tags: { service: "scheduler", phase: "daily-digest" },
       });
     }
-  });
+  }, MT_TZ);
 
-  // Weekly digest — Monday 7:00 AM MT (13:00 UTC)
-  cron.schedule("0 13 * * 1", async () => {
+  // Weekly digest — Monday 7:00 AM MT
+  cron.schedule("0 7 * * 1", async () => {
     console.log("📬 Weekly digest triggered");
     try {
       await sendDigestNotifications("weekly_digest");
@@ -71,7 +74,7 @@ export function startScheduler(): void {
         tags: { service: "scheduler", phase: "weekly-digest" },
       });
     }
-  });
+  }, MT_TZ);
 }
 
 /**

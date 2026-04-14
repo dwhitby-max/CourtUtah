@@ -95,10 +95,12 @@ async function triggerSearch(
     return { ok: true, resultsCount: 0, error: "skipped — no searchable field" };
   }
 
+  // Must include issuer/audience claims — authenticateToken verifies them and
+  // rejects tokens that lack them, which would silently 401 every cron request.
   const token = jwt.sign(
     { userId: search.user_id, email: search.email },
     config.jwtSecret,
-    { expiresIn: "5m" }
+    { expiresIn: "5m", issuer: "courttracker", audience: "courttracker-app" }
   );
 
   const qs = new URLSearchParams(queryParams).toString();
