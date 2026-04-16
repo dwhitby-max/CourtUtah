@@ -2,7 +2,7 @@
 
 **Version:** 0.14.0 | **Last Updated:** 2026-04-03
 **Platform:** Replit (Node.js 20, PostgreSQL, VM deployment)
-**Coding Standards:** `@file claudev7.md` (v7.0)
+**Coding Standards:** `@file Claudev7.md` (v7.1)
 
 ---
 
