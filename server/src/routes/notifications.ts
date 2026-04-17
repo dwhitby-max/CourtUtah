@@ -25,10 +25,16 @@ router.get("/", async (req: Request, res: Response) => {
 
   const client = await pool.connect();
   try {
+    // Exclude notifications whose saved search was deleted (saved_search_id set
+    // but no longer points to an active saved_searches row).
     const result = await client.query(
-      `SELECT * FROM notifications
-       WHERE user_id = $1
-       ORDER BY created_at DESC
+      `SELECT * FROM notifications n
+       WHERE n.user_id = $1
+         AND (
+           n.saved_search_id IS NULL
+           OR EXISTS (SELECT 1 FROM saved_searches ss WHERE ss.id = n.saved_search_id AND ss.is_active = true)
+         )
+       ORDER BY n.created_at DESC
        LIMIT $2 OFFSET $3`,
       [currentUser.userId, limit, offset]
     );
@@ -36,8 +42,13 @@ router.get("/", async (req: Request, res: Response) => {
     const countResult = await client.query(
       `SELECT
         COUNT(*) as total,
-        COUNT(*) FILTER (WHERE read = false) as unread_count
-       FROM notifications WHERE user_id = $1`,
+        COUNT(*) FILTER (WHERE n.read = false) as unread_count
+       FROM notifications n
+       WHERE n.user_id = $1
+         AND (
+           n.saved_search_id IS NULL
+           OR EXISTS (SELECT 1 FROM saved_searches ss WHERE ss.id = n.saved_search_id AND ss.is_active = true)
+         )`,
       [currentUser.userId]
     );
 
@@ -115,14 +126,20 @@ router.get("/changes-feed", async (req: Request, res: Response) => {
 
   const client = await pool.connect();
   try {
-    // Fetch unread notifications of types that represent court-side changes
+    // Fetch unread notifications of types that represent court-side changes.
+    // Only include notifications whose saved search still exists (or that
+    // pre-date the saved_search_id column and have no FK set).
     const result = await client.query(
-      `SELECT id, type, title, message, metadata, created_at
-       FROM notifications
-       WHERE user_id = $1
-         AND read = false
-         AND type IN ('schedule_change', 'new_match', 'event_cancelled')
-       ORDER BY created_at DESC
+      `SELECT n.id, n.type, n.title, n.message, n.metadata, n.created_at
+       FROM notifications n
+       WHERE n.user_id = $1
+         AND n.read = false
+         AND n.type IN ('schedule_change', 'new_match', 'event_cancelled')
+         AND (
+           n.saved_search_id IS NULL
+           OR EXISTS (SELECT 1 FROM saved_searches ss WHERE ss.id = n.saved_search_id AND ss.is_active = true)
+         )
+       ORDER BY n.created_at DESC
        LIMIT 50`,
       [currentUser.userId]
     );

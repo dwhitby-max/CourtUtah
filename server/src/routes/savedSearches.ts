@@ -70,9 +70,17 @@ router.delete("/:id", async (req: Request, res: Response) => {
       }
     }
 
-    // 2. Delete notifications linked to court events from this saved search.
-    //    Notifications reference court_event_id in metadata; find all court events
-    //    that belong to this saved search's calendar entries and remove their notifications.
+    // 2. Delete notifications linked to this saved search.
+    //    Notifications with saved_search_id set will be cascade-deleted when the
+    //    saved search row is removed. For older notifications (pre-migration, no
+    //    saved_search_id), clean up by court_event_id from calendar_entries.
+    await client.query(
+      `DELETE FROM notifications
+       WHERE saved_search_id = $1 AND user_id = $2`,
+      [searchId, userId]
+    );
+
+    // Also clean up pre-migration notifications that lack saved_search_id
     const courtEventIds = await client.query<{ court_event_id: number }>(
       `SELECT DISTINCT court_event_id FROM calendar_entries
        WHERE saved_search_id = $1 AND user_id = $2`,
@@ -80,10 +88,10 @@ router.delete("/:id", async (req: Request, res: Response) => {
     );
     if (courtEventIds.rows.length > 0) {
       const eventIds = courtEventIds.rows.map(r => r.court_event_id);
-      // Delete notifications that reference these court events in metadata
       await client.query(
         `DELETE FROM notifications
          WHERE user_id = $1
+           AND saved_search_id IS NULL
            AND type IN ('schedule_change', 'new_match', 'event_cancelled')
            AND (
              metadata->>'courtEventId' = ANY($2::text[])
@@ -93,33 +101,29 @@ router.delete("/:id", async (req: Request, res: Response) => {
       );
     }
 
-    // 3. Also delete any remaining notifications that match the search label/value
-    //    (some notifications may not have courtEventId in metadata)
-    const ssInfo = await client.query<{ label: string; search_value: string }>(
-      `SELECT label, search_value FROM saved_searches WHERE id = $1`,
+    // Clean up any remaining pre-migration notifications by search value text match
+    const ssInfo = await client.query<{ search_value: string }>(
+      `SELECT search_value FROM saved_searches WHERE id = $1`,
       [searchId]
     );
-    if (ssInfo.rows.length > 0) {
-      const { label, search_value } = ssInfo.rows[0];
-      // Clean up notifications whose title contains the search identifier
-      if (search_value) {
-        await client.query(
-          `DELETE FROM notifications
-           WHERE user_id = $1
-             AND type IN ('schedule_change', 'new_match', 'event_cancelled')
-             AND (title ILIKE '%' || $2 || '%' OR message ILIKE '%' || $2 || '%')`,
-          [userId, search_value]
-        );
-      }
+    if (ssInfo.rows.length > 0 && ssInfo.rows[0].search_value) {
+      await client.query(
+        `DELETE FROM notifications
+         WHERE user_id = $1
+           AND saved_search_id IS NULL
+           AND type IN ('schedule_change', 'new_match', 'event_cancelled')
+           AND (title ILIKE '%' || $2 || '%' OR message ILIKE '%' || $2 || '%')`,
+        [userId, ssInfo.rows[0].search_value]
+      );
     }
 
-    // 4. Delete remaining calendar_entries rows (including 'removed' ones)
+    // 3. Delete remaining calendar_entries rows (including 'removed' ones)
     await client.query(
       `DELETE FROM calendar_entries WHERE saved_search_id = $1 AND user_id = $2`,
       [searchId, userId]
     );
 
-    // 5. Delete the saved search itself
+    // 4. Delete the saved search itself
     await client.query(
       `DELETE FROM saved_searches WHERE id = $1 AND user_id = $2`,
       [searchId, userId]

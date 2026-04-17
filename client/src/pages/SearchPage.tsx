@@ -344,11 +344,8 @@ export default function SearchPage() {
           <div className="space-y-3">
             {savedSearches.map((saved) => {
               const ranToday = saved.last_refreshed_at && (() => {
-                const lastRun = new Date(saved.last_refreshed_at!);
-                const now = new Date();
-                return lastRun.getUTCFullYear() === now.getUTCFullYear() &&
-                  lastRun.getUTCMonth() === now.getUTCMonth() &&
-                  lastRun.getUTCDate() === now.getUTCDate();
+                const mtFmt = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Denver", year: "numeric", month: "2-digit", day: "2-digit" });
+                return mtFmt.format(new Date(saved.last_refreshed_at!)) === mtFmt.format(new Date());
               })();
               return (
               <div key={saved.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 p-3 bg-gray-50 rounded-md">

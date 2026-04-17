@@ -20,6 +20,7 @@ interface NotifyParams {
   title: string;
   message: string;
   metadata?: Record<string, unknown>;
+  savedSearchId?: number;
 }
 
 interface UserNotificationInfo {
@@ -76,10 +77,10 @@ export async function createNotification(params: NotifyParams): Promise<number |
   try {
     // Insert in-app notification
     const result = await client.query(
-      `INSERT INTO notifications (user_id, type, title, message, metadata)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO notifications (user_id, type, title, message, metadata, saved_search_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id`,
-      [params.userId, params.type, params.title, params.message, JSON.stringify(params.metadata || {})]
+      [params.userId, params.type, params.title, params.message, JSON.stringify(params.metadata || {}), params.savedSearchId || null]
     );
 
     const notificationId = result.rows[0].id;
@@ -156,7 +157,8 @@ export async function createNotification(params: NotifyParams): Promise<number |
 export async function notifyScheduleChange(
   userId: number,
   caseName: string,
-  changes: Array<{ field: string; oldValue: string; newValue: string }>
+  changes: Array<{ field: string; oldValue: string; newValue: string }>,
+  savedSearchId?: number
 ): Promise<void> {
   const summary = changes.map((c) => `${c.field}: ${c.oldValue} → ${c.newValue}`).join("; ");
 
@@ -166,6 +168,7 @@ export async function notifyScheduleChange(
     title: `Schedule Change: ${caseName}`,
     message: summary,
     metadata: { changes },
+    savedSearchId,
   });
 }
 
@@ -174,7 +177,10 @@ export async function notifyScheduleChange(
  */
 async function getUnreadCountInternal(client: { query: (q: string, p: unknown[]) => Promise<{ rows: Array<{ count: string }> }> }, userId: number): Promise<number> {
   const result = await client.query(
-    `SELECT COUNT(*) as count FROM notifications WHERE user_id = $1 AND read = false`,
+    `SELECT COUNT(*) as count FROM notifications n
+     WHERE n.user_id = $1 AND n.read = false
+       AND (n.saved_search_id IS NULL
+            OR EXISTS (SELECT 1 FROM saved_searches ss WHERE ss.id = n.saved_search_id AND ss.is_active = true))`,
     [userId]
   );
   return parseInt(result.rows[0].count, 10);
@@ -187,7 +193,10 @@ export async function getUnreadCount(userId: number): Promise<number> {
   const client = await pool.connect();
   try {
     const result = await client.query(
-      `SELECT COUNT(*) as count FROM notifications WHERE user_id = $1 AND read = false`,
+      `SELECT COUNT(*) as count FROM notifications n
+       WHERE n.user_id = $1 AND n.read = false
+         AND (n.saved_search_id IS NULL
+              OR EXISTS (SELECT 1 FROM saved_searches ss WHERE ss.id = n.saved_search_id AND ss.is_active = true))`,
       [userId]
     );
     return parseInt(result.rows[0].count, 10);
