@@ -40,9 +40,15 @@ export async function searchCourtEvents(params: SearchRequest): Promise<CourtEve
   let paramIndex = 1;
 
   if (params.defendantName) {
-    conditions.push(`UPPER(defendant_name) LIKE $${paramIndex} ESCAPE '\\'`);
-    values.push(`%${escapeLike(params.defendantName.toUpperCase())}%`);
-    paramIndex++;
+    // Word-by-word match so "jon sill" finds "JONATHAN D SILL" — a substring
+    // match would miss the middle initial. Each whitespace-separated word must
+    // appear somewhere in defendant_name.
+    const words = params.defendantName.toUpperCase().split(/\s+/).filter(Boolean);
+    for (const word of words) {
+      conditions.push(`UPPER(defendant_name) LIKE $${paramIndex} ESCAPE '\\'`);
+      values.push(`%${escapeLike(word)}%`);
+      paramIndex++;
+    }
   }
 
   if (params.caseNumber) {

@@ -644,12 +644,18 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       }
     }
 
-    // Apply filters — but skip attorney filter for live results since
-    // utcourts.gov already filtered by attorney (search.php t=a).
-    // The parser leaves prosecutingAttorney/defenseAttorney null until
-    // details.php enrichment runs, which may fail or be incomplete.
+    // Skip local filtering for whichever field utcourts.gov already filtered on
+    // (the primary search field sent as t=p/c/j/a). Re-applying the filter locally
+    // is redundant and drops valid matches — e.g. a search for "jon sill" returns
+    // "JONATHAN D SILL", but .includes("JON SILL") is false because of the middle
+    // initial. Trust the court site's matching on the primary field. Secondary
+    // filters (dates, charges, OTN, citation, court selection) still apply locally
+    // since utcourts.gov doesn't support them in all cases.
     const liveFilterParams = { ...searchParams };
-    if (isAttorneySearch) delete liveFilterParams.attorney;
+    if (liveBase.caseNumber) delete liveFilterParams.caseNumber;
+    if (liveBase.partyName) delete liveFilterParams.defendantName;
+    if (liveBase.judgeName) delete liveFilterParams.judgeName;
+    if (liveBase.attorneyLastName || liveBase.attorneyFirstName) delete liveFilterParams.attorney;
     const filteredLive = applyAllFilters(liveEvents, liveFilterParams);
 
     // Deduplicate by case_number + date + time — the same hearing can appear

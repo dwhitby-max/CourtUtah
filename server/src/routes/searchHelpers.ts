@@ -538,10 +538,14 @@ export function applyAllFilters(
   let filtered = results;
 
   if (params.defendantName) {
-    const name = params.defendantName.toUpperCase();
-    filtered = filtered.filter(
-      (e) => e.defendantName && e.defendantName.toUpperCase().includes(name)
-    );
+    // Word-by-word match so "jon sill" finds "JONATHAN D SILL" — a substring
+    // match would miss the middle initial.
+    const words = params.defendantName.toUpperCase().split(/\s+/).filter(Boolean);
+    filtered = filtered.filter((e) => {
+      if (!e.defendantName) return false;
+      const upper = e.defendantName.toUpperCase();
+      return words.every((w) => upper.includes(w));
+    });
   }
 
   if (params.caseNumber) {
