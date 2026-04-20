@@ -36,6 +36,8 @@ export interface ParsedCourtEvent {
   hearingLocation: string | null;
   isVirtual: boolean;
   contentHash: string;
+  /** Charge descriptions from details.php enrichment (e.g. "76-5-103 AGGRAVATED ASSAULT"). */
+  charges?: string[];
   /** Full court name from the court list (e.g. "Third District Court - Salt Lake"). Set by caller, not parser. */
   courtName?: string | null;
   /** Court location code used for the live search (e.g. "1868D"). Set by caller, not parser. */
@@ -52,6 +54,7 @@ export interface ParsedCourtEvent {
  */
 function hashEvent(event: Omit<ParsedCourtEvent, "contentHash">): string {
   const data = JSON.stringify({
+    courtName: event.courtName || null,
     courtRoom: event.courtRoom,
     eventDate: event.eventDate,
     eventTime: event.eventTime,
@@ -236,6 +239,24 @@ function parseEventBlock(
       .trim();
   }
 
+  // 4b. Extract court name from the "bottomline" header div at the start of the
+  //     event box. Format: "<court name> (Hearing location is in XXX - More Info)".
+  //     For targeted searches the caller overrides this with the canonical name
+  //     from the court list, but for broad (loc=all) scrapes this is the only
+  //     source of a per-event court name — without it court_name would be saved
+  //     blank.
+  let courtName: string | null = null;
+  const headerDivMatch = boxHtml.match(
+    /class="[^"]*bottomline[^"]*"[^>]*>([\s\S]*?)<\/div>/i
+  );
+  if (headerDivMatch) {
+    const headerText = stripTags(headerDivMatch[1])
+      .replace(/\(Hearing location is in[^)]*\)/i, "")
+      .replace(/[\s-]+$/, "")
+      .trim();
+    if (headerText.length >= 2) courtName = headerText;
+  }
+
   // 5. Extract attorney name from search results.
   //    search.php shows ONE attorney with the generic label "Attorney: &nbsp;"
   //    followed by the name (with HILI spans highlighting search matches).
@@ -413,6 +434,7 @@ function parseEventBlock(
     judgeName,
     hearingLocation,
     isVirtual,
+    courtName,
     detailsUrl,
     searchResultAttorney,
   };
@@ -848,6 +870,7 @@ export async function enrichFromDetailsPages(
       if (data.defendantDob && !event.defendantDob) event.defendantDob = data.defendantDob;
       if (data.defendantOtn && !event.defendantOtn) event.defendantOtn = data.defendantOtn;
       if (data.citationNumber && !event.citationNumber) event.citationNumber = data.citationNumber;
+      if (data.charges && data.charges.length > 0) event.charges = data.charges;
     }
     failed += batchFailed;
 

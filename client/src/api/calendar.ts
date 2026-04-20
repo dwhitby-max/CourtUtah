@@ -53,10 +53,12 @@ export async function connectCaldav(caldavUrl: string, username: string, passwor
   return data;
 }
 
-export async function addEventToCalendar(courtEventId: number): Promise<{ message: string; calendarEntryId: number; synced: boolean }> {
+export async function addEventToCalendar(courtEventId: number, savedSearchId?: number | null): Promise<{ message: string; calendarEntryId: number; synced: boolean }> {
+  const body: Record<string, unknown> = { courtEventId };
+  if (savedSearchId) body.savedSearchId = savedSearchId;
   const res = await apiFetch("/calendar/events", {
     method: "POST",
-    body: JSON.stringify({ courtEventId }),
+    body: JSON.stringify(body),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "Failed to add event to calendar");
@@ -70,10 +72,12 @@ export async function getSyncedEvents(): Promise<Record<number, number>> {
   return data.synced;
 }
 
-export async function addAllEventsToCalendar(courtEventIds: number[]): Promise<{ message: string; results: Array<{ courtEventId: number; calendarEntryId: number; synced: boolean; error?: string }> }> {
+export async function addAllEventsToCalendar(courtEventIds: number[], savedSearchId?: number | null): Promise<{ message: string; results: Array<{ courtEventId: number; calendarEntryId: number; synced: boolean; error?: string }> }> {
+  const body: Record<string, unknown> = { courtEventIds };
+  if (savedSearchId) body.savedSearchId = savedSearchId;
   const res = await apiFetch("/calendar/events/batch", {
     method: "POST",
-    body: JSON.stringify({ courtEventIds }),
+    body: JSON.stringify(body),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "Failed to add events to calendar");

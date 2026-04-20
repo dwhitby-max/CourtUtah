@@ -546,10 +546,22 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
       ? "all"
       : rawDates;
 
-    // Persist live results and detect changes (awaited so we can return changes)
+    // Persist live results and detect changes (awaited so we can return changes).
+    // Pass dbResults' case numbers as the prior-matched set so stale cleanup
+    // can remove rows that this saved search previously matched but the fresh
+    // scrape no longer finds — even when the scrape returns zero events.
+    // Two safety gates:
+    //  - Skip on retry path: dbResults' non-retry-court rows are authoritative
+    //    (we didn't re-scrape them) and must not be deleted.
+    //  - Skip when any court failed: a partial-failure scrape must not trigger
+    //    stale cleanup, otherwise a transient failure would wipe prior data.
     let detectedChanges: DetectedChange[] = [];
+    const scrapeWasClean = !retryCourtsOnly && failedCourtCodes.length === 0;
+    const priorMatchedCaseNumbers = scrapeWasClean
+      ? dbResults.map((r) => r.caseNumber).filter((n): n is string => !!n)
+      : undefined;
     try {
-      detectedChanges = await persistLiveResults(allParsed, searchedDates, existing?.id);
+      detectedChanges = await persistLiveResults(allParsed, searchedDates, existing?.id, priorMatchedCaseNumbers);
       if (detectedChanges.length > 0) {
         console.log(`🔔 ${detectedChanges.length} event(s) with changes detected`);
       }
@@ -674,7 +686,38 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     // Live scrape is the source of truth — stale DB events for the same case
     // numbers were already deleted during persistLiveResults. No need to merge
     // old DB records back in; doing so would re-surface ghost events.
-    const merged = deduped.slice(0, 2000);
+    let merged = deduped.slice(0, 2000);
+
+    // On a partial-failure retry, `allParsed` only contains events from the
+    // courts we re-scraped. Courts that succeeded previously are NOT re-scraped
+    // and would disappear from the response if we returned only `merged`. Pull
+    // those courts' events from `dbResults` (the previously-persisted cache)
+    // and merge them back in so the response reflects all originally-selected
+    // courts, not just the retry subset.
+    if (retryCourtsOnly) {
+      const retryCourtNames = new Set(
+        retryCourtsOnly
+          .map((loc) => courtByLoc.get(loc)?.name)
+          .filter((n): n is string => !!n)
+      );
+      const liveKeys = new Set(
+        merged.map((e) =>
+          `${(e.caseNumber || "").toUpperCase()}|${e.eventDate || ""}|${(e.eventTime || "").replace(/\s+/g, "")}`
+        )
+      );
+      // dbResults was already filtered by searchCourtEvents() with the original
+      // searchParams, so no extra filtering needed — just exclude rows from
+      // courts we just re-scraped (which are now authoritative in `merged`).
+      const dbToMerge = dbResults.filter((row) => {
+        if (row.courtName && retryCourtNames.has(row.courtName)) return false;
+        const key = `${(row.caseNumber || "").toUpperCase()}|${row.eventDate || ""}|${(row.eventTime || "").replace(/\s+/g, "")}`;
+        return !liveKeys.has(key);
+      });
+      if (dbToMerge.length > 0) {
+        merged = merged.concat(dbToMerge).slice(0, 2000);
+        console.log(`  🔀 Retry merge: added ${dbToMerge.length} event(s) from previously-successful courts back into results`);
+      }
+    }
 
     console.log(`  📊 Results: ${filteredLive.length} live events, ${filteredLive.length - deduped.length} duplicates removed, ${merged.length} returned`);
 

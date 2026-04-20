@@ -198,10 +198,16 @@ router.post("/events", authenticateToken, heavyLimiter, async (req: Request, res
   if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
   const currentUser = req.user;
 
-  const { courtEventId } = req.body;
+  const { courtEventId, savedSearchId } = req.body;
   if (!courtEventId || typeof courtEventId !== "number" || courtEventId <= 0) {
     res.status(400).json({ error: "A valid courtEventId is required" });
     return;
+  }
+  if (savedSearchId !== undefined && savedSearchId !== null) {
+    if (typeof savedSearchId !== "number" || savedSearchId <= 0) {
+      res.status(400).json({ error: "If provided, savedSearchId must be a positive number" });
+      return;
+    }
   }
 
   const pool = getPool();
@@ -217,6 +223,23 @@ router.post("/events", authenticateToken, heavyLimiter, async (req: Request, res
     if (eventResult.rows.length === 0) {
       res.status(404).json({ error: "Court event not found" });
       return;
+    }
+
+    // If a savedSearchId was passed, verify it belongs to the caller — prevents
+    // a user from linking their calendar entry to someone else's saved search.
+    // We silently drop an invalid/foreign id rather than 403, because the add
+    // itself is still valid; only the association context is missing.
+    let resolvedSavedSearchId: number | null = null;
+    if (typeof savedSearchId === "number") {
+      const ownership = await client.query(
+        `SELECT id FROM saved_searches WHERE id = $1 AND user_id = $2`,
+        [savedSearchId, currentUser.userId]
+      );
+      if (ownership.rows.length > 0) {
+        resolvedSavedSearchId = savedSearchId;
+      } else {
+        console.warn(`⚠️ savedSearchId ${savedSearchId} not owned by user ${currentUser.userId} — storing calendar entry without search linkage`);
+      }
     }
 
     let connResult = await client.query(
@@ -280,21 +303,31 @@ router.post("/events", authenticateToken, heavyLimiter, async (req: Request, res
     let isUpdate = false;
 
     if (existingEntry.rows.length > 0) {
-      // Re-sync existing entry
+      // Re-sync existing entry. If the caller provided a savedSearchId and the
+      // existing row has none, backfill it — the entry was originally added
+      // outside a saved-search context (or before this field was populated).
       entryId = existingEntry.rows[0].id;
       isUpdate = true;
       await client.query(
-        `UPDATE calendar_entries SET sync_status = 'pending', last_synced_content_hash = NULL, updated_at = NOW() WHERE id = $1`,
-        [entryId]
+        `UPDATE calendar_entries
+         SET sync_status = 'pending',
+             last_synced_content_hash = NULL,
+             saved_search_id = COALESCE(saved_search_id, $2),
+             updated_at = NOW()
+         WHERE id = $1`,
+        [entryId, resolvedSavedSearchId]
       );
     } else {
-      // Create new calendar entry
+      // Create new calendar entry, linking to the saved search when known so
+      // that stale-event cleanup (searchHelpers.persistLiveResults) and
+      // schedule-change fan-out (changeDetector.processChanges) can scope
+      // notifications and cleanup to the saved search that surfaced the event.
       const insertResult = await client.query(
         `INSERT INTO calendar_entries
-         (user_id, court_event_id, calendar_connection_id, sync_status)
-         VALUES ($1, $2, $3, 'pending')
+         (user_id, court_event_id, calendar_connection_id, saved_search_id, sync_status)
+         VALUES ($1, $2, $3, $4, 'pending')
          RETURNING id`,
-        [currentUser.userId, courtEventId, connectionId]
+        [currentUser.userId, courtEventId, connectionId, resolvedSavedSearchId]
       );
       entryId = insertResult.rows[0].id;
     }
@@ -328,7 +361,7 @@ router.post("/events/batch", authenticateToken, heavyLimiter, async (req: Reques
   if (!req.user) { res.status(401).json({ error: "Not authenticated" }); return; }
   const currentUser = req.user;
 
-  const { courtEventIds } = req.body;
+  const { courtEventIds, savedSearchId } = req.body;
   if (!Array.isArray(courtEventIds) || courtEventIds.length === 0) {
     res.status(400).json({ error: "courtEventIds must be a non-empty array" });
     return;
@@ -339,11 +372,33 @@ router.post("/events/batch", authenticateToken, heavyLimiter, async (req: Reques
     return;
   }
 
+  if (savedSearchId !== undefined && savedSearchId !== null) {
+    if (typeof savedSearchId !== "number" || savedSearchId <= 0) {
+      res.status(400).json({ error: "If provided, savedSearchId must be a positive number" });
+      return;
+    }
+  }
+
   const pool = getPool();
   if (!pool) { res.status(503).json({ error: "Database unavailable" }); return; }
 
   const client = await pool.connect();
   try {
+    // Validate savedSearchId ownership once upfront (same as /events) — reuse
+    // the resolved value for every insert in this batch.
+    let resolvedSavedSearchId: number | null = null;
+    if (typeof savedSearchId === "number") {
+      const ownership = await client.query(
+        `SELECT id FROM saved_searches WHERE id = $1 AND user_id = $2`,
+        [savedSearchId, currentUser.userId]
+      );
+      if (ownership.rows.length > 0) {
+        resolvedSavedSearchId = savedSearchId;
+      } else {
+        console.warn(`⚠️ Batch add: savedSearchId ${savedSearchId} not owned by user ${currentUser.userId} — storing without search linkage`);
+      }
+    }
+
     // Verify user has an active calendar connection
     const connResult = await client.query(
       `SELECT id FROM calendar_connections
@@ -435,18 +490,23 @@ router.post("/events/batch", authenticateToken, heavyLimiter, async (req: Reques
         if (existingEntry.rows.length > 0) {
           entryId = existingEntry.rows[0].id;
           await client.query(
-            `UPDATE calendar_entries SET sync_status = 'pending', last_synced_content_hash = NULL, updated_at = NOW() WHERE id = $1`,
-            [entryId]
+            `UPDATE calendar_entries
+             SET sync_status = 'pending',
+                 last_synced_content_hash = NULL,
+                 saved_search_id = COALESCE(saved_search_id, $2),
+                 updated_at = NOW()
+             WHERE id = $1`,
+            [entryId, resolvedSavedSearchId]
           );
           // Re-activating a removed entry counts against the limit
           if (existingEntry.rows[0].sync_status === "removed") isNewEntry = true;
         } else {
           const insertResult = await client.query(
             `INSERT INTO calendar_entries
-             (user_id, court_event_id, calendar_connection_id, sync_status)
-             VALUES ($1, $2, $3, 'pending')
+             (user_id, court_event_id, calendar_connection_id, saved_search_id, sync_status)
+             VALUES ($1, $2, $3, $4, 'pending')
              RETURNING id`,
-            [currentUser.userId, courtEventId, connectionId]
+            [currentUser.userId, courtEventId, connectionId, resolvedSavedSearchId]
           );
           entryId = insertResult.rows[0].id;
           isNewEntry = true;

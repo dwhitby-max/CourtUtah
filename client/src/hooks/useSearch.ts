@@ -9,6 +9,7 @@ export function useSearch() {
   const [error, setError] = useState("");
   const [previousRunAt, setPreviousRunAt] = useState<string | null>(null);
   const [cachedToday, setCachedToday] = useState(false);
+  const [savedSearchId, setSavedSearchId] = useState<number | null>(null);
 
   async function search(params: Record<string, string>) {
     setError("");
@@ -21,11 +22,13 @@ export function useSearch() {
       setResults(data.results);
       setPreviousRunAt(data.previousRunAt ?? null);
       setCachedToday(data.cachedToday ?? false);
+      setSavedSearchId(data.savedSearchId ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Search failed");
       setResults([]);
       setPreviousRunAt(null);
       setCachedToday(false);
+      setSavedSearchId(null);
     } finally {
       setLoading(false);
     }
@@ -37,7 +40,8 @@ export function useSearch() {
     setError("");
     setPreviousRunAt(null);
     setCachedToday(false);
+    setSavedSearchId(null);
   }
 
-  return { results, searched, loading, error, previousRunAt, cachedToday, search, clearResults };
+  return { results, searched, loading, error, previousRunAt, cachedToday, savedSearchId, search, clearResults };
 }

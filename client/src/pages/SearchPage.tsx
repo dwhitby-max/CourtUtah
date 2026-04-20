@@ -244,7 +244,7 @@ export default function SearchPage() {
 
   async function onAddToCalendar(event: CourtEvent) {
     try {
-      const data = await cal.handleAddToCalendar(event.id);
+      const data = await cal.handleAddToCalendar(event.id, lastSearchSavedId);
       setSuccessMsg(data.message);
       setError("");
     } catch (err) {
@@ -279,7 +279,7 @@ export default function SearchPage() {
     setSuccessMsg("");
 
     try {
-      const data = await cal.handleBatchAdd(unsyncedIds);
+      const data = await cal.handleBatchAdd(unsyncedIds, lastSearchSavedId);
       setSuccessMsg(data.message);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to add events to calendar";

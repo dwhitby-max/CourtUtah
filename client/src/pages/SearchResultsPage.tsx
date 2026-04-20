@@ -22,7 +22,7 @@ export default function SearchResultsPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { results, searched, loading, error, previousRunAt, cachedToday, search } = useSearch();
+  const { results, searched, loading, error, previousRunAt, cachedToday, savedSearchId, search } = useSearch();
   const isPro = user?.subscriptionPlan === "pro" && (user?.subscriptionStatus === "active" || user?.subscriptionStatus === "grandfathered");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -63,7 +63,7 @@ export default function SearchResultsPage() {
 
   async function handleAddToCalendar(event: CourtEvent) {
     try {
-      const data = await cal.handleAddToCalendar(event.id);
+      const data = await cal.handleAddToCalendar(event.id, savedSearchId);
       setCalSuccess(data.message);
       setCalError("");
     } catch (err) {
@@ -105,7 +105,7 @@ export default function SearchResultsPage() {
     setCalSuccess("");
 
     try {
-      const data = await cal.handleBatchAdd(unsyncedIds);
+      const data = await cal.handleBatchAdd(unsyncedIds, savedSearchId);
       setCalSuccess(data.message);
       setBatchProgress("");
     } catch (err) {

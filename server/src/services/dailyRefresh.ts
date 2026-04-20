@@ -9,7 +9,8 @@
  *
  * This is the system's primary mechanism for detecting new hearings, schedule
  * changes, and removed events. Courts update once daily (~5:30 AM MT), so
- * running this cron once per day is sufficient.
+ * running this cron once per day is sufficient. The scheduler fires at 6:00 AM
+ * MT (jittered 0–30 min) to guarantee we scrape AFTER the court update window.
  *
  * To avoid looking like automated bot traffic:
  * - Searches are shuffled into random order each day

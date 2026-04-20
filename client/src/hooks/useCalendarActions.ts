@@ -30,10 +30,10 @@ export function useCalendarActions() {
 
   const calLabel = calendarProvider ? providerLabels[calendarProvider] || "Calendar" : "Calendar";
 
-  async function handleAddToCalendar(eventId: number): Promise<{ message: string; calendarEntryId: number }> {
+  async function handleAddToCalendar(eventId: number, savedSearchId?: number | null): Promise<{ message: string; calendarEntryId: number }> {
     setCalSyncingIds(prev => new Set(prev).add(eventId));
     try {
-      const data = await addEventToCalendar(eventId);
+      const data = await addEventToCalendar(eventId, savedSearchId);
       setCalSyncedIds(prev => new Set(prev).add(eventId));
       setCalEntryMap(prev => ({ ...prev, [eventId]: data.calendarEntryId }));
       return data;
@@ -72,8 +72,8 @@ export function useCalendarActions() {
     }
   }
 
-  async function handleBatchAdd(eventIds: number[]): Promise<{ results: Array<{ courtEventId: number; calendarEntryId: number; synced: boolean }>; message: string }> {
-    const data = await addAllEventsToCalendar(eventIds);
+  async function handleBatchAdd(eventIds: number[], savedSearchId?: number | null): Promise<{ results: Array<{ courtEventId: number; calendarEntryId: number; synced: boolean }>; message: string }> {
+    const data = await addAllEventsToCalendar(eventIds, savedSearchId);
     const newSyncedIds = new Set(calSyncedIds);
     const newEntryMap = { ...calEntryMap };
     for (const r of data.results) {

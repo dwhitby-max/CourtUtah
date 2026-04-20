@@ -235,9 +235,15 @@ export async function persistLiveResults(
   parsed: ParsedCourtEvent[],
   searchedDates?: string[] | "all",
   savedSearchId?: number,
+  priorMatchedCaseNumbers?: string[],
 ): Promise<DetectedChange[]> {
   const pool = getPool();
-  if (!pool || parsed.length === 0) return [];
+  if (!pool) return [];
+  // Note: we intentionally do NOT early-return on parsed.length === 0. A live
+  // scrape that now returns zero hits for a saved search must still run the
+  // stale-cleanup block below, otherwise previously-matched events stay in
+  // court_events forever (and the same-day cache path will serve them as
+  // current truth). See searchedDates + priorMatchedCaseNumbers usage below.
 
   const allDetectedChanges: DetectedChange[] = [];
   const client = await pool.connect();
@@ -262,10 +268,12 @@ export async function persistLiveResults(
 
       try {
         const existing = await client.query(
-          `SELECT id, court_room, event_date::text, event_time, hearing_type,
+          `SELECT id, court_name, court_room, event_date::text, event_time, hearing_type,
                   case_number, case_type, defendant_name,
                   prosecuting_attorney, defense_attorney,
-                  judge_name, hearing_location, content_hash
+                  judge_name, hearing_location, content_hash,
+                  defendant_otn, defendant_dob, citation_number,
+                  sheriff_number, lea_number, is_virtual
            FROM court_events
            WHERE case_number = $1 AND event_date = $2
              AND event_time = COALESCE($3, '')
@@ -281,6 +289,7 @@ export async function persistLiveResults(
           const isSparseIncoming = incomingPopulated < existingPopulated && incomingPopulated <= 1;
 
           const incoming: Record<string, unknown> = {
+            court_name: event.courtName || (isSparseIncoming ? row.court_name : "") || "",
             court_room: event.courtRoom || row.court_room || "",
             event_date: event.eventDate || "",
             event_time: event.eventTime || "",
@@ -325,6 +334,13 @@ export async function persistLiveResults(
                 judge_name = COALESCE(NULLIF($9, ''), judge_name),
                 hearing_location = COALESCE(NULLIF($10, ''), hearing_location),
                 content_hash = COALESCE(NULLIF($11, ''), content_hash),
+                defendant_otn = COALESCE(NULLIF($13, ''), defendant_otn),
+                defendant_dob = COALESCE(NULLIF($14, '')::date, defendant_dob),
+                citation_number = COALESCE(NULLIF($15, ''), citation_number),
+                sheriff_number = COALESCE(NULLIF($16, ''), sheriff_number),
+                lea_number = COALESCE(NULLIF($17, ''), lea_number),
+                is_virtual = $18,
+                charges = COALESCE(NULLIF($19::jsonb, '[]'::jsonb), charges),
                 updated_at = NOW()
               WHERE id = $12`,
               [
@@ -333,6 +349,10 @@ export async function persistLiveResults(
                 event.defendantName, event.prosecutingAttorney,
                 event.defenseAttorney, event.judgeName,
                 event.hearingLocation, event.contentHash, row.id,
+                event.defendantOtn || "", event.defendantDob || "",
+                event.citationNumber || "", event.sheriffNumber || "",
+                event.leaNumber || "", event.isVirtual,
+                JSON.stringify(event.charges || []),
               ]
             );
 
@@ -348,9 +368,16 @@ export async function persistLiveResults(
               );
             }
           } else {
-            // No tracked-field changes, but still fill in missing attorney data
+            // No tracked-field changes, but still refresh non-tracked identity
+            // data that may have been missing or stale on the prior row:
+            //   - attorneys (often populated only after details.php enrichment)
+            //   - court_name (blank on rows from pre-fix loc=all scrapes)
+            //   - OTN / DOB / citation / sheriff / LEA / charges (only set on
+            //     first INSERT previously — later scrapes with richer data
+            //     would never update them)
+            //   - is_virtual (the Virtual Hearing flag can flip between runs)
             const updates: string[] = [];
-            const values: (string | null)[] = [];
+            const values: unknown[] = [];
             let paramIdx = 1;
 
             if (event.defenseAttorney && !row.defense_attorney) {
@@ -360,6 +387,38 @@ export async function persistLiveResults(
             if (event.prosecutingAttorney && !row.prosecuting_attorney) {
               updates.push(`prosecuting_attorney = $${paramIdx++}`);
               values.push(event.prosecutingAttorney);
+            }
+            if (event.courtName && !row.court_name) {
+              updates.push(`court_name = $${paramIdx++}`);
+              values.push(event.courtName);
+            }
+            if (event.defendantOtn && !row.defendant_otn) {
+              updates.push(`defendant_otn = $${paramIdx++}`);
+              values.push(event.defendantOtn);
+            }
+            if (event.defendantDob && !row.defendant_dob) {
+              updates.push(`defendant_dob = $${paramIdx++}::date`);
+              values.push(event.defendantDob);
+            }
+            if (event.citationNumber && !row.citation_number) {
+              updates.push(`citation_number = $${paramIdx++}`);
+              values.push(event.citationNumber);
+            }
+            if (event.sheriffNumber && !row.sheriff_number) {
+              updates.push(`sheriff_number = $${paramIdx++}`);
+              values.push(event.sheriffNumber);
+            }
+            if (event.leaNumber && !row.lea_number) {
+              updates.push(`lea_number = $${paramIdx++}`);
+              values.push(event.leaNumber);
+            }
+            if (event.charges && event.charges.length > 0) {
+              updates.push(`charges = $${paramIdx++}::jsonb`);
+              values.push(JSON.stringify(event.charges));
+            }
+            if (typeof event.isVirtual === "boolean" && event.isVirtual !== row.is_virtual) {
+              updates.push(`is_virtual = $${paramIdx++}`);
+              values.push(event.isVirtual);
             }
 
             if (updates.length > 0) {
@@ -380,8 +439,8 @@ export async function persistLiveResults(
             defendant_otn, defendant_dob, prosecuting_attorney,
             defense_attorney, citation_number, sheriff_number,
             lea_number, content_hash,
-            judge_name, hearing_location, is_virtual
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+            judge_name, hearing_location, is_virtual, charges
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb)
           ON CONFLICT (case_number, event_date, event_time) DO UPDATE SET
             court_name = COALESCE(NULLIF(EXCLUDED.court_name, ''), court_events.court_name),
             court_room = COALESCE(NULLIF(EXCLUDED.court_room, ''), court_events.court_room),
@@ -393,6 +452,13 @@ export async function persistLiveResults(
             judge_name = COALESCE(NULLIF(EXCLUDED.judge_name, ''), court_events.judge_name),
             hearing_location = COALESCE(NULLIF(EXCLUDED.hearing_location, ''), court_events.hearing_location),
             content_hash = COALESCE(NULLIF(EXCLUDED.content_hash, ''), court_events.content_hash),
+            defendant_otn = COALESCE(NULLIF(EXCLUDED.defendant_otn, ''), court_events.defendant_otn),
+            defendant_dob = COALESCE(EXCLUDED.defendant_dob, court_events.defendant_dob),
+            citation_number = COALESCE(NULLIF(EXCLUDED.citation_number, ''), court_events.citation_number),
+            sheriff_number = COALESCE(NULLIF(EXCLUDED.sheriff_number, ''), court_events.sheriff_number),
+            lea_number = COALESCE(NULLIF(EXCLUDED.lea_number, ''), court_events.lea_number),
+            is_virtual = EXCLUDED.is_virtual,
+            charges = COALESCE(NULLIF(EXCLUDED.charges, '[]'::jsonb), court_events.charges),
             updated_at = NOW()`,
           [
             "", event.courtName || "", event.courtRoom, event.eventDate,
@@ -402,6 +468,7 @@ export async function persistLiveResults(
             event.defenseAttorney, event.citationNumber,
             event.sheriffNumber, event.leaNumber, event.contentHash,
             event.judgeName, event.hearingLocation, event.isVirtual,
+            JSON.stringify(event.charges || []),
           ]
         );
       } catch (err) {
@@ -414,11 +481,20 @@ export async function persistLiveResults(
     // Only delete DB events whose date falls within the searched range.
     // Events on dates outside the search scope are left untouched.
     const caseNumbers = new Set<string>(parsed.filter(e => e.caseNumber).map(e => e.caseNumber!));
-    // Also include cases previously tracked by this saved search via calendar
-    // entries. Covers the "removed entirely" case where the fresh scrape returns
-    // zero hits for a case that was previously matched — without this, the old
-    // rows would persist forever because caseNumbers (from fresh results) would
-    // miss them.
+    // Also include cases previously matched by this saved search. Two sources:
+    //   1. priorMatchedCaseNumbers — caller passes the saved search's current
+    //      DB matches (from dbResults). Covers any case the saved search
+    //      previously found, regardless of whether the user put it on a
+    //      calendar. Without this, a fresh scrape returning zero hits leaves
+    //      stale rows that the same-day cache path would keep serving.
+    //   2. calendar_entries tracking — catches cases that may have fallen out
+    //      of the saved-search result window (e.g. date-range changed) but are
+    //      still on someone's calendar.
+    if (priorMatchedCaseNumbers && priorMatchedCaseNumbers.length > 0) {
+      for (const cn of priorMatchedCaseNumbers) {
+        if (cn) caseNumbers.add(cn);
+      }
+    }
     if (savedSearchId) {
       const prior = await client.query<{ case_number: string }>(
         `SELECT DISTINCT ce.case_number

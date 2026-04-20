@@ -61,7 +61,7 @@ Full-stack app that scrapes Utah court calendars (legacy.utcourts.gov), lets use
 1. **Scraping:** HTML from search.php (primary), pdf-parse fallback for legacy courts. details.php fetched in parallel batches of 10 for attorney enrichment.
 2. **Tokens:** AES-256-GCM encrypted via ENCRYPTION_KEY env var.
 3. **Change detection:** SHA-256 content hash per event, field-level diff on each scrape cycle.
-4. **Scheduling:** node-cron in `America/Denver` timezone — daily refresh fires 5:00 AM MT with 0–45 min jitter (actual start 5:00–5:45), cleanup 6:30 AM MT, daily digest 7:00 AM MT, weekly digest Mon 7:00 AM MT + manual `/api/admin/trigger-scrape` + Replit scheduled deployments. Single daily run is sufficient — Utah courts update once per day.
+4. **Scheduling:** node-cron in `America/Denver` timezone — daily refresh fires 6:00 AM MT with 0–30 min jitter (actual start 6:00–6:30), guaranteed AFTER the ~5:30 AM court update window; cleanup 6:30 AM MT, daily digest 7:00 AM MT, weekly digest Mon 7:00 AM MT + manual `/api/admin/trigger-scrape` + Replit scheduled deployments. Single daily run is sufficient — Utah courts update once per day.
 5. **Calendar safety:** Only updates/deletes entries the app created (tracked in `calendar_entries` with provider's external event ID).
 6. **Search caching:** First-time searches go live to utcourts.gov and persist results. Same-day repeats return cached DB results (courts update once daily at 5:30 AM).
 7. **Saved searches:** Auto-saved for logged-in users. `search_params` JSONB with `_key` for dedup.
