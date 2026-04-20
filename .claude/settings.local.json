@@ -60,7 +60,10 @@
       "Bash(cat logs/*.log)",
       "Bash(pkill -f \"node server/dist/server/src/index.js\")",
       "Bash(node server/dist/server/src/index.js)",
-      "Bash(pkill -f \"node.*index.js\")"
+      "Bash(pkill -f \"node.*index.js\")",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(echo \"SERVER_EXIT=$?\")",
+      "Bash(echo \"CLIENT_EXIT=$?\")"
     ]
   }
 }
