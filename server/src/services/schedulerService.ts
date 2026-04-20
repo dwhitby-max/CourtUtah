@@ -10,7 +10,7 @@ import { runDailyRefresh } from "./dailyRefresh";
  * automatically tracks MST/MDT so the wall-clock times stay stable year-round.
  *
  * Schedule (Mountain Time):
- *   6:00 AM — Daily refresh: re-run all saved searches (courts update ~5:30 AM)
+ *   5:00 AM — Daily refresh: re-run all saved searches (fires at 5:00, jittered 0–45 min)
  *   6:30 AM — Cleanup: mark past calendar entries as completed
  *   7:00 AM — Daily digest: send notification summaries
  *   7:00 AM Mon — Weekly digest
@@ -20,13 +20,12 @@ const MT_TZ = { timezone: "America/Denver" } as const;
 export function startScheduler(): void {
   console.log("⏰ Starting scheduler (daily refresh + digests + cleanup) — America/Denver");
 
-  // Daily refresh — 6:00 AM MT
-  // Re-runs all active saved searches to detect new hearings, changes, and
-  // removals. Courts update once daily (~5:30 AM MT), so this runs right after.
-  // An initial random delay of 0–30 minutes varies the start time each day
-  // so the batch doesn't always begin at the same second.
-  cron.schedule("0 6 * * *", async () => {
-    const jitterMs = Math.floor(Math.random() * 30 * 60 * 1000); // 0–30 min
+  // Daily refresh — 5:00 AM MT base, jittered 0–45 min so the actual start
+  // varies day to day (5:00–5:45 AM). Courts update once per day, so a single
+  // run is sufficient; the jitter plus per-search delays in runDailyRefresh
+  // keep traffic from looking bot-like.
+  cron.schedule("0 5 * * *", async () => {
+    const jitterMs = Math.floor(Math.random() * 45 * 60 * 1000); // 0–45 min
     console.log(`🔄 Daily refresh triggered — starting in ${(jitterMs / 60_000).toFixed(1)} minutes`);
     await new Promise((resolve) => setTimeout(resolve, jitterMs));
     try {

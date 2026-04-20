@@ -4,6 +4,7 @@ import { CourtEvent, DetectedChange } from "@shared/types";
 import { getPool } from "../db/pool";
 import { detectChanges, processChanges } from "../services/changeDetector";
 import { syncCalendarEntry, deleteCalendarEntry } from "../services/calendarSync";
+import { notifyEventCancelled } from "../services/notificationService";
 
 /**
  * Map user search params to LiveSearchParams for utcourts.gov.
@@ -232,7 +233,8 @@ export async function saveSearch(
  */
 export async function persistLiveResults(
   parsed: ParsedCourtEvent[],
-  searchedDates?: string[] | "all"
+  searchedDates?: string[] | "all",
+  savedSearchId?: number,
 ): Promise<DetectedChange[]> {
   const pool = getPool();
   if (!pool || parsed.length === 0) return [];
@@ -411,41 +413,90 @@ export async function persistLiveResults(
     // The live scrape is the source of truth FOR THE DATES THAT WERE SEARCHED.
     // Only delete DB events whose date falls within the searched range.
     // Events on dates outside the search scope are left untouched.
-    const caseNumbers = [...new Set(parsed.filter(e => e.caseNumber).map(e => e.caseNumber!))];
+    const caseNumbers = new Set<string>(parsed.filter(e => e.caseNumber).map(e => e.caseNumber!));
+    // Also include cases previously tracked by this saved search via calendar
+    // entries. Covers the "removed entirely" case where the fresh scrape returns
+    // zero hits for a case that was previously matched — without this, the old
+    // rows would persist forever because caseNumbers (from fresh results) would
+    // miss them.
+    if (savedSearchId) {
+      const prior = await client.query<{ case_number: string }>(
+        `SELECT DISTINCT ce.case_number
+         FROM court_events ce
+         JOIN calendar_entries ca ON ca.court_event_id = ce.id
+         WHERE ca.saved_search_id = $1 AND ca.sync_status NOT IN ('removed')`,
+        [savedSearchId]
+      );
+      for (const r of prior.rows) {
+        if (r.case_number) caseNumbers.add(r.case_number);
+      }
+    }
     const searchedDateSet = Array.isArray(searchedDates) ? new Set(searchedDates) : null;
     const isAllDates = searchedDates === "all";
 
-    if (caseNumbers.length > 0 && searchedDates) {
-      // Find potentially stale events: same case_number, scoped to searched dates
+    if (caseNumbers.size > 0 && searchedDates) {
+      const caseNumbersArr = [...caseNumbers];
       let staleQuery: string;
       let staleParams: unknown[];
 
       if (isAllDates) {
-        staleQuery = `SELECT id, case_number, event_date::text, COALESCE(event_time, '') as event_time
+        staleQuery = `SELECT id, case_number, event_date::text, COALESCE(event_time, '') as event_time,
+                             defendant_name, court_name
                       FROM court_events WHERE case_number = ANY($1)`;
-        staleParams = [caseNumbers];
+        staleParams = [caseNumbersArr];
       } else {
-        staleQuery = `SELECT id, case_number, event_date::text, COALESCE(event_time, '') as event_time
+        staleQuery = `SELECT id, case_number, event_date::text, COALESCE(event_time, '') as event_time,
+                             defendant_name, court_name
                       FROM court_events WHERE case_number = ANY($1) AND event_date::text = ANY($2)`;
-        staleParams = [caseNumbers, [...searchedDateSet!]];
+        staleParams = [caseNumbersArr, [...searchedDateSet!]];
       }
 
-      const staleResult = await client.query<{ id: number; case_number: string; event_date: string; event_time: string }>(
-        staleQuery, staleParams
-      );
+      const staleResult = await client.query<{
+        id: number; case_number: string; event_date: string; event_time: string;
+        defendant_name: string | null; court_name: string | null;
+      }>(staleQuery, staleParams);
 
-      const staleIds: number[] = [];
-      for (const row of staleResult.rows) {
+      const staleRows = staleResult.rows.filter(row => {
         const key = `${row.case_number}|${row.event_date}|${row.event_time.trim()}`;
-        if (!freshKeys.has(key)) {
-          staleIds.push(row.id);
+        return !freshKeys.has(key);
+      });
+
+      if (staleRows.length > 0) {
+        const staleIds = staleRows.map(r => r.id);
+        console.log(`🧹 Removing ${staleIds.length} stale event(s) for case(s) that moved or were removed: ${staleRows.map(r => `${r.case_number} ${r.event_date} ${r.event_time || "(no time)"}`).slice(0, 5).join("; ")}${staleIds.length > 5 ? `; and ${staleIds.length - 5} more` : ""}`);
+
+        // Notify every user who had one of these events on a calendar before
+        // we delete the links. Do this FIRST so the saved_search_id is still
+        // reachable via calendar_entries.
+        const affected = await client.query<{
+          court_event_id: number; user_id: number; saved_search_id: number | null;
+        }>(
+          `SELECT DISTINCT court_event_id, user_id, saved_search_id
+           FROM calendar_entries
+           WHERE court_event_id = ANY($1) AND sync_status NOT IN ('removed')`,
+          [staleIds]
+        );
+        const rowById = new Map(staleRows.map(r => [r.id, r]));
+        for (const a of affected.rows) {
+          const row = rowById.get(a.court_event_id);
+          if (!row) continue;
+          try {
+            await notifyEventCancelled(
+              a.user_id,
+              a.court_event_id,
+              row.case_number,
+              row.defendant_name,
+              row.event_date,
+              row.event_time || null,
+              row.court_name,
+              a.saved_search_id ?? undefined,
+            );
+          } catch (err) {
+            console.warn(`⚠️ Cancellation notification failed for user ${a.user_id}:`, err instanceof Error ? err.message : err);
+          }
         }
-      }
 
-      if (staleIds.length > 0) {
-        console.log(`🧹 Removing ${staleIds.length} stale event(s) for case(s) that moved or were removed`);
-
-        // Delete calendar entries from external providers first
+        // Delete calendar entries from external providers
         const calEntries = await client.query<{ id: number; user_id: number }>(
           `SELECT id, user_id FROM calendar_entries
            WHERE court_event_id = ANY($1) AND sync_status NOT IN ('removed')`,
@@ -459,7 +510,6 @@ export async function persistLiveResults(
           }
         }
 
-        // Delete the stale court_events rows
         await client.query(
           `DELETE FROM court_events WHERE id = ANY($1)`,
           [staleIds]

@@ -9,6 +9,7 @@ import { authenticateToken } from "../middleware/auth";
 import { searchCourtEvents } from "../services/searchService";
 import { liveSearchUtcourts, fetchCourtList, CourtInfo } from "../services/courtScraper";
 import { parseHtmlCalendarResults, ParsedCourtEvent, SearchContext, enrichFromDetailsPages } from "../services/courtEventParser";
+import { notifyNewMatch } from "../services/notificationService";
 import { DetectedChange } from "@shared/types";
 import { getPool } from "../db/pool";
 import {
@@ -22,6 +23,7 @@ import {
   toCourtEvent,
   applyAllFilters,
   expandDates,
+  buildSearchLabel,
 } from "./searchHelpers";
 
 
@@ -547,7 +549,7 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     // Persist live results and detect changes (awaited so we can return changes)
     let detectedChanges: DetectedChange[] = [];
     try {
-      detectedChanges = await persistLiveResults(allParsed, searchedDates);
+      detectedChanges = await persistLiveResults(allParsed, searchedDates, existing?.id);
       if (detectedChanges.length > 0) {
         console.log(`🔔 ${detectedChanges.length} event(s) with changes detected`);
       }
@@ -679,6 +681,36 @@ router.get("/", authenticateToken, async (req: Request, res: Response) => {
     const liveHadFailures = searchWarnings.length > 0;
     const { savedSearchId, previousRunAt, limitReached } = await saveSearch(userId, searchParams, pKey, merged.length, userPlan, liveHadFailures, failedCourtCodes);
     markNewEvents(merged, previousRunAt);
+
+    // New-match notifications: only on subsequent runs (previousRunAt set) so
+    // we don't flood the user on first search with every result. Only fired
+    // for real saved searches (savedSearchId > 0).
+    if (previousRunAt && savedSearchId > 0) {
+      const newMatches = merged.filter(e => e.isNew);
+      if (newMatches.length > 0) {
+        try {
+          const label = buildSearchLabel(searchParams);
+          const searchValue =
+            searchParams.caseNumber || searchParams.defendantName || searchParams.attorney ||
+            searchParams.judgeName || searchParams.defendantOtn || searchParams.citationNumber || label;
+          await notifyNewMatch(
+            userId,
+            label,
+            newMatches.map(e => ({
+              date: e.eventDate || "",
+              time: e.eventTime || "",
+              court: e.courtName || "",
+              hearingType: e.hearingType || "",
+            })),
+            savedSearchId,
+            searchValue,
+          );
+        } catch (err) {
+          console.warn("⚠️ New-match notification failed:", err instanceof Error ? err.message : err);
+        }
+      }
+    }
+
     res.json({
       results: merged,
       resultsCount: merged.length,

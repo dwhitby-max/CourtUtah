@@ -158,7 +158,8 @@ export async function notifyScheduleChange(
   userId: number,
   caseName: string,
   changes: Array<{ field: string; oldValue: string; newValue: string }>,
-  savedSearchId?: number
+  savedSearchId?: number,
+  extraMetadata?: Record<string, unknown>,
 ): Promise<void> {
   const summary = changes.map((c) => `${c.field}: ${c.oldValue} → ${c.newValue}`).join("; ");
 
@@ -167,7 +168,58 @@ export async function notifyScheduleChange(
     type: "schedule_change",
     title: `Schedule Change: ${caseName}`,
     message: summary,
-    metadata: { changes },
+    metadata: { changes, caseNumber: caseName, ...(extraMetadata || {}) },
+    savedSearchId,
+  });
+}
+
+export async function notifyNewMatch(
+  userId: number,
+  savedSearchLabel: string,
+  events: Array<{ date: string; time: string; court: string; hearingType: string }>,
+  savedSearchId?: number,
+  searchValue?: string,
+): Promise<void> {
+  if (events.length === 0) return;
+  const count = events.length;
+  await createNotification({
+    userId,
+    type: "new_match",
+    title: count === 1
+      ? `New match for "${savedSearchLabel}"`
+      : `${count} new matches for "${savedSearchLabel}"`,
+    message: count === 1
+      ? `A new hearing was found matching your saved search.`
+      : `${count} new hearings were found matching your saved search.`,
+    metadata: { searchValue: searchValue || savedSearchLabel, matchedEvents: events },
+    savedSearchId,
+  });
+}
+
+export async function notifyEventCancelled(
+  userId: number,
+  courtEventId: number,
+  caseNumber: string,
+  defendantName: string | null,
+  eventDate: string,
+  eventTime: string | null,
+  courtName: string | null,
+  savedSearchId?: number,
+): Promise<void> {
+  const who = defendantName ? ` (${defendantName})` : "";
+  await createNotification({
+    userId,
+    type: "event_cancelled",
+    title: `Hearing removed: ${caseNumber}`,
+    message: `The ${eventDate}${eventTime ? " " + eventTime : ""} hearing for ${caseNumber}${who} is no longer on the court calendar.`,
+    metadata: {
+      courtEventId,
+      caseNumber,
+      defendantName,
+      eventDate,
+      eventTime,
+      courtName,
+    },
     savedSearchId,
   });
 }

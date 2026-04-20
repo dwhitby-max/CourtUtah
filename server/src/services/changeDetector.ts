@@ -1,4 +1,5 @@
 import { getPool } from "../db/pool";
+import { notifyScheduleChange } from "./notificationService";
 
 interface ChangeRecord {
   field: string;
@@ -56,7 +57,6 @@ export async function processChanges(
 
   const client = await pool.connect();
   try {
-    // Log each change
     for (const change of changes) {
       await client.query(
         `INSERT INTO change_log (court_event_id, field_changed, old_value, new_value)
@@ -65,7 +65,35 @@ export async function processChanges(
       );
     }
 
-    // User notifications are handled by the scheduler after auto-syncing calendar entries
+    const eventResult = await client.query<{ case_number: string; defendant_name: string | null }>(
+      `SELECT case_number, defendant_name FROM court_events WHERE id = $1`,
+      [courtEventId]
+    );
+    if (eventResult.rows.length === 0) return;
+    const caseName = eventResult.rows[0].defendant_name?.trim()
+      || eventResult.rows[0].case_number
+      || `Event ${courtEventId}`;
+
+    // Fan out to every user tracking this event via calendar_entries, plus
+    // any saved_search this event was matched against.
+    const recipients = await client.query<{ user_id: number; saved_search_id: number | null }>(
+      `SELECT DISTINCT user_id, saved_search_id FROM calendar_entries
+       WHERE court_event_id = $1 AND sync_status NOT IN ('removed')`,
+      [courtEventId]
+    );
+    for (const row of recipients.rows) {
+      try {
+        await notifyScheduleChange(
+          row.user_id,
+          caseName,
+          changes,
+          row.saved_search_id ?? undefined,
+          { courtEventId },
+        );
+      } catch (err) {
+        console.warn(`⚠️ Schedule-change notification failed for user ${row.user_id}:`, err instanceof Error ? err.message : err);
+      }
+    }
   } finally {
     client.release();
   }

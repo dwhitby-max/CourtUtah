@@ -213,24 +213,32 @@ export default function SearchPage() {
 
   async function executeDeleteSearch(id: number) {
     setDeleteConfirm(null);
+    setError("");
     try {
       const res = await apiFetch(`/saved-searches/${id}`, { method: "DELETE" });
       if (res.ok) {
         setSavedSearches(prev => prev.filter(s => s.id !== id));
-        // If this was the currently displayed search, clear results from UI
         if (lastSearchSavedId === id) {
           setResults([]);
           setSearched(false);
           setLastSearchParams(null);
           setLastSearchSavedId(null);
           setDetectedChanges([]);
-          setSuccessMsg("");
         }
-        // Refresh synced event state so calendar icons update
         cal.refreshSyncedEvents();
+        setSuccessMsg("Saved search deleted.");
+      } else {
+        let serverMsg = "";
+        try {
+          const body = await res.json();
+          serverMsg = body?.error || "";
+        } catch { /* body not JSON */ }
+        console.error(`DELETE /saved-searches/${id} failed: ${res.status}`, serverMsg);
+        setError(serverMsg || `Failed to delete saved search (${res.status}).`);
       }
-    } catch {
-      // non-fatal
+    } catch (err) {
+      console.error(`DELETE /saved-searches/${id} threw:`, err);
+      setError(err instanceof Error ? err.message : "Failed to delete saved search.");
     }
   }
 
